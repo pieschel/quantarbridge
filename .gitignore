@@ -1,0 +1,44 @@
+# Build output
+/build/
+/.cache/
+**/__pycache__/
+*.py[cod]
+
+# Runtime state and credentials
+/deploy/runtime/
+/runtime/
+*.key
+*.pem
+*.p12
+*.pfx
+.env
+.env.*
+secrets.txt
+dashboard-auth.json
+bm_api.key
+dynamic_routes.state
+*.stamp
+*.trigger
+
+# Logs, captures, and operator data
+*.log
+*.pcap
+*.pcapng
+/captures/
+/backups/
+/dashboard-backups/
+/sms/
+/tmp/
+/tmp_*/
+/.codex-remote-attachments/
+/tmp_maptiles/
+/*.jpg
+/*.jpeg
+/*.png
+/*.pdf
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

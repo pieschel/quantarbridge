@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic BrandMeister static talkgroup sync
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=30s
+Persistent=true
+Unit=bm-static-sync.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic DMR to P25 bridge recovery check
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=3min
+Unit=dmr-to-p25-recover.service
+
+[Install]
+WantedBy=timers.target

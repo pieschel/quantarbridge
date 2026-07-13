@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out QuantarBridge
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git libasio-dev libncurses-dev libssl-dev \
+            libyaml-cpp-dev python3 python3-requests python3-websocket \
+            python3-yaml shellcheck
+
+      - name: Audit public tree
+        run: python3 scripts/audit_public_tree.py .
+
+      - name: Check shell scripts
+        run: shellcheck scripts/install.sh
+
+      - name: Test configuration generation
+        run: |
+          printf '%s\n' 'BRANDMEISTER_PASSWORD' | python3 scripts/configure.py \
+            --runtime-dir /tmp/quantar-runtime \
+            --install-dir "$PWD" \
+            --bm-id 123456 \
+            --bm-callsign N0CALL \
+            --bm-master 2622.master.brandmeister.network \
+            --rx-frequency 430800000 \
+            --tx-frequency 438800000 \
+            --bm-password-stdin
+
+      - name: Build patched DVMHost
+        run: |
+          git clone https://github.com/DVMProject/dvmhost.git "$RUNNER_TEMP/dvmhost"
+          git -C "$RUNNER_TEMP/dvmhost" checkout --detach 01979084df9fc6a5737fac9efb213430268377c9
+          git -C "$RUNNER_TEMP/dvmhost" apply --check "$GITHUB_WORKSPACE/patches/dvmhost.patch"
+          git -C "$RUNNER_TEMP/dvmhost" apply "$GITHUB_WORKSPACE/patches/dvmhost.patch"
+          cmake -S "$RUNNER_TEMP/dvmhost" -B "$RUNNER_TEMP/dvmhost/build" \
+            -DCMAKE_BUILD_TYPE=Release -DENABLE_TUI_SUPPORT=0 -DENABLE_SETUP_TUI=0
+          cmake --build "$RUNNER_TEMP/dvmhost/build" --parallel 2
+
+      - name: Build QuantarBridge
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDVMHOST_SOURCE_DIR="$RUNNER_TEMP/dvmhost" \
+            -DDVMHOST_COMMON_LIBRARY="$RUNNER_TEMP/dvmhost/build/libcommon.a"
+          cmake --build build --parallel 2
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure

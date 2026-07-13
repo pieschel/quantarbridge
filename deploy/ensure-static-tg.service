@@ -1,0 +1,6 @@
+[Unit]
+Description=Ensure static BM talkgroup is selected when no dynamic TG is active
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/deploy/scripts/ensure_static_tg.py --config /home/quantar/quantar-runtime/quantarbridge.yml --state /home/quantar/quantar-runtime/dynamic_routes.state

@@ -1,0 +1,15 @@
+[Unit]
+Description=Quantar SMS bridge to local RF delivery and TETRAPACK BREW backend
+After=network-online.target quantarbridge.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantar
+WorkingDirectory=/home/quantar/quantarbridge
+ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/deploy/scripts/tetrapack_brew_bridge.py --config /home/quantar/quantar-runtime/tetrapack-brew-bridge.json
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

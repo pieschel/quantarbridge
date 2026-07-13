@@ -1,0 +1,8 @@
+[Unit]
+Description=Recover dvmhost when DFSI/V24 appears stuck
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/deploy/scripts/dvmhost_recover.py --service dvmhost.service

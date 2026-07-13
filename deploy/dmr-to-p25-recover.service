@@ -1,0 +1,8 @@
+[Unit]
+Description=Recover DMR to P25 bridge when BM downlink wedges
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/deploy/scripts/dmr_to_p25_recover.py --bridge-service dvmbridge-dmr-to-p25.service --host-service dvmhost.service

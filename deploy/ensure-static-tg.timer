@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic static BM talkgroup ensure check
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=2s
+Unit=ensure-static-tg.service
+
+[Install]
+WantedBy=timers.target

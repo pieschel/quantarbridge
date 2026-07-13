@@ -1,0 +1,81 @@
+{
+  "listenAddress": "0.0.0.0",
+  "port": 8088,
+  "authFile": "/home/quantar/quantar-runtime/dashboard-auth.json",
+  "staticDir": "/home/quantar/quantarbridge/dashboard/static",
+  "runtimeDir": "/home/quantar/quantar-runtime",
+  "logDir": "/home/quantar/quantar-runtime/log",
+  "quantarbridgeConfig": "/home/quantar/quantar-runtime/quantarbridge.yml",
+  "dvmhostConfig": "/home/quantar/quantar-runtime/dvmhost-config.yml",
+  "dmrGatewayConfig": "/home/quantar/quantar-runtime/DMRGateway.ini",
+  "dmrToP25Config": "/home/quantar/quantar-runtime/dvmbridge-dmr-to-p25.yml",
+  "p25ToDmrConfig": "/home/quantar/quantar-runtime/dvmbridge-p25-to-dmr.yml",
+  "ridFile": "/home/quantar/quantar-runtime/rid_acl.dat",
+  "backupDir": "/home/quantar/quantar-runtime/dashboard-backups",
+  "bmApiKeyFile": "/home/quantar/quantar-runtime/bm_api.key",
+  "locationEventDir": "/home/quantar/quantar-runtime/sms/processed",
+  "identityCacheFile": "/home/quantar/quantar-runtime/dashboard-identity-cache.json",
+  "secureCookies": false,
+  "serviceUnits": [
+    {
+      "id": "dvmhost",
+      "label": "P25 Host / Quantar",
+      "unit": "dvmhost.service",
+      "processMatch": "/home/quantar/src/dvmhost/build/dvmhost -c /home/quantar/quantar-runtime/dvmhost-config.yml",
+      "critical": true
+    },
+    {
+      "id": "dvmfne",
+      "label": "DVM FNE",
+      "unit": "dvmfne.service",
+      "processMatch": "/home/quantar/src/dvmhost/build/dvmfne -c /home/quantar/quantar-runtime/dvmfne-config.yml",
+      "critical": true
+    },
+    {
+      "id": "p25-to-dmr",
+      "label": "P25 nach DMR",
+      "unit": "dvmbridge-p25-to-dmr.service",
+      "processMatch": "/home/quantar/src/dvmhost/build/dvmbridge -c /home/quantar/quantar-runtime/dvmbridge-p25-to-dmr.yml",
+      "critical": true
+    },
+    {
+      "id": "dmr-to-p25",
+      "label": "DMR nach P25",
+      "unit": "dvmbridge-dmr-to-p25.service",
+      "processMatch": "/home/quantar/src/dvmhost/build/dvmbridge -c /home/quantar/quantar-runtime/dvmbridge-dmr-to-p25.yml",
+      "critical": true
+    },
+    {
+      "id": "quantarbridge",
+      "label": "BrandMeister Bridge",
+      "unit": "quantarbridge.service",
+      "processMatch": "/home/quantar/quantarbridge/build/quantarbridge /home/quantar/quantar-runtime/quantarbridge.yml",
+      "critical": true
+    },
+    {
+      "id": "sms-bridge",
+      "label": "TMS / APRS Bridge",
+      "unit": "tetrapack-brew-bridge.service",
+      "processMatch": "/home/quantar/quantarbridge/deploy/scripts/tetrapack_brew_bridge.py --config /home/quantar/quantar-runtime/tetrapack-brew-bridge.json",
+      "critical": false
+    }
+  ],
+  "restartTargets": {
+    "quantarbridge": {
+      "type": "systemd",
+      "unit": "quantarbridge.service"
+    },
+    "dvmhost": {
+      "type": "systemd",
+      "unit": "dvmhost.service"
+    },
+    "dmr-to-p25": {
+      "type": "systemd",
+      "unit": "dvmbridge-dmr-to-p25.service"
+    },
+    "p25-to-dmr": {
+      "type": "systemd",
+      "unit": "dvmbridge-p25-to-dmr.service"
+    }
+  }
+}

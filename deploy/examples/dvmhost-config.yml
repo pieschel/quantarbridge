@@ -1,0 +1,222 @@
+daemon: false
+iAgreeNotToBeStupid: true
+
+log:
+  disableNonAuthoritiveLogging: false
+  displayLevel: 2
+  fileLevel: 2
+  useSyslog: false
+  filePath: /home/quantar/quantar-runtime/log
+  activityFilePath: /home/quantar/quantar-runtime/log
+  fileRoot: dvmhost
+
+network:
+  enable: true
+  id: 9000110
+  address: 127.0.0.1
+  port: 62031
+  password: "LOCAL_FNE_PASSWORD"
+  encrypted: false
+  presharedKey: ""
+  jitter: 360
+  slot1: false
+  slot2: true
+  updateLookups: false
+  saveLookups: false
+  talkgroupHang: 30
+  allowActivityTransfer: true
+  allowDiagnosticTransfer: true
+  allowStatusTransfer: true
+  packetDump: false
+  debug: false
+  rpcAddress: 127.0.0.1
+  rpcPort: 9890
+  rpcPassword: ""
+  rpcDebug: false
+  restEnable: false
+
+protocols:
+  dmr:
+    enable: false
+  p25:
+    enable: true
+    tduPreambleCount: 6
+    motorolaPacketData:
+      arsServerAddress: 10.0.0.2
+      arsPeerAddress: 10.0.0.1
+    motorolaLocation:
+      initialDelaySeconds: 5
+      updateIntervalSeconds: 300
+      noFixRetrySeconds: 60
+    control:
+      enable: false
+      dedicated: false
+      broadcast: false
+      disableGrantSourceIdCheck: false
+      explicitTDUGrantRelease: true
+      redundantImmediate: true
+      redundantGrantTransmit: false
+    controlOnly: false
+    disableNetworkHDU: false
+    disableNetworkGrant: false
+    forceAllowTG0: false
+    ignoreAffiliationCheck: false
+    immediateCallTerm: false
+    inhibitUnauthorized: false
+    legacyGroupGrnt: true
+    legacyGroupReg: false
+    convNetGrantDemand: false
+    demandUnitRegForRefusedAff: false
+    verifyAff: false
+    verifyReg: false
+    disableUnitRegTimeout: false
+    requireLLAForReg: false
+    dumpDataPacket: false
+    repeatDataPacket: false
+    ignoreDataCRC: false
+    dumpTsbkData: false
+    callHang: 30
+    noStatusAck: false
+    noMessageAck: true
+    unitToUnitAvailCheck: false
+    allowExplicitSourceId: false
+    disableDenyResponse: false
+    sndcpSupport: true
+    silenceThreshold: 124
+    frameLossThreshold: 12
+    queueSize: 50
+    verbose: false
+    debug: false
+  nxdn:
+    enable: false
+
+system:
+  identity: QUANBM
+  timeout: 600
+  duplex: true
+  simplexSameFrequency: false
+  modeHang: 30
+  fixedMode: true
+  rfTalkgroupHang: 30
+  activeTickDelay: 1
+  idleTickDelay: 1
+  localTimeOffset: 0
+  disableWatchdogOverflow: false
+  info:
+    latitude: 0.0
+    longitude: 0.0
+    height: 0
+    power: 25
+    location: "Quantar Bridge"
+  config:
+    authoritative: true
+    supervisor: false
+    channelId: 2
+    channelNo: 1
+    controlCh:
+      rpcAddress: 127.0.0.1
+      rpcPort: 0
+      rpcPassword: ""
+      notifyEnable: false
+      presence: 120
+    voiceChNo:
+      - channelId: 2
+        channelNo: 1
+        rpcAddress: 127.0.0.1
+        rpcPort: 0
+        rpcPassword: ""
+    secure:
+      key: ""
+    colorCode: 1
+    nac: 293
+    ran: 1
+    pSuperGroup: FFFE
+    announcementGroup: FFFE
+    defaultNetIdleTalkgroup: 0
+    dmrNetId: 1
+    netId: BB800
+    sysId: 001
+    rfssId: 1
+    siteId: 1
+  cwId:
+    enable: false
+    time: 15
+    callsign: QUANTAR
+  modem:
+    protocol:
+      type: "uart"
+      mode: "dfsi"
+      uart:
+        port: /dev/ttyUSB0
+        speed: 115200
+    rxInvert: false
+    txInvert: false
+    pttInvert: false
+    dcBlocker: true
+    cosLockout: false
+    fdmaPreamble: 80
+    dmrRxDelay: 7
+    p25CorrCount: 1
+    dmrFifoLength: 560
+    p25FifoLength: 2088
+    nxdnFifoLength: 538
+    hotspot:
+      dmrDiscBWAdj: 0
+      dmrPostBWAdj: 0
+      p25DiscBWAdj: 0
+      p25PostBWAdj: 0
+      nxdnDiscBWAdj: 0
+      nxdnPostBWAdj: 0
+      adfGainMode: 2
+      afcEnable: true
+      afcKI: 13
+      afcKP: 5
+      afcRange: 1
+      txTuning: 0
+      rxTuning: 0
+    repeater:
+      dmrSymLvl3Adj: 0
+      dmrSymLvl1Adj: 0
+      p25SymLvl3Adj: 0
+      p25SymLvl1Adj: 0
+      nxdnSymLvl3Adj: 0
+      nxdnSymLvl1Adj: 0
+    softpot:
+      rxCoarse: 127
+      rxFine: 127
+      txCoarse: 127
+      txFine: 127
+      rssiCoarse: 127
+      rssiFine: 127
+    dfsi:
+      rtrt: true
+      jitter: 2000
+      callTimeout: 20000
+      fullDuplex: false
+      fsc: false
+      fscHeartbeat: 5
+      initiator: false
+      dfsiTIAMode: false
+    rxDCOffset: 0
+    txDCOffset: 0
+    rxLevel: 50
+    txLevel: 50
+    rssiMappingFile: /home/quantar/quantar-runtime/RSSI.dat
+    packetPlayoutTime: 120
+    disableOFlowReset: false
+    ignoreModemConfigArea: false
+    dumpModemStatus: false
+    displayModemDebugMessages: false
+    trace: false
+    debug: false
+  iden_table:
+    file: /home/quantar/quantar-runtime/iden_table.dat
+    time: 0
+  radio_id:
+    file: /home/quantar/quantar-runtime/rid_acl.dat
+    time: 0
+    acl: false
+  talkgroup_id:
+    file: /home/quantar/quantar-runtime/talkgroup_rules.yml
+    time: 0
+    acl: false

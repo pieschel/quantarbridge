@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Quantarbridge</title>
+  <script src="/assets/theme.js?v=20260713-2"></script>
+  <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css?v=1.9.4">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260713-7">
+  <script src="/assets/vendor/leaflet/leaflet.js?v=1.9.4" defer></script>
+  <script src="/assets/app.js?v=20260713-7" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__inner">
+      <div class="brand" aria-label="Quantarbridge">
+        <span class="brand__mark" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </span>
+        <span class="brand__text">
+          <strong>Quantarbridge</strong>
+          <small>P25 / BrandMeister</small>
+        </span>
+      </div>
+
+      <nav class="primary-nav" aria-label="Hauptnavigation" role="tablist">
+        <button class="nav-tab is-active" id="tab-operations" type="button" role="tab" aria-selected="true" aria-controls="view-operations" data-view="operations">Betrieb</button>
+        <button class="nav-tab" id="tab-admin" type="button" role="tab" aria-selected="false" aria-controls="view-admin" data-view="admin">Administration</button>
+      </nav>
+
+      <div class="live-state">
+        <button class="theme-toggle" id="theme-toggle" type="button" title="Darstellung wechseln" aria-label="Darkmode einschalten">
+          <span id="theme-icon" aria-hidden="true">◐</span>
+        </button>
+        <span class="status-dot status-dot--unknown" id="header-status-dot" aria-hidden="true"></span>
+        <span>
+          <strong id="header-status">Verbinde...</strong>
+          <small id="header-clock">--:--:--</small>
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="view is-visible" id="view-operations" role="tabpanel" aria-labelledby="tab-operations">
+      <div class="page-heading">
+        <div>
+          <p class="eyebrow">QUANBM</p>
+          <h1>Repeaterbetrieb</h1>
+        </div>
+        <p class="last-update">Stand <time id="last-update">--</time></p>
+      </div>
+
+      <section class="metric-band" aria-label="Betriebsübersicht">
+        <div class="metric">
+          <span class="metric__label">Aktive Gespräche</span>
+          <strong class="metric__value" id="metric-calls">0</strong>
+          <span class="metric__detail" id="metric-calls-detail">Kanal frei</span>
+        </div>
+        <div class="metric">
+          <span class="metric__label">Registrierte Geräte</span>
+          <strong class="metric__value" id="metric-radios">0</strong>
+          <span class="metric__detail" id="metric-radios-detail">Keine Anmeldung</span>
+        </div>
+        <div class="metric">
+          <span class="metric__label">BrandMeister</span>
+          <strong class="metric__value metric__value--text" id="metric-bm">Unbekannt</strong>
+          <span class="metric__detail" id="metric-bm-detail">Kein Status</span>
+        </div>
+        <div class="metric">
+          <span class="metric__label">Dienste</span>
+          <strong class="metric__value metric__value--fraction"><span id="metric-services-up">0</span><small>/</small><span id="metric-services-total">0</span></strong>
+          <span class="metric__detail" id="metric-services-detail">Status wird geladen</span>
+        </div>
+      </section>
+
+      <section class="section-band on-air-band" aria-labelledby="on-air-title">
+        <div class="section-header">
+          <div>
+            <p class="eyebrow">LIVE</p>
+            <h2 id="on-air-title">Aktueller Funkverkehr</h2>
+          </div>
+          <span class="channel-state" id="channel-state"><span class="channel-state__pulse" aria-hidden="true"></span><span id="channel-state-label">Kanal frei</span></span>
+        </div>
+        <div class="on-air-list" id="active-call-list">
+          <div class="empty-state empty-state--inline">
+            <span class="empty-state__signal" aria-hidden="true"></span>
+            <div><strong>Kein laufendes Gespräch</strong><span>Der Sprachkanal ist frei.</span></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="situational-grid">
+        <section class="section-band map-band" aria-labelledby="map-title">
+          <div class="section-header section-header--compact">
+            <div>
+              <p class="eyebrow">LRRP</p>
+              <h2 id="map-title">Positionen registrierter Geräte</h2>
+            </div>
+            <span class="count-badge" id="map-count">0/0</span>
+          </div>
+          <div class="radio-map-shell">
+            <div id="radio-map" class="radio-map" aria-label="Karte mit den letzten bekannten Gerätepositionen"></div>
+            <div class="map-empty" id="radio-map-empty">
+              <strong>Noch keine Position verfügbar</strong>
+              <span>Die Karte füllt sich mit dem nächsten GPS-Fix.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="section-band talkgroup-band" aria-labelledby="talkgroups-title">
+          <div class="section-header section-header--compact">
+            <div>
+              <p class="eyebrow">BRANDMEISTER</p>
+              <h2 id="talkgroups-title">Abonnierte Talkgroups</h2>
+            </div>
+            <span class="count-badge" id="talkgroup-count">0</span>
+          </div>
+          <div class="talkgroup-list" id="talkgroup-list">
+            <div class="empty-state empty-state--inline"><div><strong>Abonnements werden geladen</strong></div></div>
+          </div>
+          <div class="talkgroup-source" id="talkgroup-source">BrandMeister-Profil wird abgefragt</div>
+        </section>
+      </div>
+
+      <div class="operations-grid">
+        <section class="section-band" aria-labelledby="radios-title">
+          <div class="section-header section-header--compact">
+            <div>
+              <p class="eyebrow">P25 DATA</p>
+              <h2 id="radios-title">Registrierte Funkgeräte</h2>
+            </div>
+            <span class="count-badge" id="radio-count">0</span>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Teilnehmer</th>
+                  <th scope="col">IP-Adresse</th>
+                  <th scope="col">TMS</th>
+                  <th scope="col">GPS</th>
+                  <th scope="col">Zuletzt aktiv</th>
+                </tr>
+              </thead>
+              <tbody id="radios-body">
+                <tr><td colspan="5" class="table-empty">Noch keine Funkgeräte registriert</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section-band" aria-labelledby="services-title">
+          <div class="section-header section-header--compact">
+            <div>
+              <p class="eyebrow">SYSTEM</p>
+              <h2 id="services-title">Dienste</h2>
+            </div>
+            <span class="count-badge" id="service-count">0/0</span>
+          </div>
+          <div class="service-list" id="service-list">
+            <div class="service-row"><span class="skeleton skeleton--dot"></span><span class="skeleton skeleton--line"></span></div>
+            <div class="service-row"><span class="skeleton skeleton--dot"></span><span class="skeleton skeleton--line"></span></div>
+            <div class="service-row"><span class="skeleton skeleton--dot"></span><span class="skeleton skeleton--line"></span></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="section-band" aria-labelledby="history-title">
+        <div class="section-header section-header--compact">
+          <div>
+            <p class="eyebrow">VERLAUF</p>
+            <h2 id="history-title">Letzte Gespräche</h2>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Beginn</th>
+                <th scope="col">Richtung</th>
+                <th scope="col">Teilnehmer</th>
+                <th scope="col">P25-TG</th>
+                <th scope="col">BrandMeister-TG</th>
+                <th scope="col">Dauer (MM:SS)</th>
+              </tr>
+            </thead>
+            <tbody id="calls-body">
+              <tr><td colspan="6" class="table-empty">Noch keine Gespräche erfasst</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section class="view" id="view-admin" role="tabpanel" aria-labelledby="tab-admin" hidden>
+      <div class="page-heading">
+        <div>
+          <p class="eyebrow">GESCHÜTZTER BEREICH</p>
+          <h1>Administration</h1>
+        </div>
+        <button class="button button--quiet" id="logout-button" type="button" hidden>Abmelden</button>
+      </div>
+
+      <section class="login-shell" id="login-shell">
+        <form class="login-panel" id="login-form">
+          <div class="login-panel__heading">
+            <span class="lock-mark" aria-hidden="true"></span>
+            <div>
+              <p class="eyebrow">ADMIN</p>
+              <h2>Anmelden</h2>
+            </div>
+          </div>
+          <label class="field">
+            <span>Benutzername</span>
+            <input type="text" name="username" autocomplete="username" required maxlength="32" value="admin">
+          </label>
+          <label class="field">
+            <span>Passwort</span>
+            <input type="password" name="password" autocomplete="current-password" required maxlength="128">
+          </label>
+          <p class="form-error" id="login-error" role="alert"></p>
+          <button class="button button--primary button--wide" type="submit">Anmelden</button>
+        </form>
+      </section>
+
+      <div class="admin-content" id="admin-content" hidden>
+        <form id="settings-form">
+          <section class="settings-section" aria-labelledby="bm-settings-title">
+            <div class="settings-section__heading">
+              <p class="eyebrow">NETZWERK</p>
+              <h2 id="bm-settings-title">BrandMeister</h2>
+            </div>
+            <div class="settings-fields settings-fields--two">
+              <label class="field">
+                <span>Repeater-ID</span>
+                <input type="number" name="repeaterId" min="1" max="4294967295" required inputmode="numeric">
+              </label>
+              <label class="field">
+                <span>Rufzeichen</span>
+                <input type="text" name="brandmeisterCallsign" minlength="3" maxlength="8" required autocomplete="off">
+              </label>
+              <label class="field">
+                <span>BrandMeister-Zeitschlitz</span>
+                <select name="brandmeisterTimeslot" required>
+                  <option value="1">TS 1</option>
+                  <option value="2">TS 2</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Master</span>
+                <input type="text" name="brandmeisterAddress" readonly>
+              </label>
+              <label class="field">
+                <span>Repeater RX</span>
+                <span class="number-unit"><input type="number" name="brandmeisterRxFrequencyMhz" min="10" max="999.999999" step="0.000001" required inputmode="decimal"><small>MHz</small></span>
+              </label>
+              <label class="field">
+                <span>Repeater TX</span>
+                <span class="number-unit"><input type="number" name="brandmeisterTxFrequencyMhz" min="10" max="999.999999" step="0.000001" required inputmode="decimal"><small>MHz</small></span>
+              </label>
+              <label class="field settings-fields__wide">
+                <span>Neues BrandMeister-Passwort</span>
+                <input type="password" name="brandmeisterPassword" autocomplete="new-password" maxlength="128" placeholder="Unverändert">
+              </label>
+            </div>
+          </section>
+
+          <section class="settings-section" aria-labelledby="mapping-settings-title">
+            <div class="settings-section__heading settings-section__heading--action">
+              <div>
+                <p class="eyebrow">ROUTING</p>
+                <h2 id="mapping-settings-title">Talkgroup-Mapping</h2>
+              </div>
+              <button class="button button--secondary button--small" id="add-mapping" type="button">Zuordnung hinzufügen</button>
+            </div>
+            <div class="routing-settings">
+              <div class="settings-fields routing-settings__timeout">
+                <label class="field field--explained">
+                  <span>Ablaufzeit dynamischer Talkgroups</span>
+                  <small class="field__description">Zeit ohne neue P25-Funkaktivität, nach der eine dynamisch aktivierte BrandMeister-Talkgroup wieder freigegeben wird.</small>
+                  <span class="number-unit"><input type="number" name="dynamicTimeoutSeconds" min="10" max="86400" step="10" required inputmode="numeric"><small>Sek.</small></span>
+                </label>
+              </div>
+              <div class="mapping-table" role="table" aria-label="Talkgroup-Zuordnungen">
+                <div class="mapping-row mapping-row--header" role="row">
+                  <span role="columnheader">P25-Talkgroup</span>
+                  <span role="columnheader">BrandMeister-Talkgroup</span>
+                  <span role="columnheader" class="mapping-row__action">Aktion</span>
+                </div>
+                <div id="mapping-rows"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-section audio-settings" aria-labelledby="audio-settings-title">
+            <div class="settings-section__heading">
+              <p class="eyebrow">AUDIO</p>
+              <h2 id="audio-settings-title">Pegel &amp; Klang</h2>
+              <p class="settings-section__description">Jede Richtung wird getrennt verarbeitet. Änderungen starten nur den betroffenen Audioweg neu.</p>
+            </div>
+            <div class="audio-directions">
+              <fieldset class="audio-direction">
+                <legend>
+                  <strong>DMR → P25</strong>
+                  <span>BrandMeister zum Quantar</span>
+                </legend>
+                <div class="audio-fields">
+                  <label class="field field--explained">
+                    <span>Eingangspegel</span>
+                    <small class="field__description">Verstärkung direkt nach dem DMR-Decoder. Zu hohe Werte können bereits hier Spitzen abschneiden.</small>
+                    <span class="number-unit"><input type="number" name="audioDmrP25Rx" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
+                  </label>
+                  <label class="field field--explained">
+                    <span>Vocoder-Decoder</span>
+                    <small class="field__description">Interner DMR-Decoder-Pegel. Beeinflusst Grundlautstärke und Rauschanteil vor der weiteren Bearbeitung.</small>
+                    <span class="number-unit"><input type="number" name="audioDmrP25Decoder" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
+                  </label>
+                  <label class="field field--explained">
+                    <span>P25-Ausgangspegel</span>
+                    <small class="field__description">Letzter Hauptpegel vor dem P25-Vocoder. Das ist der wichtigste Lautstärkeregler Richtung Quantar.</small>
+                    <span class="number-unit"><input type="number" name="audioDmrP25Tx" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
+                  </label>
+                  <label class="field field--explained">
+                    <span>Vocoder-Encoder</span>
+                    <small class="field__description">Interne Anpassung im P25-Encoder. Für Feinkorrekturen; starke Werte können den Klang rauer machen.</small>
+                    <span class="number-unit"><input type="number" name="audioDmrP25Encoder" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
+                  </label>
+                </div>
+                <label class="toggle-field">
+                  <span><strong>Decoder-Automatik</strong><small>Gleicht wechselnde DMR-Eingangspegel im Vocoder aus; kann leise Passagen und Hintergrundrauschen anheben.</small></span>
+                  <span class="toggle-control"><input type="checkbox" name="audioDmrP25DecoderAuto"><span aria-hidden="true"></span></span>
+                </label>
+                <details class="audio-advanced">
+                  <summary>P25-Feinregelung</summary>
+                  <div class="audio-fields">
+                    <label class="field field--explained">
+                      <span>Sprachpräsenz</span>
+                      <small class="field__description">Betont Sprachkonturen und Höhen. Zu viel davon verstärkt Zischlaute und Kratzen.</small>
+                      <span class="number-unit"><input type="number" name="audioDmrP25Presence" min="0" max="0.8" step="0.05" required inputmode="decimal"><small>×</small></span>
+                    </label>
+                    <label class="field field--explained">
+                      <span>AGC-Zielpegel</span>
+                      <small class="field__description">Gewünschte mittlere Lautstärke der P25-Ausgabe. Wirkt nur bei eingeschalteter Pegelautomatik.</small>
+                      <span class="number-unit"><input type="number" name="audioDmrP25AgcTarget" min="1000" max="12000" step="100" required inputmode="numeric"><small>RMS</small></span>
+                    </label>
+                    <label class="field field--explained">
+                      <span>AGC Minimum</span>
+                      <small class="field__description">Kleinste erlaubte Verstärkung. Niedrigere Werte können besonders laute Quellen stärker absenken.</small>
+                      <span class="number-unit"><input type="number" name="audioDmrP25AgcMin" min="0.1" max="1" step="0.05" required inputmode="decimal"><small>×</small></span>
+                    </label>
+                    <label class="field field--explained">
+                      <span>AGC Maximum</span>
+                      <small class="field__description">Größte erlaubte Verstärkung. Höhere Werte heben leise Quellen stärker an.</small>
+                      <span class="number-unit"><input type="number" name="audioDmrP25AgcMax" min="0.1" max="4" step="0.05" required inputmode="decimal"><small>×</small></span>
+                    </label>
+                    <label class="field field--explained">
+                      <span>Anregelung</span>
+                      <small class="field__description">Wie schnell die Automatik laute Spitzen absenkt. Höher reagiert schneller.</small>
+                      <span class="number-unit"><input type="number" name="audioDmrP25AgcAttack" min="0.01" max="1" step="0.01" required inputmode="decimal"><small>Rate</small></span>
+                    </label>
+                    <label class="field field--explained">
+                      <span>Rückregelung</span>
+                      <small class="field__description">Wie schnell der Pegel nach einer lauten Passage wieder ansteigt. Kleine Werte klingen ruhiger.</small>
+                      <span class="number-unit"><input type="number" name="audioDmrP25AgcRelease" min="0.01" max="1" step="0.01" required inputmode="decimal"><small>Rate</small></span>
+                    </label>
+                    <label class="field field--explained">
+                      <span>Spitzenbegrenzung</span>
+                      <small class="field__description">Absolute Schutzgrenze vor dem P25-Vocoder. Niedriger schützt stärker, reduziert aber mögliche Lautstärke.</small>
+                      <span class="number-unit"><input type="number" name="audioDmrP25Peak" min="8000" max="32000" step="500" required inputmode="numeric"><small>PCM</small></span>
+                    </label>
+                  </div>
+                  <label class="toggle-field toggle-field--nested">
+                    <span><strong>P25-Pegelautomatik</strong><small>Regelt unterschiedlich laute DMR-Gegenstationen auf einen gleichmäßigeren P25-Pegel.</small></span>
+                    <span class="toggle-control"><input type="checkbox" name="audioDmrP25Agc"><span aria-hidden="true"></span></span>
+                  </label>
+                </details>
+              </fieldset>
+
+              <fieldset class="audio-direction">
+                <legend>
+                  <strong>P25 → DMR</strong>
+                  <span>Quantar zu BrandMeister</span>
+                </legend>
+                <div class="audio-fields">
+                  <label class="field field--explained">
+                    <span>Eingangspegel</span>
+                    <small class="field__description">Verstärkung direkt nach dem P25-Decoder. Regelt das Signal aus Richtung Quantar vor der Weitergabe.</small>
+                    <span class="number-unit"><input type="number" name="audioP25DmrRx" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
+                  </label>
+                  <label class="field field--explained">
+                    <span>Vocoder-Decoder</span>
+                    <small class="field__description">Interner P25-Decoder-Pegel. Zu hohe Werte können kräftige Funkgeräte bereits vor dem DMR-Weg übersteuern.</small>
+                    <span class="number-unit"><input type="number" name="audioP25DmrDecoder" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
+                  </label>
+                  <label class="field field--explained">
+                    <span>DMR-Ausgangspegel</span>
+                    <small class="field__description">Letzter PCM-Pegel vor dem DMR-Vocoder. Hauptregler für die Lautstärke im BrandMeister-Netz.</small>
+                    <span class="number-unit"><input type="number" name="audioP25DmrTx" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
+                  </label>
+                  <label class="field field--explained">
+                    <span>Vocoder-Encoder</span>
+                    <small class="field__description">Interne Anpassung im DMR-Encoder. Nur zur Feinkorrektur verwenden, wenn der Hauptpegel nicht genügt.</small>
+                    <span class="number-unit"><input type="number" name="audioP25DmrEncoder" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
+                  </label>
+                </div>
+                <label class="toggle-field">
+                  <span><strong>Decoder-Automatik</strong><small>Gleicht Pegelschwankungen verschiedener P25-Funkgeräte aus; kann dabei leise Nebengeräusche anheben.</small></span>
+                  <span class="toggle-control"><input type="checkbox" name="audioP25DmrDecoderAuto"><span aria-hidden="true"></span></span>
+                </label>
+              </fieldset>
+            </div>
+          </section>
+
+          <section class="settings-section" aria-labelledby="gps-settings-title">
+            <div class="settings-section__heading">
+              <p class="eyebrow">LRRP</p>
+              <h2 id="gps-settings-title">GPS-Abfrage</h2>
+            </div>
+            <div class="settings-fields settings-fields--three">
+              <label class="field">
+                <span>Erste Abfrage</span>
+                <span class="number-unit"><input type="number" name="gpsInitial" min="1" max="300" required inputmode="numeric"><small>Sek.</small></span>
+              </label>
+              <label class="field">
+                <span>Aktualisierung</span>
+                <span class="number-unit"><input type="number" name="gpsUpdate" min="30" max="86400" required inputmode="numeric"><small>Sek.</small></span>
+              </label>
+              <label class="field">
+                <span>Ohne GPS-Fix</span>
+                <span class="number-unit"><input type="number" name="gpsNoFix" min="15" max="3600" required inputmode="numeric"><small>Sek.</small></span>
+              </label>
+            </div>
+          </section>
+
+          <div class="save-bar">
+            <div>
+              <strong id="save-state">Keine offenen Änderungen</strong>
+              <span id="settings-version">Konfiguration --</span>
+            </div>
+            <button class="button button--primary" id="save-settings" type="submit" disabled>Speichern und anwenden</button>
+          </div>
+        </form>
+
+        <section class="settings-section security-section" aria-labelledby="security-title">
+          <div class="settings-section__heading">
+            <p class="eyebrow">KONTO</p>
+            <h2 id="security-title">Admin-Passwort</h2>
+          </div>
+          <form class="password-form" id="password-form">
+            <label class="field">
+              <span>Aktuelles Passwort</span>
+              <input type="password" name="currentPassword" autocomplete="current-password" required>
+            </label>
+            <label class="field">
+              <span>Neues Passwort</span>
+              <input type="password" name="newPassword" autocomplete="new-password" required minlength="12">
+            </label>
+            <button class="button button--secondary" type="submit">Passwort ändern</button>
+          </form>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+  <template id="mapping-row-template">
+    <div class="mapping-row" role="row">
+      <label role="cell"><span class="sr-only">P25-Talkgroup</span><input type="number" class="mapping-p25" min="1" max="16777215" required inputmode="numeric"></label>
+      <label role="cell"><span class="sr-only">BrandMeister-Talkgroup</span><input type="number" class="mapping-bm" min="1" max="16777215" required inputmode="numeric"></label>
+      <span role="cell" class="mapping-row__action"><button class="icon-button remove-mapping" type="button" title="Zuordnung entfernen" aria-label="Zuordnung entfernen">×</button></span>
+    </div>
+  </template>
+</body>
+</html>

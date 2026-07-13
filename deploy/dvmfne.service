@@ -1,0 +1,15 @@
+[Unit]
+Description=DVM FNE for Quantar bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantar
+WorkingDirectory=/home/quantar/quantar-runtime
+ExecStart=/home/quantar/src/dvmhost/build/dvmfne -c /home/quantar/quantar-runtime/dvmfne-config.yml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

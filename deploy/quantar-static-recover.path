@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch dynamic expiry trigger for static BM to P25 recovery
+
+[Path]
+PathExists=/home/quantar/quantar-runtime/dynamic_expired.trigger
+Unit=quantar-static-recover.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Quantar P25 to BrandMeister bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantar
+WorkingDirectory=/home/quantar/quantarbridge
+ExecStart=/home/quantar/quantarbridge/build/quantarbridge /home/quantar/quantar-runtime/quantarbridge.yml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

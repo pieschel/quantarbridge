@@ -1,0 +1,70 @@
+daemon: false
+
+log:
+  displayLevel: 2
+  fileLevel: 2
+  useSyslog: false
+  filePath: /home/quantar/quantar-runtime/log
+  activityFilePath: /home/quantar/quantar-runtime/log
+  fileRoot: dvmbridge-dmr-to-p25
+
+network:
+  id: 9000112
+  address: 127.0.0.1
+  port: 62031
+  password: "LOCAL_FNE_PASSWORD"
+  encrypted: false
+  presharedKey: ""
+  allowDiagnosticTransfer: true
+  packetDump: false
+  debug: false
+  sourceId: 9000199
+  overrideSourceIdFromMDC: false
+  overrideSourceIdFromUDP: true
+  resetCallForSourceIdChange: true
+  destinationId: 0
+  slot: 2
+
+system:
+  identity: BRIDGE-DMR-P25
+  netId: BB800
+  sysId: 001
+  grantDemand: false
+  txMode: 2
+  rxAudioGain: 0.60
+  vocoderDecoderAudioGain: 0.8
+  vocoderDecoderAutoGain: false
+  txAudioGain: 3.00
+  vocoderEncoderAudioGain: 0.0
+  trace: false
+  debug: false
+  tek:
+    enable: false
+    tekAlgo: "aes"
+    tekKeyId: 1
+  localAudio: false
+  voxSampleLevel: 80.0
+  dropTimeMs: 4000
+  detectAnalogMDC1200: false
+  preambleLeaderTone: false
+  preambleTone: 2175
+  preambleLength: 200
+  udpAudio: false
+  udpMetadata: false
+  udpSendPort: 31011
+  udpSendAddress: "127.0.0.1"
+  udpReceivePort: 31011
+  udpReceiveAddress: "127.0.0.1"
+  udpRTPFrames: true
+  udpIgnoreRTPTiming: false
+  udpRTPContinuousSeq: false
+  udpUseULaw: false
+  udpUsrp: false
+  udpFrameTiming: false
+  rtsPttEnable: false
+  rtsPttPort: "/dev/ttyUSB0"
+  rtsPttHoldoffMs: 250
+  ctsCorEnable: false
+  ctsCorPort: "/dev/ttyUSB0"
+  ctsCorInvert: false
+  ctsCorHoldoffMs: 250

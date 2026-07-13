@@ -1,0 +1,18 @@
+{
+  "inboxDir": "/home/quantar/quantar-runtime/sms/inbox",
+  "outboxDir": "/home/quantar/quantar-runtime/sms/outbox",
+  "p25OutboxDir": "/home/quantar/quantar-runtime/sms/p25-outbox",
+  "processedDir": "/home/quantar/quantar-runtime/sms/processed",
+  "errorDir": "/home/quantar/quantar-runtime/sms/error",
+  "pollIntervalSeconds": 0.25,
+  "localLoopEnabled": true,
+  "brewTargetRids": [262993],
+  "brew": {
+    "enabled": false,
+    "baseUrl": "https://core.tetrapack.online",
+    "username": "",
+    "password": "",
+    "userAgent": "quantarbridge-sms/20260406",
+    "requestTimeoutSeconds": 10.0
+  }
+}

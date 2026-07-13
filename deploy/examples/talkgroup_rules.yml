@@ -1,0 +1,19 @@
+groupVoice:
+  - name: BM Dynamic Slot2
+    alias: BrandMeister
+    config:
+      active: true
+      affiliated: false
+      inclusion:
+        - 9000110
+        - 9000111
+        - 9000101
+        - 9000112
+      exclusion: []
+      rewrite: []
+      always: []
+      preferred: []
+      rid_permitted: []
+    source:
+      tgid: 0
+      slot: 2

@@ -1,0 +1,8 @@
+[Unit]
+Description=Guard static BM talkgroups after dynamic TG expiry
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/deploy/scripts/bm_static_guard.py --config /home/quantar/quantar-runtime/quantarbridge.yml

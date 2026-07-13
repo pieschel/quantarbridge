@@ -1,0 +1,40 @@
+daemon: false
+iAgreeNotToBeStupid: true
+
+log:
+  displayLevel: 1
+  fileLevel: 1
+  filePath: /home/quantar/quantar-runtime/log
+  activityFilePath: /home/quantar/quantar-runtime/log
+  fileRoot: dvmfne
+
+master:
+  peerId: 9000100
+  address: 127.0.0.1
+  port: 62031
+  password: "LOCAL_FNE_PASSWORD"
+  verbose: false
+  packetDump: false
+  debug: false
+  encrypted: false
+  presharedKey: ""
+  allowDMRTraffic: true
+  allowP25Traffic: true
+  allowNXDNTraffic: false
+  allowAnalogTraffic: false
+  disablePacketData: false
+  verbosePacketData: false
+  talkgroup_rules:
+    file: /home/quantar/quantar-runtime/talkgroup_rules.yml
+    time: 0
+
+system:
+  radio_id:
+    file: /home/quantar/quantar-runtime/rid_acl.dat
+    time: 0
+  peer_acl:
+    enable: true
+    file: /home/quantar/quantar-runtime/peer_list.dat
+    time: 0
+
+peers: []

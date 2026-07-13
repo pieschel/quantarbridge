@@ -1,0 +1,6 @@
+[Unit]
+Description=Recover static BM to P25 path after dynamic TG expiry
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/deploy/scripts/quantar_static_recover.py

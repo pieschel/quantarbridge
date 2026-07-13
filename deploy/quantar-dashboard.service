@@ -1,0 +1,20 @@
+[Unit]
+Description=Quantarbridge repeater dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantar
+WorkingDirectory=/home/quantar/quantarbridge
+ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/dashboard/app.py --config /home/quantar/quantar-runtime/quantar-dashboard.json
+Restart=on-failure
+RestartSec=3
+KillMode=process
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

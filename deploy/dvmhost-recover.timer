@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic dvmhost DFSI/V24 recovery check
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Unit=dvmhost-recover.service
+
+[Install]
+WantedBy=timers.target

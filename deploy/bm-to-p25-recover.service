@@ -1,0 +1,8 @@
+[Unit]
+Description=Recover BM to P25 path when downlink stalls before dvmhost
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/deploy/scripts/bm_to_p25_recover.py
