@@ -378,6 +378,43 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual(0.4, calls[1000102]["durationSeconds"])
         self.assertEqual("normal", calls[1000101]["endReason"])
 
+    def test_forwarded_brandmeister_call_sets_channel_busy_without_duplicate(self):
+        state = RuntimeState()
+        started_at = time.time()
+        start = datetime.fromtimestamp(started_at).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        duplicate = datetime.fromtimestamp(started_at + 0.004).strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        )[:-3]
+        ended = datetime.fromtimestamp(started_at + 5.5).strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        )[:-3]
+        state.process_brandmeister_line(
+            f"I: {start} (HOST) Forwarding BrandMeister DMR to FNE "
+            "srcId=1000101 dstId=101 slot=2"
+        )
+
+        active = state.snapshot({})["activeCalls"]
+        self.assertEqual(1, len(active))
+        self.assertEqual("downlink", active[0]["direction"])
+        self.assertEqual(1000101, active[0]["sourceId"])
+        self.assertEqual(101, active[0]["talkgroup"])
+
+        state.process_activity_line(
+            f"A: {duplicate} P25 Net network voice transmission from 1000101 to TG 101"
+        )
+        snapshot = state.snapshot({})
+        self.assertEqual(1, len(snapshot["activeCalls"]))
+        self.assertEqual([], snapshot["recentCalls"])
+
+        state.process_brandmeister_line(
+            f"I: {ended} (HOST) Flushing delayed BM DMR "
+            "terminator to FNE srcId=1000101 dstId=101 slot=2"
+        )
+        snapshot = state.snapshot({})
+        self.assertEqual([], snapshot["activeCalls"])
+        self.assertEqual(5.5, snapshot["recentCalls"][0]["durationSeconds"])
+        self.assertEqual("normal", snapshot["recentCalls"][0]["endReason"])
+
 
 class IdentityDirectoryTest(unittest.TestCase):
     def test_cached_names_remain_available_without_network_access(self):

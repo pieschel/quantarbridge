@@ -94,6 +94,8 @@ if(BUILD_TESTING)
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard_test.py")
     add_test(NAME bm_static_sync
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/bm_static_sync_test.py")
+    add_test(NAME ensure_static_tg
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/ensure_static_tg_test.py")
     add_test(NAME dmr_to_p25_recover
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dmr_to_p25_recover_test.py")
     add_test(NAME quantar_static_recover

@@ -737,6 +737,9 @@ class RuntimeState:
     _dynamic_end_re = re.compile(
         r"Dynamic TG (\d+) (?:expired locally|fully released)"
     )
+    _downlink_start_re = re.compile(
+        r"Forwarding BrandMeister DMR to FNE srcId=(\d+) dstId=(\d+)"
+    )
     _downlink_terminator_re = re.compile(
         r"Flushing delayed BM DMR terminator to FNE srcId=(\d+) dstId=(\d+)"
     )
@@ -928,17 +931,12 @@ class RuntimeState:
             match = self._call_start_re.search(line)
             if match:
                 direction = "uplink" if match.group(1) == "RF" else "downlink"
-                if direction in self._active_calls:
-                    self._finish_call(direction, timestamp, reason="superseded")
-                self._active_calls[direction] = {
-                    "id": f"{int(timestamp * 1000)}-{direction}",
-                    "direction": direction,
-                    "sourceId": int(match.group(2)),
-                    "talkgroup": int(match.group(3)),
-                    "startedAt": timestamp,
-                    "endedAt": None,
-                    "durationSeconds": 0.0,
-                }
+                self._start_call(
+                    direction,
+                    int(match.group(2)),
+                    int(match.group(3)),
+                    timestamp,
+                )
                 return
 
             match = self._call_end_re.search(line)
@@ -946,6 +944,32 @@ class RuntimeState:
                 direction = "uplink" if match.group(1) == "RF" else "downlink"
                 parsed_duration = float(match.group(2)) if match.group(2) else None
                 self._finish_call(direction, timestamp, parsed_duration=parsed_duration)
+
+    def _start_call(
+        self,
+        direction: str,
+        source_id: int,
+        talkgroup: int,
+        timestamp: float,
+    ) -> None:
+        active = self._active_calls.get(direction)
+        if (
+            active
+            and active["sourceId"] == source_id
+            and active["talkgroup"] == talkgroup
+        ):
+            return
+        if active:
+            self._finish_call(direction, timestamp, reason="superseded")
+        self._active_calls[direction] = {
+            "id": f"{int(timestamp * 1000)}-{direction}",
+            "direction": direction,
+            "sourceId": source_id,
+            "talkgroup": talkgroup,
+            "startedAt": timestamp,
+            "endedAt": None,
+            "durationSeconds": 0.0,
+        }
 
     def _finish_call(
         self,
@@ -971,8 +995,17 @@ class RuntimeState:
         timestamp = self._timestamp(line)
         dynamic_update = self._dynamic_update_re.search(line)
         dynamic_end = self._dynamic_end_re.search(line)
+        downlink_start = self._downlink_start_re.search(line)
         downlink_end = self._downlink_terminator_re.search(line)
         with self._lock:
+            if downlink_start:
+                self._start_call(
+                    "downlink",
+                    int(downlink_start.group(1)),
+                    int(downlink_start.group(2)),
+                    timestamp,
+                )
+
             if downlink_end:
                 source_id = int(downlink_end.group(1))
                 talkgroup = int(downlink_end.group(2))

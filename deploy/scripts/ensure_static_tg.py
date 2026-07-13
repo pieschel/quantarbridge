@@ -77,20 +77,6 @@ def has_subscription_on_slot(subscriptions: object, slot: int) -> bool:
     return False
 
 
-def brandmeister_action(device_id: int, slot: int, action: str, api_key: str) -> None:
-    import requests
-
-    response = requests.get(
-        f"https://api.brandmeister.network/v2/device/{device_id}/action/{action}/{slot}",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Accept": "application/json",
-        },
-        timeout=20,
-    )
-    response.raise_for_status()
-
-
 def throttle_active(stamp_path: Path, min_interval_seconds: float) -> bool:
     if min_interval_seconds <= 0:
         return False
@@ -139,9 +125,8 @@ def main() -> int:
     profile = fetch_profile(device_id, api_key)
     dynamic_on_slot = has_subscription_on_slot(profile.get("dynamicSubscriptions"), api_slot)
     if dynamic_on_slot:
-        brandmeister_action(device_id, api_slot, "dropCallRoute", api_key)
-        brandmeister_action(device_id, api_slot, "dropDynamicGroups", api_key)
-        print("cleared_bm_dynamic=true")
+        print("skip=bm-dynamic-active")
+        return 0
 
     tg = static_tgs[0]
     if transport == "mmdvm-gateway":
