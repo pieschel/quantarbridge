@@ -48,6 +48,7 @@ constexpr auto kBmDynamicReleaseGrace = std::chrono::seconds(3);
 constexpr auto kDynamicStateFlushInterval = std::chrono::seconds(5);
 constexpr auto kBmApiRepairCooldown = std::chrono::seconds(10);
 constexpr auto kBmStartupCleanupDelay = std::chrono::seconds(2);
+constexpr auto kDisconnectCommandCooldown = std::chrono::seconds(2);
 constexpr uint32_t kMaxFnePacketsPerLoop = 64U;
 constexpr uint32_t kMaxBmPacketsPerLoop = 64U;
 constexpr size_t kMaxBmApiTasks = 32U;
@@ -637,6 +638,7 @@ int main(int argc, char** argv)
         const uint32_t localBmBaseId = getBmSourceId(config.bm.repeaterId);
         const uint32_t bmApiSlot = getBmApiTalkgroupSlot(config.bm);
         const uint32_t primaryStaticTalkgroup = config.routing.staticTalkgroupOrder.empty() ? 0U : config.routing.staticTalkgroupOrder.front();
+        auto lastDisconnectCommand = std::chrono::steady_clock::time_point::min();
         AsyncTaskQueue bmApiTasks;
         auto lastTick = std::chrono::steady_clock::now();
         auto lastDynamicStateFlush = std::chrono::steady_clock::now();
@@ -965,6 +967,16 @@ int main(int argc, char** argv)
                         bmRouteDstId = uplinkMapping->second;
                     }
                     if (dstId == config.routing.disconnectTalkgroup) {
+                        if (data.getDataType() != DataType::VOICE_LC_HEADER) {
+                            continue;
+                        }
+                        if (lastDisconnectCommand != std::chrono::steady_clock::time_point::min() &&
+                            (now - lastDisconnectCommand) < kDisconnectCommandCooldown) {
+                            ::LogInfoEx(LOG_HOST, "Ignoring repeated disconnect TG header from srcId=%u", data.getSrcId());
+                            continue;
+                        }
+                        lastDisconnectCommand = now;
+
                         std::vector<uint32_t> activeDynamicTalkgroups;
                         activeDynamicTalkgroups.reserve(dynamicTalkgroups.size());
                         for (const auto& entry : dynamicTalkgroups) {

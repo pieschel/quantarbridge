@@ -415,6 +415,27 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual(5.5, snapshot["recentCalls"][0]["durationSeconds"])
         self.assertEqual("normal", snapshot["recentCalls"][0]["endReason"])
 
+    def test_local_disconnect_closes_downlink_without_terminator(self):
+        state = RuntimeState()
+        started_at = time.time()
+        start = datetime.fromtimestamp(started_at).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        disconnected = datetime.fromtimestamp(started_at + 2.0).strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        )[:-3]
+        state.process_brandmeister_line(
+            f"I: {start} (HOST) Forwarding BrandMeister DMR to FNE "
+            "srcId=1000101 dstId=101 slot=2"
+        )
+        state.process_brandmeister_line(
+            f"I: {disconnected} (HOST) Received disconnect TG 4000 from RF side, "
+            "clearing dynamic TG state"
+        )
+
+        snapshot = state.snapshot({})
+        self.assertEqual([], snapshot["activeCalls"])
+        self.assertEqual(2.0, snapshot["recentCalls"][0]["durationSeconds"])
+        self.assertEqual("disconnect", snapshot["recentCalls"][0]["endReason"])
+
 
 class IdentityDirectoryTest(unittest.TestCase):
     def test_cached_names_remain_available_without_network_access(self):

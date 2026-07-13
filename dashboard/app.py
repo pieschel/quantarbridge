@@ -997,6 +997,10 @@ class RuntimeState:
         dynamic_end = self._dynamic_end_re.search(line)
         downlink_start = self._downlink_start_re.search(line)
         downlink_end = self._downlink_terminator_re.search(line)
+        local_disconnect = (
+            "Received disconnect TG" in line
+            and "clearing dynamic TG state" in line
+        )
         with self._lock:
             if downlink_start:
                 self._start_call(
@@ -1042,8 +1046,9 @@ class RuntimeState:
                 self._dynamic_activity[int(dynamic_update.group(1))] = timestamp
             elif dynamic_end:
                 self._dynamic_activity.pop(int(dynamic_end.group(1)), None)
-            elif "Received disconnect TG" in line and "clearing dynamic TG state" in line:
+            elif local_disconnect:
                 self._dynamic_activity.clear()
+                self._finish_call("downlink", timestamp, reason="disconnect")
 
         state: str | None = None
         if "BrandMeister login complete" in line:
