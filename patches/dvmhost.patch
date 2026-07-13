@@ -6896,10 +6896,20 @@ index dd868c47..9f1f0d08 100644
                  m_fneRegTable[llId] = ipAddr;
              }
  
-@@ -866,7 +4308,8 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
+@@ -860,13 +4302,12 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
+         uint32_t llId = (pduUserData[1U] << 16) + (pduUserData[2U] << 8) + pduUserData[3U];
+-
+-        if (m_verbose) {
+-            LogInfoEx(LOG_RF, P25_PDU_STR ", DISCONNECT (Registration Request Disconnect), llId = %u", llId);
+-        }
+-
++
++        LogInfoEx(LOG_RF, P25_PDU_STR ", DISCONNECT (Registration Request Disconnect), llId = %u", llId);
++
          // acknowledge
          writeRF_PDU_Ack_Response(PDUAckClass::ACK, PDUAckType::ACK, m_rfAssembler->dataHeader.getNs(), llId, false);
- 
+-
++
 -        if (hasLLIdFNEReg(llId)) {
 +        m_motorolaSessions.erase(llId);
 +        if (m_fneRegTable.find(llId) != m_fneRegTable.end()) {

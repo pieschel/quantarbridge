@@ -322,6 +322,23 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual(1, snapshot["summary"]["registeredRadios"])
         self.assertEqual(1000001, snapshot["radios"][0]["id"])
 
+    def test_radio_disconnect_removes_registration_immediately(self):
+        state = RuntimeState()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        state.process_dvmhost_line(
+            f"I: {timestamp} (RF) recognized Motorola SCEP ARS registration, "
+            "llId = 1000001, subscriberIp = 10.0.0.20, serverIp = 10.0.0.2, n = 1"
+        )
+
+        state.process_dvmhost_line(
+            f"I: {timestamp} (RF) P25, PDU (Packet Data Unit), DISCONNECT "
+            "(Registration Request Disconnect), llId = 1000001"
+        )
+
+        snapshot = state.snapshot({})
+        self.assertEqual(0, snapshot["summary"]["registeredRadios"])
+        self.assertEqual([], snapshot["radios"])
+
     def test_brandmeister_subscriptions_include_dynamic_expiry(self):
         state = RuntimeState()
         state.set_talkgroup_config(600)

@@ -137,9 +137,11 @@ restarting the host.
 
 ### Dashboard shows stale radios
 
-The dashboard derives state from current logs and identity caches. A radio can
-remain visible for a configured idle period even when it is no longer on RF.
-This does not create a new ARS session in DVMHost.
+The dashboard derives state from current logs and identity caches. A graceful
+P25 data deregistration removes the radio immediately. If a radio loses power
+before its disconnect reaches the FNE, it remains visible until the configured
+registration idle period expires. This does not create a new ARS session in
+DVMHost.
 
 ### Host restart loop
 
