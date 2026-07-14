@@ -349,8 +349,8 @@ function renderRadioMap(radios) {
     const marker = window.L.circleMarker([latitude, longitude], {
       radius: 9,
       weight: 3,
-      color: hasFix ? "#0d5b80" : "#8a5a13",
-      fillColor: hasFix ? "#27a7d8" : "#e1a440",
+      color: hasFix ? "#4d5100" : "#8a5a13",
+      fillColor: hasFix ? "#cfd900" : "#e1a440",
       fillOpacity: 0.92,
     });
     marker.bindPopup(`<div class="map-popup">
