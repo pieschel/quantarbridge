@@ -89,7 +89,7 @@ int main()
 
     const auto textPacket = fromHex(
         "450000304a180000401194040c0f42410c0f42420fa70fa7001ce4ad"
-        "0012e00096040d000a0054006500730074003200");
+        "0012e00080040d000a0054006500730074003200");
     if (!sms.handleBrandmeisterPacketData(1000001U, 1000002U, 2U, textPacket)) {
         std::cerr << "valid TMS text packet was rejected\n";
         return 1;
@@ -101,7 +101,7 @@ int main()
     }
 
     const auto& acknowledgement = outbound[0U].bytes;
-    const std::vector<uint8_t> expectedPayload = {0x00U, 0x03U, 0xBFU, 0x00U, 0x16U};
+    const std::vector<uint8_t> expectedPayload = {0x00U, 0x03U, 0xBFU, 0x00U, 0x00U};
     if (acknowledgement.size() != 33U ||
         !std::equal(expectedPayload.begin(), expectedPayload.end(), acknowledgement.begin() + 28U) ||
         !std::equal(textPacket.begin() + 16U, textPacket.begin() + 20U, acknowledgement.begin() + 12U) ||
@@ -128,6 +128,25 @@ int main()
         contents.find("targetRid: 1000002") == std::string::npos ||
         contents.find("textHex: 5465737432") == std::string::npos) {
         std::cerr << "queued TMS text is invalid\n";
+        return 1;
+    }
+
+    auto retransmittedTextPacket = textPacket;
+    retransmittedTextPacket[32U] = 0x81U;
+    outbound.clear();
+    if (!sms.handleBrandmeisterPacketData(1000001U, 1000002U, 2U, retransmittedTextPacket) ||
+        outbound.size() != 1U) {
+        std::cerr << "E0 TMS retransmission was not acknowledged\n";
+        return 1;
+    }
+    size_t queuedAfterRetransmission = 0U;
+    for (const auto& entry : std::filesystem::directory_iterator(config.p25OutboxPath)) {
+        if (entry.is_regular_file()) {
+            ++queuedAfterRetransmission;
+        }
+    }
+    if (queuedAfterRetransmission != 1U) {
+        std::cerr << "E0 TMS retransmission bypassed text deduplication\n";
         return 1;
     }
 

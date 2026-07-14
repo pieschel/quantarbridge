@@ -70,9 +70,9 @@ expires after `routing.dynamicTimeoutSeconds`. P25 TG `4000` is the default
 disconnect command. Static subscriptions are synchronized from the configured
 BrandMeister device profile.
 
-Valid traffic in either direction refreshes an active dynamic route. This keeps
-an ongoing BrandMeister downlink from expiring locally in the middle of a call;
-the dashboard receives the same refresh timestamp used by the router.
+Only outgoing P25 RF group activity refreshes an active dynamic route. Incoming
+BrandMeister traffic never extends the configured timeout. The dashboard uses
+the same most-recent RF timestamp as the router.
 
 Recovery jobs restart only stateless bridge components for ordinary routing
 faults. `dvmhost` is restarted only by its dedicated watchdog after stronger

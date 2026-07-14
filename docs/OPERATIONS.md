@@ -115,10 +115,9 @@ The configured timeout is `routing.dynamicTimeoutSeconds`. P25 TG `4000`
 clears the active dynamic route. Static subscriptions are synchronized from the
 BrandMeister device profile by `bm-static-sync.timer`.
 
-Both local RF activity and permitted BrandMeister downlink activity refresh the
-timer. The log records `Updated dynamic TG ... from RF activity` or `Refreshed
-dynamic TG ... from BrandMeister activity`; the dashboard expiry must move with
-the most recent of those timestamps.
+Only local P25 RF activity refreshes the timer. The log records `Updated dynamic
+TG ... from RF activity`; incoming BrandMeister traffic must not move the expiry.
+The dashboard expiry follows the most recent RF timestamp.
 
 Ordinary dynamic expiry restarts only the stateless DMR-to-P25 bridge. It must
 not restart `dvmhost`, because that would discard APX packet-data sessions.

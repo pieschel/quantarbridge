@@ -1077,20 +1077,10 @@ std::optional<SmsSubsystem::ParsedSmsPacket> SmsSubsystem::parseMotorolaTms(cons
         return std::nullopt;
     }
 
-    size_t markerOffset = std::string::npos;
-    for (size_t i = 0U; i + 1U < length; ++i) {
-        if (data[i] == 0x80U && data[i + 1U] == 0x04U) {
-            markerOffset = i;
-            break;
-        }
-    }
-    if (markerOffset == std::string::npos) {
-        // BrandMeister's server-originated E0 messages use a message-id/encoding
-        // pair followed by CRLF and UTF-16LE text instead of the 80 04 marker.
-        if (length < 10U || data[2U] != 0xE0U) {
-            return std::nullopt;
-        }
-
+    // BrandMeister server-originated E0 messages carry a message-id/encoding
+    // pair followed by CRLF and UTF-16LE text. Message ID zero produces 80 04,
+    // which must not be mistaken for the APX peer-text marker below.
+    if (data[2U] == 0xE0U) {
         size_t textOffset = std::string::npos;
         for (size_t i = 4U; i + 3U < length; i += 2U) {
             if (data[i] == 0x0DU && data[i + 1U] == 0x00U &&
@@ -1099,33 +1089,42 @@ std::optional<SmsSubsystem::ParsedSmsPacket> SmsSubsystem::parseMotorolaTms(cons
                 break;
             }
         }
-        if (textOffset == std::string::npos) {
-            return std::nullopt;
-        }
-
-        std::u16string decoded;
-        for (size_t i = textOffset; i + 1U < length; i += 2U) {
-            const uint16_t value = static_cast<uint16_t>(data[i]) |
-                (static_cast<uint16_t>(data[i + 1U]) << 8U);
-            if (value == 0x0000U) {
-                break;
+        if (textOffset != std::string::npos) {
+            std::u16string decoded;
+            for (size_t i = textOffset; i + 1U < length; i += 2U) {
+                const uint16_t value = static_cast<uint16_t>(data[i]) |
+                    (static_cast<uint16_t>(data[i + 1U]) << 8U);
+                if (value == 0x0000U) {
+                    break;
+                }
+                if (!isPrintableUtf16(value)) {
+                    return std::nullopt;
+                }
+                decoded.push_back(static_cast<char16_t>(value));
             }
-            if (!isPrintableUtf16(value)) {
+            if (decoded.empty()) {
                 return std::nullopt;
             }
-            decoded.push_back(static_cast<char16_t>(value));
-        }
-        if (decoded.empty()) {
-            return std::nullopt;
-        }
 
-        ParsedSmsPacket packet;
-        packet.application = "motorola_tms";
-        packet.operation = data[2U];
-        packet.messageId = data[4U] & 0x1FU;
-        std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> convert;
-        packet.text = trim(convert.to_bytes(decoded));
-        return packet.text.empty() ? std::nullopt : std::optional<ParsedSmsPacket>(std::move(packet));
+            ParsedSmsPacket packet;
+            packet.application = "motorola_tms";
+            packet.operation = data[2U];
+            packet.messageId = data[4U] & 0x1FU;
+            std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> convert;
+            packet.text = trim(convert.to_bytes(decoded));
+            return packet.text.empty() ? std::nullopt : std::optional<ParsedSmsPacket>(std::move(packet));
+        }
+    }
+
+    size_t markerOffset = std::string::npos;
+    for (size_t i = 0U; i + 1U < length; ++i) {
+        if (data[i] == 0x80U && data[i + 1U] == 0x04U) {
+            markerOffset = i;
+            break;
+        }
+    }
+    if (markerOffset == std::string::npos) {
+        return std::nullopt;
     }
 
     ParsedSmsPacket packet;
