@@ -4069,39 +4069,39 @@ index dd868c47..9f1f0d08 100644
 +bool parseMotorolaArsRefresh(const uint8_t* data, uint32_t length, uint32_t sourceRid,
 +    uint32_t& subscriberIp, uint16_t& requestIpId)
 +{
-+    constexpr uint16_t udpLength = 22U;
-+    if (data == nullptr || length != 42U || sourceRid == 0U || sourceRid > 9999999U ||
-+        data[0U] != 0x45U || readUint16BE(data + 2U) != length || data[9U] != 0x11U ||
++    if (data == nullptr || length < 42U || sourceRid == 0U || sourceRid > 9999999U) {
++        return false;
++    }
++    const uint16_t packetLength = readUint16BE(data + 2U);
++    const uint16_t udpLength = readUint16BE(data + 24U);
++    if (packetLength != length || (udpLength != 22U && udpLength != 29U) ||
++        packetLength != 20U + udpLength || data[0U] != 0x45U || data[9U] != 0x11U ||
 +        readUint32BE(data + 16U) != g_motorolaArsServerIp ||
-+        readUint16BE(data + 20U) != kMotorolaArsPort ||
-+        readUint16BE(data + 22U) != kMotorolaArsPort ||
-+        readUint16BE(data + 24U) != udpLength || checksum16(data, 20U) != 0U) {
++        readUint16BE(data + 20U) != kMotorolaArsPort || readUint16BE(data + 22U) != kMotorolaArsPort ||
++        checksum16(data, 20U) != 0U) {
 +        return false;
 +    }
 +
 +    const uint8_t* payload = data + 28U;
++    const uint16_t payloadLength = udpLength - 8U;
 +    const std::string ridText = std::to_string(sourceRid);
-+    if (ridText.size() != 7U || payload[0U] != 0x00U || payload[1U] != 0x0CU ||
-+        payload[2U] != 0xF0U || payload[3U] != 0x40U || payload[4U] != 0x07U ||
-+        !std::equal(ridText.begin(), ridText.end(), payload + 5U) ||
-+        payload[12U] != 0x00U || payload[13U] != 0x00U) {
++    const bool compactIdentity = payloadLength == 14U && payload[12U] == 0x00U && payload[13U] == 0x00U;
++    const bool dualIdentity = payloadLength == 21U && payload[12U] == 0x07U &&
++        std::equal(ridText.begin(), ridText.end(), payload + 13U) && payload[20U] == 0x00U;
++    if (ridText.size() != 7U || readUint16BE(payload) != payloadLength - 2U ||
++        payload[2U] != 0xF0U || (payload[3U] != 0x20U && payload[3U] != 0x40U) ||
++        payload[4U] != 0x07U || !std::equal(ridText.begin(), ridText.end(), payload + 5U) ||
++        (!compactIdentity && !dualIdentity)) {
 +        return false;
 +    }
 +
-+    std::vector<uint8_t> pseudo;
-+    pseudo.reserve(12U + udpLength);
++    std::vector<uint8_t> pseudo; pseudo.reserve(12U + udpLength);
 +    pseudo.insert(pseudo.end(), data + 12U, data + 20U);
-+    pseudo.push_back(0x00U);
-+    pseudo.push_back(0x11U);
-+    pseudo.push_back(static_cast<uint8_t>((udpLength >> 8U) & 0xFFU));
-+    pseudo.push_back(static_cast<uint8_t>(udpLength & 0xFFU));
-+    pseudo.insert(pseudo.end(), data + 20U, data + length);
-+    if (readUint16BE(data + 26U) != 0U && checksum16(pseudo.data(), pseudo.size()) != 0U) {
-+        return false;
-+    }
-+
-+    subscriberIp = readUint32BE(data + 12U);
-+    requestIpId = readUint16BE(data + 4U);
++    pseudo.push_back(0x00U); pseudo.push_back(0x11U);
++    pseudo.push_back(static_cast<uint8_t>((udpLength >> 8U) & 0xFFU)); pseudo.push_back(static_cast<uint8_t>(udpLength & 0xFFU));
++    pseudo.insert(pseudo.end(), data + 20U, data + packetLength);
++    if (readUint16BE(data + 26U) != 0U && checksum16(pseudo.data(), pseudo.size()) != 0U) return false;
++    subscriberIp = readUint32BE(data + 12U); requestIpId = readUint16BE(data + 4U);
 +    return subscriberIp != 0U && subscriberIp != 0xFFFFFFFFU;
 +}
 +
@@ -5822,7 +5822,7 @@ index dd868c47..9f1f0d08 100644
 +    m_fneRegTable[sourceRid] = subscriberIp;
 +    rememberLocalSmsRid(sourceRid);
 +    auto& session = m_motorolaSessions[sourceRid];
-+    if (session.state == MotorolaSessionState::IDLE) {
++    if (m_rfPduUserData[31U] == 0x20U || session.state == MotorolaSessionState::IDLE) {
 +        session.state = MotorolaSessionState::REGISTERED;
 +        session.pendingServiceAvailability = true;
 +        session.serviceAvailabilityDelayMs = kMotorolaTmsServiceFallbackDelayMs;
@@ -5861,8 +5861,8 @@ index dd868c47..9f1f0d08 100644
 +    UInt8Array assembled = m_rfAssembler->assemble(rspHeader, false, false,
 +        response.data(), &bitLength);
 +
-+    LogInfoEx(LOG_RF, P25_PDU_STR ", accepted Motorola ARS refresh F040, llId = %u, subscriberIp = %s, n = %u",
-+        sourceRid, __IP_FROM_UINT(subscriberIp).c_str(), ns);
++    LogInfoEx(LOG_RF, P25_PDU_STR ", accepted Motorola ARS refresh/registration F0%02X, llId = %u, subscriberIp = %s, n = %u",
++        m_rfPduUserData[31U], sourceRid, __IP_FROM_UINT(subscriberIp).c_str(), ns);
 +    m_p25->writeRF_TDU(true, false);
 +    writeRF_PDU(assembled.get(), bitLength, false);
 +    return true;
@@ -6988,7 +6988,7 @@ index dd868c47..9f1f0d08 100644
      rspHeader.calculateLength(12U);
      writeRF_PDU_User(rspHeader, false, false, pduUserData);
  }
-@@ -1118,5 +4578,7 @@ void Data::writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t a
+@@ -1118,5 +4578,15 @@ void Data::writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t a
              rspHeader.getResponseClass(), rspHeader.getResponseType(), rspHeader.getResponseStatus(), rspHeader.getLLId(), rspHeader.getSrcLLId());
      }
  
@@ -6997,6 +6997,79 @@ index dd868c47..9f1f0d08 100644
 +    // another response of its own.
 +    writeRF_PDU(data, bitLength, false, false, false);
  }
++
++#if defined(CATCH2_TEST_COMPILATION)
++bool parseMotorolaShortArsRequestForTest(const uint8_t* data, uint32_t length,
++    uint32_t sourceRid, uint32_t& subscriberIp, uint16_t& requestIpId)
++{
++    return parseMotorolaArsRefresh(data, length, sourceRid, subscriberIp, requestIpId);
++}
++#endif
+diff --git a/tests/p25/Motorola_ARS_Short_Registration_Test.cpp b/tests/p25/Motorola_ARS_Short_Registration_Test.cpp
+new file mode 100644
+index 00000000..6622d1d1
+--- /dev/null
++++ b/tests/p25/Motorola_ARS_Short_Registration_Test.cpp
+@@ -0,0 +1,59 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <catch2/catch_test_macros.hpp>
++
++#include <array>
++#include <cstdint>
++
++bool parseMotorolaShortArsRequestForTest(const uint8_t* data, uint32_t length,
++    uint32_t sourceRid, uint32_t& subscriberIp, uint16_t& requestIpId);
++
++TEST_CASE("Motorola short ARS registration accepts F020 and F040", "[p25][ars]")
++{
++    constexpr uint32_t sourceRid = 1000001U;
++    constexpr uint32_t expectedSubscriberIp = 0xD0F42411U;
++    constexpr uint16_t expectedRequestIpId = 0x1234U;
++    const std::array<uint8_t, 42U> legacyRegistration = {
++        0x45U, 0x00U, 0x00U, 0x2AU, 0x12U, 0x34U, 0x00U, 0x00U,
++        0x40U, 0x11U, 0x69U, 0x88U, 0xD0U, 0xF4U, 0x24U, 0x11U,
++        0x0AU, 0x00U, 0x00U, 0x02U, 0x0FU, 0xA5U, 0x0FU, 0xA5U,
++        0x00U, 0x16U, 0x59U, 0x81U, 0x00U, 0x0CU, 0xF0U, 0x20U,
++        0x07U, 0x31U, 0x30U, 0x30U, 0x30U, 0x30U, 0x30U, 0x31U,
++        0x00U, 0x00U
++    };
++
++    uint32_t subscriberIp = 0U;
++    uint16_t requestIpId = 0U;
++    REQUIRE(parseMotorolaShortArsRequestForTest(legacyRegistration.data(),
++        static_cast<uint32_t>(legacyRegistration.size()), sourceRid, subscriberIp, requestIpId));
++    CHECK(subscriberIp == expectedSubscriberIp);
++    CHECK(requestIpId == expectedRequestIpId);
++
++    const std::array<uint8_t, 49U> dualIdentityRegistration = {
++        0x45U, 0x00U, 0x00U, 0x31U, 0x12U, 0x34U, 0x00U, 0x00U,
++        0x40U, 0x11U, 0x69U, 0x81U, 0xD0U, 0xF4U, 0x24U, 0x11U,
++        0x0AU, 0x00U, 0x00U, 0x02U, 0x0FU, 0xA5U, 0x0FU, 0xA5U,
++        0x00U, 0x1DU, 0xC1U, 0xA9U, 0x00U, 0x13U, 0xF0U, 0x20U,
++        0x07U, 0x31U, 0x30U, 0x30U, 0x30U, 0x30U, 0x30U, 0x31U,
++        0x07U, 0x31U, 0x30U, 0x30U, 0x30U, 0x30U, 0x30U, 0x31U,
++        0x00U
++    };
++
++    REQUIRE(parseMotorolaShortArsRequestForTest(dualIdentityRegistration.data(),
++        static_cast<uint32_t>(dualIdentityRegistration.size()), sourceRid, subscriberIp, requestIpId));
++    CHECK(subscriberIp == expectedSubscriberIp);
++    CHECK(requestIpId == expectedRequestIpId);
++
++    auto refresh = legacyRegistration;
++    refresh[26U] = 0x59U;
++    refresh[27U] = 0x61U;
++    refresh[31U] = 0x40U;
++    CHECK(parseMotorolaShortArsRequestForTest(refresh.data(),
++        static_cast<uint32_t>(refresh.size()), sourceRid, subscriberIp, requestIpId));
++
++    auto unsupported = legacyRegistration;
++    unsupported[26U] = 0x59U;
++    unsupported[27U] = 0xA1U;
++    unsupported[31U] = 0x00U;
++    CHECK_FALSE(parseMotorolaShortArsRequestForTest(unsupported.data(),
++        static_cast<uint32_t>(unsupported.size()), sourceRid, subscriberIp, requestIpId));
++}
 diff --git a/src/host/p25/packet/Data.h b/src/host/p25/packet/Data.h
 index 6c550270..c9d733c8 100644
 --- a/src/host/p25/packet/Data.h
