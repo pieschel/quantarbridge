@@ -558,6 +558,12 @@ class IdentityDirectory:
                     talkgroups.add(int(entry.get("talkgroup", 0)))
                 except (AttributeError, TypeError, ValueError):
                     continue
+        connection = status.get("connection", {})
+        for entry in connection.get("talkgroupMappings", []):
+            try:
+                talkgroups.add(int(entry.get("brandmeister", 0)))
+            except (AttributeError, TypeError, ValueError):
+                continue
 
         radio_ids.discard(0)
         talkgroups.discard(0)
@@ -753,6 +759,7 @@ class RuntimeState:
         self._bm_state = "unknown"
         self._bm_last_change: float | None = None
         self._mappings: list[dict[str, int]] = []
+        self._ars_server_address = ""
         self._positions: dict[int, dict[str, Any]] = {}
         self._dynamic_activity: dict[int, float] = {}
         self._dynamic_timeout_seconds = 600
@@ -777,6 +784,13 @@ class RuntimeState:
     def set_mappings(self, mappings: Iterable[dict[str, int]]) -> None:
         with self._lock:
             self._mappings = [dict(entry) for entry in mappings]
+
+    def set_connection_config(
+        self, mappings: Iterable[dict[str, int]], ars_server_address: str
+    ) -> None:
+        with self._lock:
+            self._mappings = [dict(entry) for entry in mappings]
+            self._ars_server_address = str(ars_server_address).strip()
 
     def set_talkgroup_config(self, dynamic_timeout_seconds: int) -> None:
         with self._lock:
@@ -849,13 +863,16 @@ class RuntimeState:
             match = self._registration_re.search(line)
             if match:
                 radio_id = int(match.group(1))
+                server_ip = match.group(3).strip()
+                if not self._ars_server_address and server_ip:
+                    self._ars_server_address = server_ip
                 previous = self._radios.get(radio_id, {})
                 self._radios[radio_id] = {
                     **previous,
                     "id": radio_id,
                     "registered": True,
                     "subscriberIp": match.group(2).strip(),
-                    "serverIp": match.group(3).strip(),
+                    "serverIp": server_ip,
                     "registeredAt": previous.get("registeredAt", timestamp),
                     "lastSeen": timestamp,
                     "tms": previous.get("tms", False),
@@ -1119,6 +1136,14 @@ class RuntimeState:
                 int(entry["p25"]): int(entry["brandmeister"])
                 for entry in self._mappings
             }
+            connection_mappings = [
+                {
+                    "p25": p25,
+                    "brandmeister": brandmeister,
+                    "name": talkgroup_name(brandmeister),
+                }
+                for p25, brandmeister in sorted(mappings_by_p25.items())
+            ]
             radios = []
             for radio_id, radio in self._radios.items():
                 if not radio.get("registered"):
@@ -1224,6 +1249,10 @@ class RuntimeState:
                     "lastChange": utc_iso(self._bm_last_change)
                     if self._bm_last_change
                     else None,
+                },
+                "connection": {
+                    "arsServerAddress": self._ars_server_address,
+                    "talkgroupMappings": connection_mappings,
                 },
                 "talkgroups": {
                     "status": "stale" if self._bm_profile_error else (
@@ -1764,9 +1793,9 @@ class SettingsManager:
             )
             bm = bridge.get("brandmeister", {})
             routing = bridge.get("routing", {})
-            location = host.get("protocols", {}).get("p25", {}).get(
-                "motorolaLocation", {}
-            )
+            p25 = host.get("protocols", {}).get("p25", {})
+            location = p25.get("motorolaLocation", {})
+            packet_data = p25.get("motorolaPacketData", {})
             mappings = [
                 {
                     "p25": int(entry.get("p25", 0)),
@@ -1775,7 +1804,9 @@ class SettingsManager:
                 for entry in routing.get("talkgroupMappings", [])
                 if isinstance(entry, dict)
             ]
-            self.state.set_mappings(mappings)
+            self.state.set_connection_config(
+                mappings, str(packet_data.get("arsServerAddress", ""))
+            )
             self.state.set_talkgroup_config(
                 int(routing.get("dynamicTimeoutSeconds", 600))
             )

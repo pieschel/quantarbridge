@@ -392,6 +392,108 @@ h2 {
   margin-bottom: 3px;
 }
 
+.connection-band {
+  overflow: hidden;
+}
+
+.connection-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.75fr) minmax(0, 1.6fr);
+}
+
+.connection-address {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  min-height: 126px;
+  padding: 22px 24px;
+  border-right: 1px solid var(--line);
+}
+
+.connection-label {
+  margin-bottom: 7px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.connection-address strong {
+  overflow-wrap: anywhere;
+  font-size: 25px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.connection-address small {
+  margin-top: 7px;
+  color: var(--ink-faint);
+  font-size: 10px;
+}
+
+.connection-mappings {
+  min-width: 0;
+  max-height: 252px;
+  overflow-y: auto;
+}
+
+.connection-mapping-row {
+  display: grid;
+  grid-template-columns: minmax(250px, auto) minmax(120px, 1fr);
+  align-items: center;
+  min-height: 63px;
+  padding: 11px 20px;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.connection-mapping-row:last-child {
+  border-bottom: 0;
+}
+
+.connection-route {
+  display: grid;
+  grid-template-columns: minmax(82px, 1fr) 24px minmax(100px, 1fr);
+  align-items: center;
+  min-width: 0;
+}
+
+.connection-route > span {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 8px;
+}
+
+.connection-route small {
+  color: var(--ink-faint);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.connection-route strong {
+  overflow: hidden;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-route b {
+  color: var(--accent-dark);
+  font-size: 17px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.connection-mapping-name {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .on-air-band {
   overflow: hidden;
 }
@@ -1559,6 +1661,15 @@ input:read-only {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .connection-layout {
+    grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+  }
+
+  .connection-mapping-row {
+    grid-template-columns: minmax(230px, 1fr);
+    gap: 4px;
+  }
+
   .settings-section {
     grid-template-columns: 180px minmax(0, 1fr);
     gap: 24px;
@@ -1685,6 +1796,26 @@ input:read-only {
   .talkgroup-list {
     min-height: 0;
     max-height: none;
+  }
+
+  .connection-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .connection-address {
+    min-height: 112px;
+    padding: 18px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .connection-mappings {
+    max-height: none;
+  }
+
+  .connection-mapping-row {
+    padding-right: 15px;
+    padding-left: 15px;
   }
 
   .section-header {

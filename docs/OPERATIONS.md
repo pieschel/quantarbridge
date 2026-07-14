@@ -14,6 +14,7 @@ The dashboard shows:
 - Source radio and talkgroup names resolved from BrandMeister
 - Static and dynamic subscriptions, including dynamic expiry
 - Last LRRP position for each radio
+- Public ARS server address and bidirectional talkgroup mappings
 
 ## Core Services
 

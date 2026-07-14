@@ -90,6 +90,9 @@ sms:
     config.dvmhost_config.write_text(
         """protocols:
   p25:
+    motorolaPacketData:
+      arsServerAddress: 10.0.0.2
+      arsPeerAddress: 10.0.0.1
     motorolaLocation:
       initialDelaySeconds: 5
       updateIntervalSeconds: 300
@@ -277,6 +280,7 @@ class RuntimeStateTest(unittest.TestCase):
             {262000: {"name": "Example Talkgroup"}},
         )
         self.assertEqual(1, snapshot["summary"]["registeredRadios"])
+        self.assertEqual("10.0.0.2", snapshot["connection"]["arsServerAddress"])
         self.assertTrue(snapshot["radios"][0]["tms"])
         self.assertEqual("no_fix", snapshot["radios"][0]["gpsStatus"])
         self.assertEqual("Example APX", snapshot["radios"][0]["label"])
@@ -491,6 +495,32 @@ class IdentityDirectoryTest(unittest.TestCase):
 
 
 class SettingsManagerTest(unittest.TestCase):
+    def test_read_publishes_only_public_connection_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = make_config(Path(directory))
+            write_runtime(config)
+            state = RuntimeState()
+            manager = SettingsManager(config, state, RecordingRestarter())
+
+            manager.read()
+            connection = state.snapshot(
+                {}, {}, {262000: {"name": "Example Talkgroup"}}
+            )["connection"]
+
+            self.assertEqual("10.0.0.2", connection["arsServerAddress"])
+            self.assertEqual(
+                [
+                    {
+                        "p25": 101,
+                        "brandmeister": 262000,
+                        "name": "Example Talkgroup",
+                    }
+                ],
+                connection["talkgroupMappings"],
+            )
+            self.assertNotIn("arsPeerAddress", connection)
+            self.assertNotIn("10.0.0.1", json.dumps(connection))
+
     def test_outdated_settings_payload_requests_full_reload(self):
         with tempfile.TemporaryDirectory() as directory:
             config = make_config(Path(directory))

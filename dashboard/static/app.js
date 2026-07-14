@@ -38,6 +38,7 @@ function cacheElements() {
     "add-mapping", "save-state", "settings-version", "save-settings",
     "password-form", "toast-stack", "theme-toggle", "theme-icon", "map-count",
     "radio-map", "radio-map-empty", "talkgroup-count", "talkgroup-list", "talkgroup-source",
+    "connection-ars-address", "connection-mapping-count", "connection-mapping-list",
   ];
   for (const id of ids) elements[id] = document.getElementById(id);
   elements.tabs = [...document.querySelectorAll(".nav-tab")];
@@ -167,11 +168,37 @@ function renderStatus() {
   elements["metric-services-detail"].textContent = healthy ? "Alle Kerndienste laufen" : "Dienstprüfung erforderlich";
 
   renderActiveCalls(data.activeCalls || []);
+  renderConnection(data.connection || {});
   renderRadios(data.radios || []);
   renderRadioMap(data.radios || []);
   renderTalkgroups(data.talkgroups || {});
   renderServices(data.services || []);
   renderCallHistory(data.recentCalls || []);
+}
+
+function renderConnection(connection) {
+  const address = String(connection.arsServerAddress || "").trim();
+  elements["connection-ars-address"].textContent = address || "Nicht konfiguriert";
+
+  const mappings = (connection.talkgroupMappings || []).filter((entry) => (
+    Number(entry.p25) > 0 && Number(entry.brandmeister) > 0
+  ));
+  elements["connection-mapping-count"].textContent = mappings.length;
+  if (!mappings.length) {
+    elements["connection-mapping-list"].innerHTML = '<div class="empty-state empty-state--inline"><div><strong>Kein Talkgroup-Mapping konfiguriert</strong></div></div>';
+    return;
+  }
+
+  elements["connection-mapping-list"].innerHTML = mappings.map((entry) => `
+    <div class="connection-mapping-row">
+      <div class="connection-route" aria-label="P25 Talkgroup ${entry.p25} zu BrandMeister Talkgroup ${entry.brandmeister}">
+        <span><small>P25</small><strong>${escapeHtml(entry.p25)}</strong></span>
+        <b aria-hidden="true">↔</b>
+        <span><small>BM</small><strong>${escapeHtml(entry.brandmeister)}</strong></span>
+      </div>
+      <span class="connection-mapping-name">${escapeHtml(entry.name || "Bidirektional")}</span>
+    </div>
+  `).join("");
 }
 
 function renderOffline(message) {

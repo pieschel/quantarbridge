@@ -7,9 +7,9 @@
   <title>Quantarbridge</title>
   <script src="/assets/theme.js?v=20260713-2"></script>
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css?v=1.9.4">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260713-7">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260714-1">
   <script src="/assets/vendor/leaflet/leaflet.js?v=1.9.4" defer></script>
-  <script src="/assets/app.js?v=20260713-7" defer></script>
+  <script src="/assets/app.js?v=20260714-1" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -72,6 +72,26 @@
           <span class="metric__label">Dienste</span>
           <strong class="metric__value metric__value--fraction"><span id="metric-services-up">0</span><small>/</small><span id="metric-services-total">0</span></strong>
           <span class="metric__detail" id="metric-services-detail">Status wird geladen</span>
+        </div>
+      </section>
+
+      <section class="section-band connection-band" aria-labelledby="connection-title">
+        <div class="section-header section-header--compact">
+          <div>
+            <p class="eyebrow">P25-ZUGANG</p>
+            <h2 id="connection-title">Verbindungsdaten</h2>
+          </div>
+          <span class="count-badge" id="connection-mapping-count">0</span>
+        </div>
+        <div class="connection-layout">
+          <div class="connection-address">
+            <span class="connection-label">ARS-Serveradresse</span>
+            <strong id="connection-ars-address">Wird geladen</strong>
+            <small>CPS: Automatic Registration Server Address</small>
+          </div>
+          <div class="connection-mappings" id="connection-mapping-list">
+            <div class="empty-state empty-state--inline"><div><strong>Talkgroup-Mapping wird geladen</strong></div></div>
+          </div>
         </div>
       </section>
 
