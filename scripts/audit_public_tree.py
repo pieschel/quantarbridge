@@ -12,7 +12,13 @@ from typing import Any, Iterable
 import yaml
 
 
-IGNORED_DIRECTORIES = {".git", "build", ".cache", "__pycache__"}
+IGNORED_DIRECTORIES = {
+    ".git",
+    ".codex-remote-attachments",
+    "build",
+    ".cache",
+    "__pycache__",
+}
 FORBIDDEN_SUFFIXES = {
     ".jpg",
     ".jpeg",

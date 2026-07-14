@@ -1,5 +1,11 @@
 :root {
   color-scheme: light;
+  --impact: #a8e52a;
+  --impact-highlight: #c8ff55;
+  --impact-shadow: #719c0c;
+  --shell-ink: #10140b;
+  --control-edge: #151811;
+  --shell-shadow: 0 4px 0 rgb(16 20 11 / 32%);
   --ink: #1d211a;
   --ink-soft: #555b4d;
   --ink-faint: #686e60;
@@ -13,12 +19,12 @@
   --nav: #11130f;
   --nav-ink: #f5f6ef;
   --nav-muted: #b5bcaa;
-  --accent: #b6bf00;
-  --accent-dark: #4d5100;
-  --accent-soft: #f2f4c9;
-  --accent-hover: #a0a634;
-  --accent-soft-hover: #e7eaa8;
-  --accent-border: #cbd17a;
+  --accent: var(--impact);
+  --accent-dark: #385500;
+  --accent-soft: #ecf9cc;
+  --accent-hover: #91ca18;
+  --accent-soft-hover: #ddf2ad;
+  --accent-border: #9ccf2c;
   --accent-contrast: #171a0d;
   --green: #15805f;
   --green-soft: #e1f3eb;
@@ -32,6 +38,12 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --impact: #a8e52a;
+  --impact-highlight: #c8ff55;
+  --impact-shadow: #719c0c;
+  --shell-ink: #10140b;
+  --control-edge: #070906;
+  --shell-shadow: 0 4px 0 rgb(7 9 6 / 45%);
   --ink: #f0f2e9;
   --ink-soft: #bdc4b4;
   --ink-faint: #939b8b;
@@ -43,12 +55,12 @@
   --surface-subtle: #252a20;
   --surface-sticky: #24281f;
   --nav: #0c0e0b;
-  --accent: #cfd900;
-  --accent-dark: #edf582;
-  --accent-soft: #30350a;
-  --accent-hover: #edf582;
-  --accent-soft-hover: #42490d;
-  --accent-border: #6b711e;
+  --accent: var(--impact);
+  --accent-dark: var(--impact-highlight);
+  --accent-soft: #26360b;
+  --accent-hover: var(--impact-highlight);
+  --accent-soft-hover: #3a500f;
+  --accent-border: #719c0c;
   --accent-contrast: #111308;
   --green: #4fc79b;
   --green-soft: #193b31;
@@ -65,13 +77,13 @@
 
 html {
   min-width: 320px;
-  background: var(--surface-muted);
+  background: var(--impact);
 }
 
 body {
   margin: 0;
   color: var(--ink);
-  background: var(--surface-muted);
+  background: var(--impact);
   font-family: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 15px;
   line-height: 1.45;
@@ -109,7 +121,7 @@ button:disabled {
   min-height: 68px;
   color: var(--nav-ink);
   background: var(--nav);
-  border-bottom: 3px solid var(--accent);
+  border-bottom: 4px solid var(--impact);
 }
 
 .topbar__inner {
@@ -137,7 +149,7 @@ button:disabled {
   height: 34px;
   padding: 6px 5px;
   gap: 3px;
-  background: var(--accent);
+  background: var(--impact);
   border-radius: 4px;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 14%);
 }
@@ -192,12 +204,12 @@ button:disabled {
 
 .nav-tab:hover {
   color: var(--nav-ink);
-  background: rgb(207 217 0 / 6%);
+  background: rgb(168 229 42 / 8%);
 }
 
 .nav-tab.is-active {
   color: var(--nav-ink);
-  border-bottom-color: var(--accent);
+  border-bottom-color: var(--impact);
 }
 
 .live-state {
@@ -228,12 +240,12 @@ button:disabled {
 
 .theme-toggle:hover {
   color: var(--nav-ink);
-  background: rgb(207 217 0 / 8%);
-  border-color: rgb(207 217 0 / 42%);
+  background: rgb(168 229 42 / 10%);
+  border-color: rgb(168 229 42 / 55%);
 }
 
 .theme-toggle:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--impact);
   outline-offset: 2px;
 }
 
@@ -276,6 +288,20 @@ main {
   min-height: 58px;
   margin-bottom: 20px;
   gap: 24px;
+  color: var(--shell-ink);
+}
+
+.page-heading .eyebrow {
+  color: #304600;
+}
+
+.page-heading .last-update {
+  color: rgb(16 20 11 / 72%);
+}
+
+.page-heading .button--quiet {
+  color: var(--shell-ink);
+  border-color: rgb(16 20 11 / 38%);
 }
 
 h1,
@@ -317,9 +343,9 @@ h2 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-bottom: 18px;
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 2px solid var(--control-edge);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shell-shadow);
 }
 
 .metric {
@@ -383,9 +409,9 @@ h2 {
   min-width: 0;
   margin-bottom: 18px;
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 2px solid var(--control-edge);
   border-radius: var(--radius);
-  box-shadow: 0 3px 12px rgb(29 33 26 / 5%);
+  box-shadow: var(--shell-shadow);
 }
 
 .section-header {
@@ -395,7 +421,8 @@ h2 {
   min-height: 68px;
   padding: 14px 20px;
   gap: 20px;
-  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
+  border-bottom: 2px solid var(--line-strong);
 }
 
 .section-header--compact {
@@ -874,9 +901,11 @@ h2 {
   min-width: 34px;
   height: 26px;
   padding: 0 8px;
-  color: var(--accent-dark);
-  background: var(--accent-soft);
+  color: var(--shell-ink);
+  background: var(--impact);
+  border: 1px solid var(--impact-shadow);
   border-radius: 4px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 24%);
   font-size: 12px;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
@@ -1141,9 +1170,9 @@ tbody tr:hover td {
   width: min(100%, 380px);
   padding: 28px;
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 2px solid var(--control-edge);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shell-shadow);
 }
 
 .login-panel__heading {
@@ -1237,7 +1266,7 @@ input:read-only {
   padding: 28px 30px;
   gap: 34px;
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 2px solid var(--control-edge);
 }
 
 .settings-section:first-child {
@@ -1551,8 +1580,8 @@ input:read-only {
   padding: 14px 30px;
   gap: 24px;
   background: var(--surface-sticky);
-  border: 1px solid var(--line);
-  border-top: 2px solid var(--line-strong);
+  border: 2px solid var(--control-edge);
+  border-top-color: var(--impact-shadow);
   border-radius: 0 0 var(--radius) var(--radius);
   box-shadow: 0 -8px 20px rgb(29 33 26 / 5%);
 }
@@ -1738,11 +1767,24 @@ input:read-only {
     grid-row: 2;
     justify-content: stretch;
     margin: 0 -16px;
-    border-top: 1px solid rgb(255 255 255 / 9%);
+    background: var(--impact);
+    border-top: 2px solid var(--control-edge);
   }
 
   .nav-tab {
     flex: 1;
+    color: rgb(16 20 11 / 72%);
+  }
+
+  .nav-tab:hover {
+    color: var(--shell-ink);
+    background: rgb(16 20 11 / 7%);
+  }
+
+  .nav-tab.is-active {
+    color: var(--shell-ink);
+    background: rgb(16 20 11 / 9%);
+    border-bottom-color: var(--shell-ink);
   }
 
   main {
