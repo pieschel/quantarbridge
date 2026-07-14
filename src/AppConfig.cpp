@@ -2,6 +2,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <filesystem>
 #include <stdexcept>
 
 namespace {
@@ -129,10 +130,16 @@ AppConfig loadConfig(const std::string& path)
         assignIfPresent(sms, "outboxPath", config.sms.outboxPath);
         assignIfPresent(sms, "sentPath", config.sms.sentPath);
         assignIfPresent(sms, "p25OutboxPath", config.sms.p25OutboxPath);
+        assignIfPresent(sms, "serviceRoutePath", config.sms.serviceRoutePath);
         assignIfPresent(sms, "pollIntervalMs", config.sms.pollIntervalMs);
         assignIfPresent(sms, "maxPacketBytes", config.sms.maxPacketBytes);
         assignIfPresent(sms, "decodeUtf16Le", config.sms.decodeUtf16Le);
         assignIfPresent(sms, "outboundAppendNullTerminator", config.sms.outboundAppendNullTerminator);
+        if (!sms["serviceRoutePath"]) {
+            config.sms.serviceRoutePath = (
+                std::filesystem::path(config.sms.outboxPath).parent_path() / "service-routes"
+            ).string();
+        }
     }
 
     if (config.sms.outboundMode == "brandmeister") {

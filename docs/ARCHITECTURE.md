@@ -70,6 +70,10 @@ expires after `routing.dynamicTimeoutSeconds`. P25 TG `4000` is the default
 disconnect command. Static subscriptions are synchronized from the configured
 BrandMeister device profile.
 
+Valid traffic in either direction refreshes an active dynamic route. This keeps
+an ongoing BrandMeister downlink from expiring locally in the middle of a call;
+the dashboard receives the same refresh timestamp used by the router.
+
 Recovery jobs restart only stateless bridge components for ordinary routing
 faults. `dvmhost` is restarted only by its dedicated watchdog after stronger
 evidence, because restarting it drops all in-memory ARS, TMS, and LRRP sessions.
@@ -88,6 +92,13 @@ APX <- Quantar <- dvmhost <- P25 outbox <- local or network message
 Long text messages are split into confirmed P25 blocks. TMS message IDs and RF
 sequence numbers let the APX reconstruct one application message rather than
 displaying each RF block separately.
+
+Some external messaging services return replies to the bridge subscriber ID
+instead of the requesting APX ID. Before such a request is sent, the queue
+stores an expiring FIFO route under `sms/service-routes`. QuantarBridge consumes
+exactly one matching route when the service reply arrives and delivers it to
+the original requester while keeping the BrandMeister acknowledgement addressed
+to the bridge subscriber.
 
 LRRP requests are sent only after a TMS-capable session is ready. Valid reports
 are forwarded as BrandMeister location packet data. A no-fix response uses the

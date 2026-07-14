@@ -43,6 +43,11 @@ private:
         bool valid {false};
     };
 
+    struct ServiceReplyRoute {
+        uint32_t requesterRid {0U};
+        std::filesystem::path path;
+    };
+
     bool openTransmitSocket();
     void ensureDirectories() const;
     void processIncomingSocket(network::udp::Socket& socket, const char* channelName);
@@ -64,6 +69,7 @@ private:
     bool sendBrandmeisterTmsAcknowledgement(uint32_t sourceRid, uint32_t targetRid, uint8_t slotNo,
         const std::vector<uint8_t>& ipv4Packet, uint16_t sourcePort, uint16_t targetPort,
         uint8_t requestOperation, uint8_t messageId);
+    std::optional<ServiceReplyRoute> findServiceReplyRoute(uint32_t serviceRid) const;
     static std::vector<uint8_t> buildIpv4UdpPacket(const std::string& sourceIp, const std::string& targetIp,
         uint16_t sourcePort, uint16_t targetPort, const std::vector<uint8_t>& payload);
     static std::string bytesToHex(const uint8_t* data, uint32_t length);

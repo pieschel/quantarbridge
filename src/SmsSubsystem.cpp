@@ -29,6 +29,7 @@ namespace {
 constexpr uint32_t kMaxInboundPacketsPerClock = 16U;
 constexpr size_t kMaxOutboundFilesPerPoll = 8U;
 constexpr auto kBmTmsReplyDuplicateWindow = std::chrono::seconds(60);
+constexpr auto kServiceReplyRouteMaxAge = std::chrono::minutes(15);
 
 std::string trim(const std::string& value)
 {
@@ -341,6 +342,57 @@ void SmsSubsystem::setBmPacketDataWriter(std::function<bool(uint32_t, uint32_t, 
     m_bmPacketDataWriter = std::move(writer);
 }
 
+std::optional<SmsSubsystem::ServiceReplyRoute> SmsSubsystem::findServiceReplyRoute(uint32_t serviceRid) const
+{
+    if (serviceRid == 0U || m_config.serviceRoutePath.empty()) {
+        return std::nullopt;
+    }
+
+    std::error_code ec;
+    std::vector<std::filesystem::path> paths;
+    for (const auto& entry : std::filesystem::directory_iterator(m_config.serviceRoutePath, ec)) {
+        if (ec) {
+            ::LogWarning(LOG_HOST, "TMS service-route scan failed for %s: %s",
+                m_config.serviceRoutePath.c_str(), ec.message().c_str());
+            return std::nullopt;
+        }
+        if (entry.is_regular_file() && entry.path().extension() == ".json") {
+            paths.push_back(entry.path());
+        }
+    }
+    std::sort(paths.begin(), paths.end());
+
+    const uint64_t nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    const uint64_t maxAgeMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        kServiceReplyRouteMaxAge).count());
+
+    for (const auto& path : paths) {
+        try {
+            const YAML::Node route = YAML::LoadFile(path.string());
+            const uint64_t createdAtMs = route["createdAtMs"] ? route["createdAtMs"].as<uint64_t>() : 0U;
+            const uint64_t expiresAtMs = route["expiresAtMs"] ? route["expiresAtMs"].as<uint64_t>() :
+                (createdAtMs > 0U ? createdAtMs + maxAgeMs : 0U);
+            if (expiresAtMs == 0U || expiresAtMs <= nowMs) {
+                ec.clear();
+                std::filesystem::remove(path, ec);
+                continue;
+            }
+
+            const uint32_t routeServiceRid = route["serviceRid"] ? route["serviceRid"].as<uint32_t>() : 0U;
+            const uint32_t requesterRid = route["requesterRid"] ? route["requesterRid"].as<uint32_t>() : 0U;
+            if (routeServiceRid == serviceRid && requesterRid != 0U) {
+                return ServiceReplyRoute {requesterRid, path};
+            }
+        } catch (const std::exception& ex) {
+            ::LogWarning(LOG_HOST, "Ignoring invalid TMS service-route file %s: %s",
+                path.string().c_str(), ex.what());
+        }
+    }
+
+    return std::nullopt;
+}
+
 bool SmsSubsystem::handleBrandmeisterPacketData(uint32_t sourceRid, uint32_t targetRid,
     uint8_t slotNo, const std::vector<uint8_t>& ipv4Packet)
 {
@@ -412,6 +464,15 @@ bool SmsSubsystem::handleBrandmeisterPacketData(uint32_t sourceRid, uint32_t tar
         return true;
     }
 
+    const auto serviceRoute = findServiceReplyRoute(sourceRid);
+    const uint32_t deliveryTargetRid = serviceRoute.has_value() ?
+        serviceRoute->requesterRid : targetRid;
+    if (serviceRoute.has_value() && deliveryTargetRid != targetRid) {
+        ::LogInfoEx(LOG_HOST,
+            "Routing BM Motorola TMS service reply from srcRid=%u networkDstRid=%u to requesterRid=%u",
+            sourceRid, targetRid, deliveryTargetRid);
+    }
+
     std::error_code ec;
     std::filesystem::create_directories(m_config.p25OutboxPath, ec);
     if (ec) {
@@ -430,7 +491,7 @@ bool SmsSubsystem::handleBrandmeisterPacketData(uint32_t sourceRid, uint32_t tar
     }
 
     output << "sourceRid: " << sourceRid << '\n';
-    output << "targetRid: " << targetRid << '\n';
+    output << "targetRid: " << deliveryTargetRid << '\n';
     output << "textHex: " << bytesToHex(reinterpret_cast<const uint8_t*>(text.data()),
         static_cast<uint32_t>(text.size())) << '\n';
     output.close();
@@ -447,6 +508,14 @@ bool SmsSubsystem::handleBrandmeisterPacketData(uint32_t sourceRid, uint32_t tar
         return false;
     }
 
+    if (serviceRoute.has_value()) {
+        ec.clear();
+        if (!std::filesystem::remove(serviceRoute->path, ec) || ec) {
+            ::LogWarning(LOG_HOST, "TMS service-route file %s could not be consumed: %s",
+                serviceRoute->path.string().c_str(), ec ? ec.message().c_str() : "file not found");
+        }
+    }
+
     m_recentBmTmsReplies[replyKey] = now + kBmTmsReplyDuplicateWindow;
 
     if (parsed.has_value() && !sendBrandmeisterTmsAcknowledgement(sourceRid, targetRid, slotNo,
@@ -457,7 +526,7 @@ bool SmsSubsystem::handleBrandmeisterPacketData(uint32_t sourceRid, uint32_t tar
 
     ::LogInfoEx(LOG_HOST,
         "BM Motorola TMS reply queued for P25, srcRid=%u dstRid=%u ports=%u->%u textLength=%u file=%s",
-        sourceRid, targetRid, sourcePort, targetPort, static_cast<uint32_t>(text.size()),
+        sourceRid, deliveryTargetRid, sourcePort, targetPort, static_cast<uint32_t>(text.size()),
         targetPath.string().c_str());
     return true;
 }
@@ -549,6 +618,8 @@ void SmsSubsystem::ensureDirectories() const
     std::filesystem::create_directories(m_config.sentPath, ec);
     ec.clear();
     std::filesystem::create_directories(m_config.p25OutboxPath, ec);
+    ec.clear();
+    std::filesystem::create_directories(m_config.serviceRoutePath, ec);
 }
 
 void SmsSubsystem::processIncomingSocket(Socket& socket, const char* channelName)

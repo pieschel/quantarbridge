@@ -46,6 +46,7 @@ constexpr auto kBmDuplicateSuppressWindow = std::chrono::milliseconds(15);
 constexpr auto kBmHeaderSuppressWindow = std::chrono::milliseconds(750);
 constexpr auto kBmDynamicReleaseGrace = std::chrono::seconds(3);
 constexpr auto kDynamicStateFlushInterval = std::chrono::seconds(5);
+constexpr auto kDynamicActivityLogInterval = std::chrono::seconds(5);
 constexpr auto kBmApiRepairCooldown = std::chrono::seconds(10);
 constexpr auto kBmStartupCleanupDelay = std::chrono::seconds(2);
 constexpr auto kDisconnectCommandCooldown = std::chrono::seconds(2);
@@ -217,6 +218,7 @@ struct RecentHeader {
 struct DynamicTalkgroupState {
     std::chrono::steady_clock::time_point lastSeenSteady {};
     std::chrono::steady_clock::time_point lastBmSeenSteady {};
+    std::chrono::steady_clock::time_point lastActivityLogSteady {};
     std::chrono::system_clock::time_point lastSeenWall {};
     uint32_t lastSrcId {0U};
     bool expiredPendingBmRelease {false};
@@ -1250,6 +1252,24 @@ int main(int argc, char** argv)
                     auto entry = dynamicTalkgroups.find(inbound.getDstId());
                     if (entry != dynamicTalkgroups.end()) {
                         entry->second.lastBmSeenSteady = now;
+                        if (!entry->second.expiredPendingBmRelease) {
+                            entry->second.lastSeenSteady = now;
+                            entry->second.lastSeenWall = std::chrono::system_clock::now();
+                            dynamicTalkgroupsWall[inbound.getDstId()] = entry->second.lastSeenWall;
+                            dynamicStateDirty = true;
+
+                            const bool significantFrame =
+                                inbound.getDataType() == DataType::VOICE_LC_HEADER ||
+                                inbound.getDataType() == DataType::TERMINATOR_WITH_LC;
+                            const bool logIntervalElapsed =
+                                entry->second.lastActivityLogSteady == std::chrono::steady_clock::time_point::min() ||
+                                (now - entry->second.lastActivityLogSteady) >= kDynamicActivityLogInterval;
+                            if (significantFrame || logIntervalElapsed) {
+                                ::LogInfoEx(LOG_HOST, "Refreshed dynamic TG %u from BrandMeister activity",
+                                    inbound.getDstId());
+                                entry->second.lastActivityLogSteady = now;
+                            }
+                        }
                     }
                 }
 

@@ -4,7 +4,7 @@ import tempfile
 import time
 import unittest
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -468,6 +468,32 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual("Example Dynamic", talkgroups["dynamic"][0]["name"])
         self.assertIsNotNone(talkgroups["dynamic"][0]["expiresAt"])
         self.assertGreaterEqual(talkgroups["dynamic"][0]["remainingSeconds"], 598)
+
+    def test_brandmeister_downlink_activity_refreshes_dynamic_expiry(self):
+        state = RuntimeState()
+        state.set_talkgroup_config(600)
+        first = datetime.now() - timedelta(seconds=300)
+        refreshed = datetime.now() - timedelta(seconds=30)
+        state.process_brandmeister_line(
+            f"I: {first.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} "
+            "(HOST) Updated dynamic TG 262002 from RF activity"
+        )
+        state.process_brandmeister_line(
+            f"I: {refreshed.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} "
+            "(HOST) Refreshed dynamic TG 262002 from BrandMeister activity"
+        )
+        state.set_brandmeister_profile(
+            {
+                "staticSubscriptions": [],
+                "dynamicSubscriptions": [{"talkgroup": "262002", "slot": "2"}],
+                "timedSubscriptions": [],
+            }
+        )
+
+        dynamic = state.snapshot({})["talkgroups"]["dynamic"][0]
+
+        self.assertGreaterEqual(dynamic["remainingSeconds"], 568)
+        self.assertLessEqual(dynamic["remainingSeconds"], 570)
 
     def test_brandmeister_terminators_close_and_correct_downlink_calls(self):
         state = RuntimeState()

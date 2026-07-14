@@ -22,6 +22,7 @@ struct SmsConfig {
     std::string outboxPath {"./sms/outbox"};
     std::string sentPath {"./sms/sent"};
     std::string p25OutboxPath {"./sms/p25-outbox"};
+    std::string serviceRoutePath {"./sms/service-routes"};
     uint32_t pollIntervalMs {100U};
     uint32_t maxPacketBytes {2048U};
     bool decodeUtf16Le {true};

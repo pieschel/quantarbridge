@@ -754,7 +754,9 @@ class RuntimeState:
     _rssi_sample_re = re.compile(
         r"Quantar V\.24 RSSI sample, ldu = 1, rssi1 = (\d+)"
     )
-    _dynamic_update_re = re.compile(r"Updated dynamic TG (\d+) from RF activity")
+    _dynamic_update_re = re.compile(
+        r"(?:Updated|Refreshed) dynamic TG (\d+) from (?:RF|BrandMeister) activity"
+    )
     _dynamic_end_re = re.compile(
         r"Dynamic TG (\d+) (?:expired locally|fully released)"
     )

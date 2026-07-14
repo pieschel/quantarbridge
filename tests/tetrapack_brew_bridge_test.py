@@ -34,6 +34,11 @@ class RecordingBrewClient:
         return {"status": "sent"}
 
 
+class ErrorBrewClient:
+    def send_sms(self, source_rid, target_rid, text):
+        raise RuntimeError("transport unavailable")
+
+
 class TetrapackBridgeTest(unittest.TestCase):
     def test_local_p25_message_keeps_sender_and_target_direction(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -206,6 +211,40 @@ class TetrapackBridgeTest(unittest.TestCase):
             self.assertEqual("tetrapack_brew", result["transport"])
             self.assertEqual([(1000002, 262993, "Wx example")], brew.calls)
             self.assertEqual([], list(config.outbox_dir.glob("*.json")))
+            routes = list(config.service_route_dir.glob("*.json"))
+            self.assertEqual(1, len(routes))
+            route = json.loads(routes[0].read_text(encoding="utf-8"))
+            self.assertEqual(1000002, route["requesterRid"])
+            self.assertEqual(262993, route["serviceRid"])
+            self.assertGreater(route["expiresAtMs"], route["createdAtMs"])
+            self.assertEqual(str(routes[0]), result["serviceRoutePath"])
+
+    def test_failed_service_send_removes_pending_reply_route(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = BRIDGE.BridgeConfig(
+                inbox_dir=root / "inbox",
+                outbox_dir=root / "outbox",
+                processed_dir=root / "processed",
+                error_dir=root / "error",
+            )
+            config.brew.enabled = True
+            BRIDGE.ensure_dirs(config)
+            now = time.monotonic()
+            pending = BRIDGE.PendingText(
+                source_rid=1000002,
+                target_rid=262993,
+                local_candidate=False,
+                first_seen=now,
+                updated_at=now,
+                fragments=["Wx example"],
+                event_names=["host-weather"],
+            )
+
+            with self.assertRaises(RuntimeError):
+                BRIDGE.flush_pending_text(config, ErrorBrewClient(), pending)
+
+            self.assertEqual([], list(config.service_route_dir.glob("*.json")))
 
 
 if __name__ == "__main__":

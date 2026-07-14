@@ -36,6 +36,7 @@ sms:
   outboxPath: "/home/quantar/quantar-runtime/sms/outbox"
   sentPath: "/home/quantar/quantar-runtime/sms/sent"
   p25OutboxPath: "/home/quantar/quantar-runtime/sms/p25-outbox"
+  serviceRoutePath: "/home/quantar/quantar-runtime/sms/service-routes"
   pollIntervalMs: 100
   maxPacketBytes: 2048
   decodeUtf16Le: true

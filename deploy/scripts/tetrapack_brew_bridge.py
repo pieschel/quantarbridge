@@ -61,7 +61,9 @@ class BridgeConfig:
     processed_dir: Path
     error_dir: Path
     p25_outbox_dir: Path | None = None
+    service_route_dir: Path | None = None
     poll_interval_seconds: float = 0.25
+    service_route_max_age_seconds: int = 900
     local_loop_enabled: bool = False
     brew_target_rids: set[int] = field(default_factory=lambda: {262993})
     brew: BrewConfig = field(default_factory=BrewConfig)
@@ -69,6 +71,8 @@ class BridgeConfig:
     def __post_init__(self) -> None:
         if self.p25_outbox_dir is None:
             self.p25_outbox_dir = self.outbox_dir.parent / "p25-outbox"
+        if self.service_route_dir is None:
+            self.service_route_dir = self.outbox_dir.parent / "service-routes"
 
 
 @dataclass
@@ -304,7 +308,9 @@ def load_config(path: Path) -> BridgeConfig:
         processed_dir=Path(raw.get("processedDir", "/home/quantar/quantar-runtime/sms/processed")),
         error_dir=Path(raw.get("errorDir", "/home/quantar/quantar-runtime/sms/error")),
         p25_outbox_dir=Path(raw.get("p25OutboxDir", outbox_dir.parent / "p25-outbox")),
+        service_route_dir=Path(raw.get("serviceRouteDir", outbox_dir.parent / "service-routes")),
         poll_interval_seconds=float(raw.get("pollIntervalSeconds", 0.25)),
+        service_route_max_age_seconds=max(60, int(raw.get("serviceRouteMaxAgeSeconds", 900))),
         local_loop_enabled=bool(raw.get("localLoopEnabled", False)),
         brew_target_rids={int(value) for value in raw.get("brewTargetRids", [262993])},
         brew=BrewConfig(
@@ -362,6 +368,8 @@ def ensure_dirs(config: BridgeConfig) -> None:
     config.error_dir.mkdir(parents=True, exist_ok=True)
     assert config.p25_outbox_dir is not None
     config.p25_outbox_dir.mkdir(parents=True, exist_ok=True)
+    assert config.service_route_dir is not None
+    config.service_route_dir.mkdir(parents=True, exist_ok=True)
 
 
 def write_outbox_message(
@@ -415,6 +423,32 @@ def write_p25_outbox_message(config: BridgeConfig, event: dict[str, Any], text: 
         f"sourceRid: {source_rid}\n"
         f"targetRid: {target_rid}\n"
         f'textHex: "{text_hex}"\n',
+        encoding="utf-8",
+    )
+    temp_path.replace(path)
+    return path
+
+
+def write_service_route(config: BridgeConfig, requester_rid: int, service_rid: int) -> Path:
+    created_at_ms = time.time_ns() // 1_000_000
+    expires_at_ms = created_at_ms + config.service_route_max_age_seconds * 1000
+    assert config.service_route_dir is not None
+    path = config.service_route_dir / (
+        f"{created_at_ms:013d}-{service_rid}-{requester_rid}-{uuid.uuid4().hex}.json"
+    )
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    temp_path.write_text(
+        json.dumps(
+            {
+                "createdAtMs": created_at_ms,
+                "expiresAtMs": expires_at_ms,
+                "serviceRid": service_rid,
+                "requesterRid": requester_rid,
+            },
+            indent=2,
+            ensure_ascii=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     temp_path.replace(path)
@@ -480,7 +514,18 @@ def flush_pending_text(config: BridgeConfig, brew: BrewClient, pending: PendingT
                 "text": text,
                 "fragments": pending.fragments,
             }
-        result = brew.send_sms(pending.source_rid, pending.target_rid, text)
+        route_path = write_service_route(
+            config, pending.source_rid, pending.target_rid
+        )
+        try:
+            result = brew.send_sms(pending.source_rid, pending.target_rid, text)
+        except Exception:
+            route_path.unlink(missing_ok=True)
+            raise
+        if result.get("status") != "sent":
+            route_path.unlink(missing_ok=True)
+        else:
+            result["serviceRoutePath"] = str(route_path)
         result["transport"] = "tetrapack_brew"
         result["fragments"] = pending.fragments
         return result

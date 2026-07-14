@@ -2,6 +2,8 @@
   "inboxDir": "/home/quantar/quantar-runtime/sms/inbox",
   "outboxDir": "/home/quantar/quantar-runtime/sms/outbox",
   "p25OutboxDir": "/home/quantar/quantar-runtime/sms/p25-outbox",
+  "serviceRouteDir": "/home/quantar/quantar-runtime/sms/service-routes",
+  "serviceRouteMaxAgeSeconds": 900,
   "processedDir": "/home/quantar/quantar-runtime/sms/processed",
   "errorDir": "/home/quantar/quantar-runtime/sms/error",
   "pollIntervalSeconds": 0.25,

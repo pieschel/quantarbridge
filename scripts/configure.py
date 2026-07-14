@@ -288,6 +288,7 @@ def configure(args: argparse.Namespace, brandmeister_password: str) -> None:
         runtime_dir / "sms" / "processed",
         runtime_dir / "sms" / "p25-outbox",
         runtime_dir / "sms" / "p25-sent",
+        runtime_dir / "sms" / "service-routes",
         runtime_dir / "sms" / "p25-failed",
         runtime_dir / "sms" / "quantarbridge-inbox",
     ):

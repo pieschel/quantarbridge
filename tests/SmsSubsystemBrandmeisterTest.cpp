@@ -65,6 +65,7 @@ int main()
     config.outboxPath = (root / "outbox").string();
     config.sentPath = (root / "sent").string();
     config.p25OutboxPath = (root / "p25-outbox").string();
+    config.serviceRoutePath = (root / "service-routes").string();
     SmsSubsystem sms(config);
 
     std::vector<CapturedPacket> outbound;
@@ -129,6 +130,115 @@ int main()
         std::cerr << "queued TMS text is invalid\n";
         return 1;
     }
+
+    std::filesystem::remove(queuedFiles.front(), ec);
+    const uint64_t nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    const auto serviceRoutePath = std::filesystem::path(config.serviceRoutePath) /
+        (std::to_string(nowMs) + "-1000001-1000003-test.json");
+    const auto secondServiceRoutePath = std::filesystem::path(config.serviceRoutePath) /
+        (std::to_string(nowMs + 1U) + "-1000001-1000004-test.json");
+    {
+        std::ofstream route(serviceRoutePath);
+        route
+            << "{\n"
+            << "  \"createdAtMs\": " << nowMs << ",\n"
+            << "  \"expiresAtMs\": " << nowMs + 60000U << ",\n"
+            << "  \"serviceRid\": 1000001,\n"
+            << "  \"requesterRid\": 1000003\n"
+            << "}\n";
+    }
+    {
+        std::ofstream route(secondServiceRoutePath);
+        route
+            << "{\n"
+            << "  \"createdAtMs\": " << nowMs + 1U << ",\n"
+            << "  \"expiresAtMs\": " << nowMs + 60000U << ",\n"
+            << "  \"serviceRid\": 1000001,\n"
+            << "  \"requesterRid\": 1000004\n"
+            << "}\n";
+    }
+
+    auto routedTextPacket = textPacket;
+    routedTextPacket[routedTextPacket.size() - 2U] = 0x33U;
+    outbound.clear();
+    if (!sms.handleBrandmeisterPacketData(1000001U, 1000002U, 2U, routedTextPacket)) {
+        std::cerr << "routed TMS service reply was rejected\n";
+        return 1;
+    }
+    if (outbound.size() != 1U || outbound[0U].sourceRid != 1000002U ||
+        outbound[0U].targetRid != 1000001U || outbound[0U].slotNo != 2U) {
+        std::cerr << "routed TMS acknowledgement did not preserve network addressing\n";
+        return 1;
+    }
+    queuedFiles.clear();
+    for (const auto& entry : std::filesystem::directory_iterator(config.p25OutboxPath)) {
+        if (entry.is_regular_file()) {
+            queuedFiles.push_back(entry.path());
+        }
+    }
+    if (queuedFiles.size() != 1U || std::filesystem::exists(serviceRoutePath) ||
+        !std::filesystem::exists(secondServiceRoutePath)) {
+        std::cerr << "TMS service route was not consumed exactly once\n";
+        return 1;
+    }
+    std::ifstream routedQueued(queuedFiles.front());
+    const std::string routedContents((std::istreambuf_iterator<char>(routedQueued)),
+        std::istreambuf_iterator<char>());
+    if (routedContents.find("sourceRid: 1000001") == std::string::npos ||
+        routedContents.find("targetRid: 1000003") == std::string::npos ||
+        routedContents.find("textHex: 5465737433") == std::string::npos) {
+        std::cerr << "TMS service reply was queued for the wrong requester\n";
+        return 1;
+    }
+
+    outbound.clear();
+    if (!sms.handleBrandmeisterPacketData(1000001U, 1000002U, 2U, routedTextPacket) ||
+        outbound.size() != 1U) {
+        std::cerr << "duplicate routed TMS service reply was not acknowledged\n";
+        return 1;
+    }
+    size_t queuedAfterDuplicate = 0U;
+    for (const auto& entry : std::filesystem::directory_iterator(config.p25OutboxPath)) {
+        if (entry.is_regular_file()) {
+            ++queuedAfterDuplicate;
+        }
+    }
+    if (queuedAfterDuplicate != 1U) {
+        std::cerr << "duplicate routed TMS service reply was queued again\n";
+        return 1;
+    }
+    if (!std::filesystem::exists(secondServiceRoutePath)) {
+        std::cerr << "duplicate TMS reply consumed the next request route\n";
+        return 1;
+    }
+
+    auto secondRoutedTextPacket = textPacket;
+    secondRoutedTextPacket[secondRoutedTextPacket.size() - 2U] = 0x34U;
+    outbound.clear();
+    if (!sms.handleBrandmeisterPacketData(1000001U, 1000002U, 2U, secondRoutedTextPacket) ||
+        outbound.size() != 1U || std::filesystem::exists(secondServiceRoutePath)) {
+        std::cerr << "second TMS service route was not consumed correctly\n";
+        return 1;
+    }
+    bool foundSecondRequester = false;
+    for (const auto& entry : std::filesystem::directory_iterator(config.p25OutboxPath)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        std::ifstream candidate(entry.path());
+        const std::string candidateContents((std::istreambuf_iterator<char>(candidate)),
+            std::istreambuf_iterator<char>());
+        foundSecondRequester = foundSecondRequester ||
+            candidateContents.find("targetRid: 1000004") != std::string::npos;
+    }
+    if (!foundSecondRequester) {
+        std::cerr << "second TMS service reply was queued for the wrong requester\n";
+        return 1;
+    }
+
+    std::filesystem::remove_all(config.p25OutboxPath, ec);
+    std::filesystem::create_directories(config.p25OutboxPath, ec);
 
     outbound.clear();
     const auto outboundPath = std::filesystem::path(config.outboxPath) / "apx-direct.json";

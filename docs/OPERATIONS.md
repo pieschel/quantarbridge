@@ -91,6 +91,7 @@ Queue directories:
 /home/quantar/quantar-runtime/sms/inbox
 /home/quantar/quantar-runtime/sms/outbox
 /home/quantar/quantar-runtime/sms/p25-outbox
+/home/quantar/quantar-runtime/sms/service-routes
 /home/quantar/quantar-runtime/sms/processed
 /home/quantar/quantar-runtime/sms/error
 ```
@@ -113,6 +114,11 @@ BrandMeister location path must also accept the packet.
 The configured timeout is `routing.dynamicTimeoutSeconds`. P25 TG `4000`
 clears the active dynamic route. Static subscriptions are synchronized from the
 BrandMeister device profile by `bm-static-sync.timer`.
+
+Both local RF activity and permitted BrandMeister downlink activity refresh the
+timer. The log records `Updated dynamic TG ... from RF activity` or `Refreshed
+dynamic TG ... from BrandMeister activity`; the dashboard expiry must move with
+the most recent of those timestamps.
 
 Ordinary dynamic expiry restarts only the stateless DMR-to-P25 bridge. It must
 not restart `dvmhost`, because that would discard APX packet-data sessions.
