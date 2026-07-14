@@ -48,6 +48,11 @@ IDENTITY_REFRESH_SECONDS = 24 * 60 * 60
 IDENTITY_NEGATIVE_REFRESH_SECONDS = 6 * 60 * 60
 IDENTITY_RETRY_SECONDS = 5 * 60
 IDENTITY_REQUEST_SPACING_SECONDS = 0.25
+SETTINGS_RESTART_IDLE_GUARD_SECONDS = 15
+
+
+class SettingsBusyError(ValueError):
+    pass
 
 
 def utc_iso(epoch: float | None = None) -> str:
@@ -759,6 +764,7 @@ class RuntimeState:
         self._radios: dict[int, dict[str, Any]] = {}
         self._active_calls: dict[str, dict[str, Any]] = {}
         self._call_history: deque[dict[str, Any]] = deque(maxlen=80)
+        self._last_call_activity = 0.0
         self._services: list[dict[str, Any]] = []
         self._bm_state = "unknown"
         self._bm_last_change: float | None = None
@@ -974,6 +980,7 @@ class RuntimeState:
         talkgroup: int,
         timestamp: float,
     ) -> None:
+        self._last_call_activity = max(self._last_call_activity, timestamp)
         active = self._active_calls.get(direction)
         if (
             active
@@ -1000,6 +1007,7 @@ class RuntimeState:
         parsed_duration: float | None = None,
         reason: str = "normal",
     ) -> None:
+        self._last_call_activity = max(self._last_call_activity, timestamp)
         call = self._active_calls.pop(direction, None)
         if call is None:
             return
@@ -1012,6 +1020,23 @@ class RuntimeState:
         )
         call["endReason"] = reason
         self._call_history.appendleft(call)
+
+    def restart_guard_remaining(
+        self,
+        quiet_seconds: int = SETTINGS_RESTART_IDLE_GUARD_SECONDS,
+        now: float | None = None,
+    ) -> int:
+        current = time.time() if now is None else now
+        with self._lock:
+            for direction, call in list(self._active_calls.items()):
+                if current - call["startedAt"] > 180:
+                    self._finish_call(direction, current, reason="timeout")
+            if self._active_calls:
+                return max(1, int(math.ceil(quiet_seconds)))
+            if self._last_call_activity <= 0:
+                return 0
+            idle_seconds = max(0.0, current - self._last_call_activity)
+            return max(0, int(math.ceil(quiet_seconds - idle_seconds)))
 
     def process_brandmeister_line(self, line: str) -> None:
         timestamp = self._timestamp(line)
@@ -2294,6 +2319,28 @@ class SettingsManager:
             ):
                 return {"changed": False, "restarted": [], "settings": self.read()}
 
+            targets: list[str] = []
+            if password_changed and self.config.dmr_gateway_config.exists():
+                targets.append("dmrgateway")
+            if bridge_changed:
+                targets.append("quantarbridge")
+            if host_changed:
+                targets.append("dvmhost")
+            if dmr_to_p25_changed:
+                targets.append("dmr-to-p25")
+            if p25_to_dmr_changed:
+                targets.append("p25-to-dmr")
+            if dmr_to_p25_changed or p25_to_dmr_changed:
+                targets.append("dvmfne")
+
+            guard_remaining = self.state.restart_guard_remaining()
+            if targets and guard_remaining > 0:
+                raise SettingsBusyError(
+                    "Funkverkehr ist noch aktiv oder gerade erst beendet. "
+                    f"Bitte nach {guard_remaining} Sekunden Funkruhe erneut speichern; "
+                    "es wurde nichts ge\u00e4ndert."
+                )
+
             originals: dict[Path, bytes] = {}
             pending: dict[Path, bytes] = {}
             if bridge_changed:
@@ -2405,18 +2452,6 @@ class SettingsManager:
             backup_path.mkdir(parents=True, exist_ok=False)
             for source, content in originals.items():
                 atomic_write(backup_path / source.name, content, mode=0o600)
-
-            targets: list[str] = []
-            if password_changed and self.config.dmr_gateway_config.exists():
-                targets.append("dmrgateway")
-            if bridge_changed:
-                targets.append("quantarbridge")
-            if host_changed:
-                targets.append("dvmhost")
-            if dmr_to_p25_changed:
-                targets.append("dmr-to-p25")
-            if p25_to_dmr_changed:
-                targets.append("p25-to-dmr")
 
             try:
                 for path, content in pending.items():
@@ -2697,6 +2732,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             result = self.app.settings.update(self._body())
             self._json(HTTPStatus.OK, result)
+        except SettingsBusyError as exc:
+            self._error(HTTPStatus.CONFLICT, str(exc))
         except ValueError as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
         except Exception:

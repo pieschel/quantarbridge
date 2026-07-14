@@ -70,6 +70,10 @@
       "type": "systemd",
       "unit": "dvmhost.service"
     },
+    "dvmfne": {
+      "type": "systemd",
+      "unit": "dvmfne.service"
+    },
     "dmr-to-p25": {
       "type": "systemd",
       "unit": "dvmbridge-dmr-to-p25.service"

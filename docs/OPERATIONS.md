@@ -56,6 +56,11 @@ stability first, then compare the same source audio in both directions.
 ## Audio Controls
 
 The dashboard exposes separate settings for P25-to-DMR and DMR-to-P25.
+Changes that require a service restart are accepted only after 15 seconds of
+continuous radio-channel idle time. This prevents a short gap within a QSO from
+being mistaken for a safe restart window. Audio changes also reset the local
+FNE router after the affected transcoder has restarted, so stale peer routing
+cannot leave the P25 downlink silent.
 
 | Setting | Effect |
 | --- | --- |

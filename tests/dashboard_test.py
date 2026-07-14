@@ -18,6 +18,7 @@ from dashboard.app import (
     IdentityDirectory,
     LoginLimiter,
     RuntimeState,
+    SettingsBusyError,
     SettingsManager,
     decode_motorola_lrrp_position,
 )
@@ -458,6 +459,16 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual(2.0, snapshot["recentCalls"][0]["durationSeconds"])
         self.assertEqual("disconnect", snapshot["recentCalls"][0]["endReason"])
 
+    def test_restart_guard_requires_continuous_idle_time(self):
+        state = RuntimeState()
+
+        self.assertEqual(0, state.restart_guard_remaining(15, now=100.0))
+        state._start_call("downlink", 1000101, 101, 100.0)
+        self.assertEqual(15, state.restart_guard_remaining(15, now=105.0))
+        state._finish_call("downlink", 108.0)
+        self.assertEqual(11, state.restart_guard_remaining(15, now=112.0))
+        self.assertEqual(0, state.restart_guard_remaining(15, now=123.0))
+
 
 class IdentityDirectoryTest(unittest.TestCase):
     def test_cached_names_remain_available_without_network_access(self):
@@ -718,10 +729,43 @@ class SettingsManagerTest(unittest.TestCase):
             self.assertTrue(result["changed"])
             self.assertEqual(2.8, dmr_to_p25["system"]["txAudioGain"])
             self.assertEqual(0.15, dmr_to_p25["system"]["p25EncodePresenceGain"])
-            self.assertEqual([["dmr-to-p25"]], restarter.calls)
+            self.assertEqual([["dmr-to-p25", "dvmfne"]], restarter.calls)
             self.assertTrue(
                 (Path(result["backup"]) / "dvmbridge-dmr-to-p25.yml").exists()
             )
+
+    def test_audio_change_is_rejected_during_recent_radio_activity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = make_config(Path(directory))
+            write_runtime(config)
+            original = config.dmr_to_p25_config.read_bytes()
+            state = RuntimeState()
+            state._start_call("downlink", 1000101, 101, time.time())
+            restarter = RecordingRestarter()
+            manager = SettingsManager(config, state, restarter)
+            audio = audio_settings()
+            audio["dmrToP25"]["txAudioGain"] = 2.8
+
+            with self.assertRaisesRegex(SettingsBusyError, "Funkruhe"):
+                manager.update(
+                    {
+                        **network_settings(),
+                        "brandmeisterPassword": "",
+                        "dynamicTimeoutSeconds": 600,
+                        "talkgroupMappings": [
+                            {"p25": 101, "brandmeister": 262000}
+                        ],
+                        "gps": {
+                            "initialDelaySeconds": 5,
+                            "updateIntervalSeconds": 300,
+                            "noFixRetrySeconds": 60,
+                        },
+                        "audio": audio,
+                    }
+                )
+
+            self.assertEqual(original, config.dmr_to_p25_config.read_bytes())
+            self.assertEqual([], restarter.calls)
 
     def test_dynamic_talkgroup_timeout_restarts_only_bridge(self):
         with tempfile.TemporaryDirectory() as directory:
