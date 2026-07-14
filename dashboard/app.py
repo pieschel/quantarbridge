@@ -49,6 +49,9 @@ IDENTITY_NEGATIVE_REFRESH_SECONDS = 6 * 60 * 60
 IDENTITY_RETRY_SECONDS = 5 * 60
 IDENTITY_REQUEST_SPACING_SECONDS = 0.25
 SETTINGS_RESTART_IDLE_GUARD_SECONDS = 15
+RSSI_SAMPLE_HISTORY_LIMIT = 100_000
+RSSI_START_TOLERANCE_SECONDS = 0.75
+RSSI_END_TOLERANCE_SECONDS = 0.25
 
 
 class SettingsBusyError(ValueError):
@@ -748,6 +751,9 @@ class RuntimeState:
     _call_end_re = re.compile(
         r"P25 (RF|Net) (?:RF|network|Net) end of transmission(?:, ([0-9.]+) seconds)?"
     )
+    _rssi_sample_re = re.compile(
+        r"Quantar V\.24 RSSI sample, ldu = 1, rssi1 = (\d+)"
+    )
     _dynamic_update_re = re.compile(r"Updated dynamic TG (\d+) from RF activity")
     _dynamic_end_re = re.compile(
         r"Dynamic TG (\d+) (?:expired locally|fully released)"
@@ -764,6 +770,9 @@ class RuntimeState:
         self._radios: dict[int, dict[str, Any]] = {}
         self._active_calls: dict[str, dict[str, Any]] = {}
         self._call_history: deque[dict[str, Any]] = deque(maxlen=80)
+        self._rssi_samples: deque[tuple[float, int]] = deque(
+            maxlen=RSSI_SAMPLE_HISTORY_LIMIT
+        )
         self._last_call_activity = 0.0
         self._services: list[dict[str, Any]] = []
         self._bm_state = "unknown"
@@ -867,6 +876,11 @@ class RuntimeState:
     def process_dvmhost_line(self, line: str) -> None:
         timestamp = self._timestamp(line)
         with self._lock:
+            match = self._rssi_sample_re.search(line)
+            if match:
+                self._record_rssi_sample(timestamp, int(match.group(1)))
+                return
+
             if "Motorola LRRP Initial Delay:" in line:
                 self.reset_radios(timestamp)
                 return
@@ -990,7 +1004,7 @@ class RuntimeState:
             return
         if active:
             self._finish_call(direction, timestamp, reason="superseded")
-        self._active_calls[direction] = {
+        call = {
             "id": f"{int(timestamp * 1000)}-{direction}",
             "direction": direction,
             "sourceId": source_id,
@@ -999,6 +1013,15 @@ class RuntimeState:
             "endedAt": None,
             "durationSeconds": 0.0,
         }
+        self._active_calls[direction] = call
+        if direction == "uplink":
+            self._set_call_rssi(
+                call,
+                self._buffered_rssi(
+                    timestamp - RSSI_START_TOLERANCE_SECONDS,
+                    timestamp + RSSI_START_TOLERANCE_SECONDS,
+                ),
+            )
 
     def _finish_call(
         self,
@@ -1019,7 +1042,74 @@ class RuntimeState:
             1,
         )
         call["endReason"] = reason
+        if direction == "uplink":
+            self._set_call_rssi(
+                call,
+                self._buffered_rssi(
+                    call["startedAt"] - RSSI_START_TOLERANCE_SECONDS,
+                    timestamp + RSSI_END_TOLERANCE_SECONDS,
+                ),
+            )
+            self._publish_radio_rssi(call)
         self._call_history.appendleft(call)
+
+    def _buffered_rssi(self, start: float, end: float) -> list[tuple[float, int]]:
+        return [sample for sample in self._rssi_samples if start <= sample[0] <= end]
+
+    @staticmethod
+    def _set_call_rssi(
+        call: dict[str, Any], readings: Iterable[tuple[float, int]]
+    ) -> None:
+        values = list(readings)
+        call["_rssiReadings"] = values
+        if not values:
+            call.pop("signal", None)
+            return
+        raw_values = [value for _, value in values]
+        call["signal"] = {
+            "kind": "quantarRelative",
+            "current": raw_values[-1],
+            "average": round(sum(raw_values) / len(raw_values), 1),
+            "minimum": min(raw_values),
+            "maximum": max(raw_values),
+            "samples": len(raw_values),
+            "updatedAt": values[-1][0],
+        }
+
+    def _record_rssi_sample(self, timestamp: float, raw_value: int) -> None:
+        if not 0 <= raw_value <= 255:
+            return
+        sample = (timestamp, raw_value)
+        self._rssi_samples.append(sample)
+
+        call = self._active_calls.get("uplink")
+        if call and timestamp >= call["startedAt"] - RSSI_START_TOLERANCE_SECONDS:
+            readings = list(call.get("_rssiReadings", []))
+            readings.append(sample)
+            self._set_call_rssi(call, readings)
+            self._publish_radio_rssi(call)
+            return
+
+        for historic_call in self._call_history:
+            if historic_call["direction"] != "uplink":
+                continue
+            if (
+                historic_call["startedAt"] - RSSI_START_TOLERANCE_SECONDS
+                <= timestamp
+                <= historic_call["endedAt"] + RSSI_END_TOLERANCE_SECONDS
+            ):
+                readings = list(historic_call.get("_rssiReadings", []))
+                readings.append(sample)
+                self._set_call_rssi(historic_call, readings)
+                self._publish_radio_rssi(historic_call)
+                return
+
+    def _publish_radio_rssi(self, call: dict[str, Any]) -> None:
+        signal = call.get("signal")
+        radio = self._radios.get(int(call["sourceId"]))
+        if not signal or not radio:
+            return
+        radio["signal"] = dict(signal)
 
     def restart_guard_remaining(
         self,
@@ -1194,11 +1284,17 @@ class RuntimeState:
                     item["position"] = None
                 for key in ("registeredAt", "lastSeen", "gpsLastAt"):
                     item[key] = utc_iso(item[key]) if item.get(key) else None
+                if item.get("signal"):
+                    item["signal"] = dict(item["signal"])
+                    item["signal"]["updatedAt"] = utc_iso(
+                        item["signal"]["updatedAt"]
+                    )
                 radios.append(item)
             radios.sort(key=lambda item: item["id"])
 
             def call_payload(call: dict[str, Any]) -> dict[str, Any]:
                 item = dict(call)
+                item.pop("_rssiReadings", None)
                 item["sourceLabel"] = labels.get(item["sourceId"], "")
                 item["mappedTalkgroup"] = mappings_by_p25.get(item["talkgroup"])
                 item["sourceIdentity"] = identity_payload(
@@ -1209,6 +1305,11 @@ class RuntimeState:
                 )
                 item["startedAt"] = utc_iso(item["startedAt"])
                 item["endedAt"] = utc_iso(item["endedAt"]) if item.get("endedAt") else None
+                if item.get("signal"):
+                    item["signal"] = dict(item["signal"])
+                    item["signal"]["updatedAt"] = utc_iso(
+                        item["signal"]["updatedAt"]
+                    )
                 if item["endedAt"] is None:
                     item["durationSeconds"] = round(now - call["startedAt"], 1)
                 return item

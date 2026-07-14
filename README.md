@@ -43,7 +43,9 @@ P25->DMR      DMR->P25
 ```
 
 The DVMHost modifications are distributed as
-[`patches/dvmhost.patch`](patches/dvmhost.patch) against commit
+[`patches/dvmhost.patch`](patches/dvmhost.patch) and
+[`patches/dvmhost-quantar-rssi.patch`](patches/dvmhost-quantar-rssi.patch)
+against commit
 `01979084df9fc6a5737fac9efb213430268377c9`. Subscriber radio IDs are learned
 from registrations; packet-data addresses are read from the private runtime
 configuration generated during installation.

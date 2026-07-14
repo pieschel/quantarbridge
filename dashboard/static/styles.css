@@ -578,7 +578,7 @@ h2 {
 
 .on-air-call {
   display: grid;
-  grid-template-columns: 150px minmax(150px, 1fr) minmax(160px, 1fr) 95px;
+  grid-template-columns: 150px minmax(150px, 1fr) minmax(160px, 1fr) 170px 95px;
   align-items: center;
   min-height: 116px;
   padding: 18px 22px;
@@ -616,12 +616,14 @@ h2 {
 
 .on-air-call__direction small,
 .on-air-call__field span,
+.on-air-call__signal > .on-air-call__label,
 .on-air-call__timer span {
   color: var(--ink-faint);
   font-size: 11px;
 }
 
 .on-air-call__field,
+.on-air-call__signal,
 .on-air-call__timer {
   display: flex;
   flex-direction: column;
@@ -650,6 +652,81 @@ h2 {
 .on-air-call__timer strong {
   font-size: 22px;
   font-variant-numeric: tabular-nums;
+}
+
+.signal-strength {
+  display: inline-flex;
+  align-items: center;
+  min-width: 118px;
+  gap: 9px;
+}
+
+.signal-strength__bars {
+  display: inline-flex;
+  align-items: flex-end;
+  width: 34px;
+  height: 24px;
+  gap: 3px;
+}
+
+.signal-strength__bars i {
+  display: block;
+  width: 4px;
+  height: 30%;
+  background: var(--line-strong);
+}
+
+.signal-strength__bars i:nth-child(2) { height: 45%; }
+.signal-strength__bars i:nth-child(3) { height: 62%; }
+.signal-strength__bars i:nth-child(4) { height: 80%; }
+.signal-strength__bars i:nth-child(5) { height: 100%; }
+
+.signal-strength__bars i.is-active {
+  background: var(--accent-dark);
+}
+
+.signal-strength__copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.signal-strength__copy strong,
+.signal-strength--empty strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-strength__copy small {
+  overflow: hidden;
+  max-width: 125px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-strength--compact {
+  min-width: 94px;
+}
+
+.signal-strength--compact .signal-strength__bars {
+  width: 29px;
+  height: 19px;
+  gap: 2px;
+}
+
+.signal-strength--compact .signal-strength__bars i {
+  width: 4px;
+}
+
+.signal-strength--compact .signal-strength__copy strong {
+  font-size: 14px;
+}
+
+.signal-strength--empty {
+  color: var(--ink-faint);
 }
 
 .empty-state {

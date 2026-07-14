@@ -1,0 +1,8 @@
+diff --git a/src/host/modem/ModemV24.cpp b/src/host/modem/ModemV24.cpp
+index a94d37a6..96c80537 100644
+--- a/src/host/modem/ModemV24.cpp
++++ b/src/host/modem/ModemV24.cpp
+@@ -892,2 +892,3 @@ void ModemV24::convertToAirV24(const uint8_t *data, uint32_t length)
+                         rssi = value;
++                        LogInfo(LOG_MODEM, "Quantar V.24 RSSI sample, ldu = 1, rssi1 = %u", rssi);
+                         break;

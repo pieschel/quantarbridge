@@ -293,6 +293,101 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual("Example Talkgroup", snapshot["recentCalls"][0]["talkgroupName"])
         self.assertEqual(1.3, snapshot["recentCalls"][0]["durationSeconds"])
 
+    def test_quantar_rssi_is_correlated_with_uplink_calls_and_radios(self):
+        state = RuntimeState()
+        started_at = time.time()
+
+        def stamp(offset: float) -> str:
+            return datetime.fromtimestamp(started_at + offset).strftime(
+                "%Y-%m-%d %H:%M:%S.%f"
+            )[:-3]
+
+        state.process_dvmhost_line(
+            f"I: {stamp(-1.0)} (RF) recognized Motorola SCEP ARS registration, "
+            "llId = 1000002, subscriberIp = 10.0.0.20, serverIp = 10.0.0.2, n = 1"
+        )
+        state.process_dvmhost_line(
+            f"I: {stamp(-0.1)} Quantar V.24 RSSI sample, ldu = 1, rssi1 = 66"
+        )
+        state.process_activity_line(
+            f"A: {stamp(0.0)} P25 RF RF voice transmission from 1000002 to TG 101"
+        )
+        state.process_dvmhost_line(
+            f"I: {stamp(0.4)} Quantar V.24 RSSI sample, ldu = 1, rssi1 = 78"
+        )
+        state.process_dvmhost_line(
+            f"I: {stamp(0.8)} Quantar V.24 RSSI sample, ldu = 1, rssi1 = 72"
+        )
+
+        active = state.snapshot({})["activeCalls"][0]
+        self.assertEqual(
+            {
+                "kind": "quantarRelative",
+                "current": 72,
+                "average": 72.0,
+                "minimum": 66,
+                "maximum": 78,
+                "samples": 3,
+                "updatedAt": active["signal"]["updatedAt"],
+            },
+            active["signal"],
+        )
+        self.assertNotIn("_rssiReadings", active)
+
+        state.process_activity_line(
+            f"A: {stamp(1.0)} P25 RF RF end of transmission, 1.0 seconds, BER: 0.0%"
+        )
+        snapshot = state.snapshot({})
+        self.assertEqual(72.0, snapshot["recentCalls"][0]["signal"]["average"])
+        self.assertEqual(3, snapshot["recentCalls"][0]["signal"]["samples"])
+        self.assertEqual(72, snapshot["radios"][0]["signal"]["current"])
+
+    def test_quantar_rssi_loaded_before_activity_log_is_recovered(self):
+        state = RuntimeState()
+        for timestamp, value in (
+            ("12:00:00.100", 60),
+            ("12:00:00.500", 70),
+            ("12:00:00.900", 80),
+        ):
+            state.process_dvmhost_line(
+                f"I: 2025-01-01 {timestamp} Quantar V.24 RSSI sample, "
+                f"ldu = 1, rssi1 = {value}"
+            )
+
+        state.process_activity_line(
+            "A: 2025-01-01 12:00:00.200 P25 RF RF voice transmission "
+            "from 1000002 to TG 101"
+        )
+        state.process_activity_line(
+            "A: 2025-01-01 12:00:01.000 P25 RF RF end of transmission, "
+            "0.8 seconds, BER: 0.0%"
+        )
+
+        signal = state.snapshot({})["recentCalls"][0]["signal"]
+        self.assertEqual(70.0, signal["average"])
+        self.assertEqual(60, signal["minimum"])
+        self.assertEqual(80, signal["maximum"])
+        self.assertEqual(3, signal["samples"])
+
+    def test_quantar_rssi_is_not_assigned_to_downlink_calls(self):
+        state = RuntimeState()
+        started_at = time.time()
+        start = datetime.fromtimestamp(started_at).strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        )[:-3]
+        sample = datetime.fromtimestamp(started_at + 0.2).strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        )[:-3]
+        state.process_activity_line(
+            f"A: {start} P25 Net network voice transmission from 1000002 to TG 101"
+        )
+        state.process_dvmhost_line(
+            f"I: {sample} Quantar V.24 RSSI sample, "
+            "ldu = 1, rssi1 = 90"
+        )
+
+        self.assertNotIn("signal", state.snapshot({})["activeCalls"][0])
+
     def test_stale_radio_registration_is_hidden_until_next_refresh(self):
         state = RuntimeState()
         state.process_dvmhost_line(

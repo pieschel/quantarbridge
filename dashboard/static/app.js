@@ -1,5 +1,7 @@
 "use strict";
 
+const QUANTAR_RSSI_DISPLAY_MAX = 127;
+
 const state = {
   status: null,
   session: null,
@@ -248,6 +250,31 @@ function identityMarkup(identity, fallbackId, fallbackLabel = "") {
   </span>`;
 }
 
+function signalMarkup(signal, compact = false) {
+  const current = Number(signal?.current);
+  if (!Number.isFinite(current)) {
+    return '<span class="signal-strength signal-strength--empty" aria-label="Keine Empfangsdaten"><strong>--</strong></span>';
+  }
+  const average = Number(signal.average);
+  const minimum = Number(signal.minimum);
+  const maximum = Number(signal.maximum);
+  const displayedAverage = Number.isFinite(average) ? average : current;
+  const level = Math.max(0, Math.min(5, Math.ceil(
+    (Math.max(0, Math.min(QUANTAR_RSSI_DISPLAY_MAX, current)) / QUANTAR_RSSI_DISPLAY_MAX) * 5
+  )));
+  const bars = Array.from({ length: 5 }, (_, index) =>
+    `<i class="${index < level ? "is-active" : ""}" aria-hidden="true"></i>`
+  ).join("");
+  const range = Number.isFinite(minimum) && Number.isFinite(maximum)
+    ? `Mittel ${displayedAverage.toFixed(1)} | ${minimum}-${maximum}`
+    : "Relativer Quantar-Wert";
+  const title = `Quantar RSSI: aktuell ${current}, ${range}`;
+  return `<span class="signal-strength ${compact ? "signal-strength--compact" : ""}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">
+    <span class="signal-strength__bars">${bars}</span>
+    <span class="signal-strength__copy"><strong>${current}</strong><small>${compact ? "relativ" : escapeHtml(range)}</small></span>
+  </span>`;
+}
+
 function renderActiveCalls(calls) {
   const channel = elements["channel-state"];
   channel.classList.toggle("is-active", calls.length > 0);
@@ -272,6 +299,7 @@ function renderActiveCalls(calls) {
         <div class="on-air-call__direction"><span class="direction-label">${escapeHtml(direction)}</span><small>Sprachverbindung</small></div>
         <div class="on-air-call__field"><span>Teilnehmer</span>${identityMarkup(call.sourceIdentity, call.sourceId, call.sourceLabel)}</div>
         <div class="on-air-call__field"><span>Talkgroup</span><strong>${escapeHtml(talkgroup)}</strong><small>${escapeHtml(mapping)}</small></div>
+        <div class="on-air-call__signal"><span class="on-air-call__label">Empfang</span>${signalMarkup(call.signal)}</div>
         <div class="on-air-call__timer"><span>Dauer (MM:SS)</span><strong>${formatDuration(call.durationSeconds)}</strong></div>
       </article>`;
   }).join("");
@@ -280,7 +308,7 @@ function renderActiveCalls(calls) {
 function renderRadios(radios) {
   elements["radio-count"].textContent = radios.length;
   if (!radios.length) {
-    elements["radios-body"].innerHTML = '<tr><td colspan="5" class="table-empty">Noch keine Funkgeräte registriert</td></tr>';
+    elements["radios-body"].innerHTML = '<tr><td colspan="6" class="table-empty">Noch keine Funkgeräte registriert</td></tr>';
     return;
   }
   elements["radios-body"].innerHTML = radios.map((radio) => {
@@ -290,6 +318,7 @@ function renderRadios(radios) {
       <td class="mono">${escapeHtml(radio.subscriberIp || "--")}</td>
       <td><span class="status-pill ${radio.tms ? "status-pill--ok" : "status-pill--warn"}">${radio.tms ? "Bereit" : "Wartet"}</span></td>
       <td><span class="status-pill status-pill--${gps.tone}">${gps.label}</span></td>
+      <td>${signalMarkup(radio.signal, true)}</td>
       <td title="${escapeHtml(formatDateTime(radio.lastSeen))}">${formatAgo(radio.lastSeen)}</td>
     </tr>`;
   }).join("");
@@ -444,7 +473,7 @@ function renderServices(services) {
 
 function renderCallHistory(calls) {
   if (!calls.length) {
-    elements["calls-body"].innerHTML = '<tr><td colspan="6" class="table-empty">Noch keine Gespräche erfasst</td></tr>';
+    elements["calls-body"].innerHTML = '<tr><td colspan="7" class="table-empty">Noch keine Gespräche erfasst</td></tr>';
     return;
   }
   elements["calls-body"].innerHTML = calls.map((call) => `
@@ -454,6 +483,7 @@ function renderCallHistory(calls) {
       <td>${identityMarkup(call.sourceIdentity, call.sourceId, call.sourceLabel)}</td>
       <td class="mono">${call.talkgroup}</td>
       <td><span class="radio-id"><strong>${escapeHtml(call.talkgroupName || (call.mappedTalkgroup ? `TG ${call.mappedTalkgroup}` : `TG ${call.talkgroup}`))}</strong><small>${call.mappedTalkgroup ? `TG ${call.mappedTalkgroup}` : `TG ${call.talkgroup}`}</small></span></td>
+      <td>${signalMarkup(call.signal, true)}</td>
       <td class="mono">${formatDuration(call.durationSeconds)}</td>
     </tr>`).join("");
 }
