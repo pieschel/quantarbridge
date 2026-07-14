@@ -15,6 +15,7 @@
   "bmApiKeyFile": "/home/quantar/quantar-runtime/bm_api.key",
   "locationEventDir": "/home/quantar/quantar-runtime/sms/processed",
   "identityCacheFile": "/home/quantar/quantar-runtime/dashboard-identity-cache.json",
+  "publicArsServerAddress": "10.0.0.2",
   "secureCookies": false,
   "serviceUnits": [
     {

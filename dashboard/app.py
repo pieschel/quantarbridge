@@ -149,6 +149,7 @@ class DashboardConfig:
     secure_cookies: bool
     service_units: tuple[dict[str, Any], ...]
     restart_targets: dict[str, dict[str, Any]]
+    public_ars_server_address: str = ""
 
     @classmethod
     def load(cls, path: Path) -> "DashboardConfig":
@@ -189,6 +190,9 @@ class DashboardConfig:
             secure_cookies=bool(raw.get("secureCookies", False)),
             service_units=tuple(raw.get("serviceUnits", [])),
             restart_targets=dict(raw.get("restartTargets", {})),
+            public_ars_server_address=str(
+                raw.get("publicArsServerAddress", "")
+            ).strip(),
         )
 
 
@@ -759,7 +763,8 @@ class RuntimeState:
         self._bm_state = "unknown"
         self._bm_last_change: float | None = None
         self._mappings: list[dict[str, int]] = []
-        self._ars_server_address = ""
+        self._configured_ars_server_address = ""
+        self._observed_ars_server_address = ""
         self._positions: dict[int, dict[str, Any]] = {}
         self._dynamic_activity: dict[int, float] = {}
         self._dynamic_timeout_seconds = 600
@@ -790,7 +795,7 @@ class RuntimeState:
     ) -> None:
         with self._lock:
             self._mappings = [dict(entry) for entry in mappings]
-            self._ars_server_address = str(ars_server_address).strip()
+            self._configured_ars_server_address = str(ars_server_address).strip()
 
     def set_talkgroup_config(self, dynamic_timeout_seconds: int) -> None:
         with self._lock:
@@ -864,8 +869,8 @@ class RuntimeState:
             if match:
                 radio_id = int(match.group(1))
                 server_ip = match.group(3).strip()
-                if not self._ars_server_address and server_ip:
-                    self._ars_server_address = server_ip
+                if server_ip:
+                    self._observed_ars_server_address = server_ip
                 previous = self._radios.get(radio_id, {})
                 self._radios[radio_id] = {
                     **previous,
@@ -1251,7 +1256,10 @@ class RuntimeState:
                     else None,
                 },
                 "connection": {
-                    "arsServerAddress": self._ars_server_address,
+                    "arsServerAddress": (
+                        self._configured_ars_server_address
+                        or self._observed_ars_server_address
+                    ),
                     "talkgroupMappings": connection_mappings,
                 },
                 "talkgroups": {
@@ -1805,7 +1813,9 @@ class SettingsManager:
                 if isinstance(entry, dict)
             ]
             self.state.set_connection_config(
-                mappings, str(packet_data.get("arsServerAddress", ""))
+                mappings,
+                str(packet_data.get("arsServerAddress", "")).strip()
+                or self.config.public_ars_server_address,
             )
             self.state.set_talkgroup_config(
                 int(routing.get("dynamicTimeoutSeconds", 600))

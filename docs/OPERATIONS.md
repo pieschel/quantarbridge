@@ -16,6 +16,13 @@ The dashboard shows:
 - Last LRRP position for each radio
 - Public ARS server address and bidirectional talkgroup mappings
 
+The ARS address is read from `protocols.p25.motorolaPacketData.arsServerAddress`
+when that key exists. Installations whose DVMHost configuration does not expose
+that key should set `publicArsServerAddress` in the private
+`quantar-dashboard.json`. A successfully observed ARS registration remains the
+runtime fallback and is not cleared when the administration page reloads its
+settings.
+
 ## Core Services
 
 ```bash

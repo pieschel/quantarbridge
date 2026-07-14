@@ -3,6 +3,7 @@ import sys
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -495,6 +496,62 @@ class IdentityDirectoryTest(unittest.TestCase):
 
 
 class SettingsManagerTest(unittest.TestCase):
+    @staticmethod
+    def remove_packet_data_config(config):
+        host = yaml.safe_load(config.dvmhost_config.read_text(encoding="utf-8"))
+        host["protocols"]["p25"].pop("motorolaPacketData", None)
+        config.dvmhost_config.write_text(
+            yaml.safe_dump(host, sort_keys=False), encoding="utf-8"
+        )
+
+    def test_read_does_not_clear_observed_ars_server_address(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = make_config(Path(directory))
+            write_runtime(config)
+            self.remove_packet_data_config(config)
+            state = RuntimeState()
+            state.process_dvmhost_line(
+                "I: 2025-01-01 12:05:00.000 (RF) recognized Motorola SCEP "
+                "ARS registration, llId = 1000001, subscriberIp = 10.0.0.20, "
+                "serverIp = 10.0.0.2, n = 1"
+            )
+            manager = SettingsManager(config, state, RecordingRestarter())
+
+            manager.read()
+
+            self.assertEqual(
+                "10.0.0.2", state.snapshot({})["connection"]["arsServerAddress"]
+            )
+
+    def test_dashboard_config_can_publish_explicit_ars_server_address(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = replace(
+                make_config(Path(directory)),
+                public_ars_server_address="10.0.0.3",
+            )
+            write_runtime(config)
+            self.remove_packet_data_config(config)
+            state = RuntimeState()
+            manager = SettingsManager(config, state, RecordingRestarter())
+
+            manager.read()
+
+            self.assertEqual(
+                "10.0.0.3", state.snapshot({})["connection"]["arsServerAddress"]
+            )
+
+    def test_dashboard_config_loads_public_ars_server_address(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "quantar-dashboard.json"
+            config_path.write_text(
+                json.dumps({"publicArsServerAddress": "10.0.0.3"}),
+                encoding="utf-8",
+            )
+
+            config = DashboardConfig.load(config_path)
+
+            self.assertEqual("10.0.0.3", config.public_ars_server_address)
+
     def test_read_publishes_only_public_connection_values(self):
         with tempfile.TemporaryDirectory() as directory:
             config = make_config(Path(directory))
