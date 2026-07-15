@@ -576,6 +576,7 @@ function populateSettings(settings) {
   form.elements.audioDmrP25Tx.value = dmrToP25.txAudioGain;
   form.elements.audioDmrP25Encoder.value = dmrToP25.vocoderEncoderAudioGain;
   form.elements.audioDmrP25Presence.value = dmrToP25.p25EncodePresenceGain;
+  form.elements.audioDmrP25HighCut.value = dmrToP25.p25EncodeHighCutHz;
   form.elements.audioDmrP25Agc.checked = dmrToP25.p25EncodeAgc;
   form.elements.audioDmrP25AgcTarget.value = dmrToP25.p25EncodeAgcTargetRms;
   form.elements.audioDmrP25AgcMin.value = dmrToP25.p25EncodeAgcMinGain;
@@ -602,7 +603,7 @@ function updateAudioControlState() {
   const enabled = form.elements.audioDmrP25Agc.checked;
   for (const name of [
     "audioDmrP25AgcTarget", "audioDmrP25AgcMin", "audioDmrP25AgcMax",
-    "audioDmrP25AgcAttack", "audioDmrP25AgcRelease", "audioDmrP25Peak",
+    "audioDmrP25AgcAttack", "audioDmrP25AgcRelease",
   ]) {
     form.elements[name].disabled = !enabled;
   }
@@ -654,6 +655,7 @@ function settingsPayload() {
         txAudioGain: Number(form.elements.audioDmrP25Tx.value),
         vocoderEncoderAudioGain: Number(form.elements.audioDmrP25Encoder.value),
         p25EncodePresenceGain: Number(form.elements.audioDmrP25Presence.value),
+        p25EncodeHighCutHz: Number(form.elements.audioDmrP25HighCut.value),
         p25EncodeAgc: form.elements.audioDmrP25Agc.checked,
         p25EncodeAgcTargetRms: Number(form.elements.audioDmrP25AgcTarget.value),
         p25EncodeAgcMinGain: Number(form.elements.audioDmrP25AgcMin.value),

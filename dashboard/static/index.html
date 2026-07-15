@@ -364,6 +364,11 @@
                       <span class="number-unit"><input type="number" name="audioDmrP25Presence" min="0" max="0.8" step="0.05" required inputmode="decimal"><small>×</small></span>
                     </label>
                     <label class="field field--explained">
+                      <span>P25-Hochtonfilter</span>
+                      <small class="field__description">Dämpft kratzige Höhen vor dem IMBE-Encoder. 0 schaltet den Filter aus; 2700 Hz ist ein sanfter Startwert.</small>
+                      <span class="number-unit"><input type="number" name="audioDmrP25HighCut" min="0" max="3500" step="100" required inputmode="numeric"><small>Hz</small></span>
+                    </label>
+                    <label class="field field--explained">
                       <span>AGC-Zielpegel</span>
                       <small class="field__description">Gewünschte mittlere Lautstärke der P25-Ausgabe. Wirkt nur bei eingeschalteter Pegelautomatik.</small>
                       <span class="number-unit"><input type="number" name="audioDmrP25AgcTarget" min="1000" max="12000" step="100" required inputmode="numeric"><small>RMS</small></span>
@@ -390,7 +395,7 @@
                     </label>
                     <label class="field field--explained">
                       <span>Spitzenbegrenzung</span>
-                      <small class="field__description">Absolute Schutzgrenze vor dem P25-Vocoder. Niedriger schützt stärker, reduziert aber mögliche Lautstärke.</small>
+                      <small class="field__description">Absolute Schutzgrenze direkt vor dem P25-Vocoder, auch ohne Pegelautomatik. Niedriger schützt stärker, reduziert aber mögliche Lautstärke.</small>
                       <span class="number-unit"><input type="number" name="audioDmrP25Peak" min="8000" max="32000" step="500" required inputmode="numeric"><small>PCM</small></span>
                     </label>
                   </div>

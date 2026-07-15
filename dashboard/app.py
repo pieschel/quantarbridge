@@ -1864,6 +1864,7 @@ class SettingsManager:
     }
     _P25_AUDIO_DEFAULTS: dict[str, Any] = {
         "p25EncodePresenceGain": 0.0,
+        "p25EncodeHighCutHz": 0.0,
         "p25EncodeAgc": False,
         "p25EncodeAgcTargetRms": 6500.0,
         "p25EncodeAgcMinGain": 0.55,
@@ -2058,6 +2059,12 @@ class SettingsManager:
                     0.0,
                     0.8,
                 ),
+                "p25EncodeHighCutHz": cls._validate_float(
+                    payload.get("p25EncodeHighCutHz"),
+                    f"{label}: Hochtonfilter",
+                    0.0,
+                    3500.0,
+                ),
                 "p25EncodeAgc": cls._validate_bool(
                     payload.get("p25EncodeAgc"), f"{label}: P25-Pegelautomatik"
                 ),
@@ -2102,6 +2109,10 @@ class SettingsManager:
         if values["p25EncodeAgcMaxGain"] < values["p25EncodeAgcMinGain"]:
             raise ValueError(
                 f"{label}: Die maximale AGC-Verstärkung darf nicht kleiner als die minimale sein."
+            )
+        if 0.0 < values["p25EncodeHighCutHz"] < 1800.0:
+            raise ValueError(
+                f"{label}: Der Hochtonfilter muss ausgeschaltet (0 Hz) oder auf mindestens 1800 Hz eingestellt sein."
             )
         return values
 

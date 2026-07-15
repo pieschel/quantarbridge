@@ -36,6 +36,10 @@ system:
   vocoderDecoderAutoGain: false
   txAudioGain: 3.00
   vocoderEncoderAudioGain: 0.0
+  p25EncodePresenceGain: 0.0
+  p25EncodeHighCutHz: 2700
+  p25EncodeAgc: false
+  p25EncodeAgcPeakLimit: 24000
   trace: false
   debug: false
   tek:

@@ -1,5 +1,5 @@
 diff --git a/src/bridge/HostBridge.DMR.cpp b/src/bridge/HostBridge.DMR.cpp
-index 910bfeda..d2a8dc9a 100644
+index 910bfeda..c13e0b4a 100644
 --- a/src/bridge/HostBridge.DMR.cpp
 +++ b/src/bridge/HostBridge.DMR.cpp
 @@ -55,7 +55,18 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
@@ -105,7 +105,7 @@ index 910bfeda..d2a8dc9a 100644
              m_network->resetDMR(slotNo);
              return;
          }
-@@ -146,9 +198,16 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+@@ -146,9 +198,20 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
          m_networkWatchdog.start();
  
          // is this a new call stream?
@@ -117,13 +117,17 @@ index 910bfeda..d2a8dc9a 100644
 +                m_ignoreCall = false;
 +                m_p25SeqNo = 0U;
 +                m_p25N = 0U;
++                m_p25EncodeAgcCurrentGain = 1.0f;
++                m_p25EncodeLowPassState1 = 0.0f;
++                m_p25EncodeLowPassState2 = 0.0f;
++                m_p25EncodeLimiterScale = 1.0f;
 +                ::memset(m_netLDU1, 0x00U, 9U * 25U);
 +                ::memset(m_netLDU2, 0x00U, 9U * 25U);
 +            }
  
              uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
              m_rxStartTime = now;
-@@ -161,9 +220,16 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+@@ -161,9 +224,16 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
              if (dataSync && (dataType == DataType::VOICE_LC_HEADER)) {
                  lc::LC lc = lc::LC();
                  lc::FullLC fullLC = lc::FullLC();
@@ -143,7 +147,7 @@ index 910bfeda..d2a8dc9a 100644
              }
              else {
                  // if we don't have a voice header; don't wait to decode it, just make a dummy header
-@@ -175,8 +241,12 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+@@ -175,8 +245,12 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
              m_rxDMRPILC = lc::PrivacyLC();
          }
  
@@ -158,7 +162,7 @@ index 910bfeda..d2a8dc9a 100644
              lc::PrivacyLC lc = lc::PrivacyLC();
              lc::FullLC fullLC = lc::FullLC();
              lc = *fullLC.decodePI(data.get());
-@@ -185,12 +255,29 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+@@ -185,12 +259,29 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
              m_callAlgoId = lc.getAlgId();
          }
  
@@ -189,7 +193,7 @@ index 910bfeda..d2a8dc9a 100644
  
              if (m_rxStartTime > 0U) {
                  uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-@@ -213,15 +294,22 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+@@ -213,15 +304,22 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
              return;
          }
  
@@ -218,7 +222,7 @@ index 910bfeda..d2a8dc9a 100644
              if (m_callInProgress) {
                  m_callInProgress = false;
  
-@@ -236,6 +324,12 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+@@ -236,6 +334,12 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
              }
  
              m_ignoreCall = true;
@@ -231,7 +235,7 @@ index 910bfeda..d2a8dc9a 100644
              m_network->resetDMR(slotNo);
              return;
          }
-@@ -252,7 +346,7 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+@@ -252,7 +356,7 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
              decodeDMRAudioFrame(ambe, srcId, dstId, n);
          }
  
@@ -240,7 +244,7 @@ index 910bfeda..d2a8dc9a 100644
      }
  }
  
-@@ -294,27 +388,32 @@ void HostBridge::decodeDMRAudioFrame(uint8_t* ambe, uint32_t srcId, uint32_t dst
+@@ -294,27 +398,32 @@ void HostBridge::decodeDMRAudioFrame(uint8_t* ambe, uint32_t srcId, uint32_t dst
              assertRtsPtt();
          }
  
@@ -290,7 +294,7 @@ index 910bfeda..d2a8dc9a 100644
                  writeUDPAudio(srcId, dstId, pcm, AUDIO_SAMPLES_LENGTH_BYTES);
              }
          }
-@@ -396,7 +495,12 @@ void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+@@ -396,7 +505,12 @@ void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
              m_txStreamId = m_network->getDMRStreamId(m_slot);
  
              m_dmrSeqNo++;
@@ -304,10 +308,10 @@ index 910bfeda..d2a8dc9a 100644
  
          // send DMR voice
 diff --git a/src/bridge/HostBridge.P25.cpp b/src/bridge/HostBridge.P25.cpp
-index 93c5d083..0e0be1e4 100644
+index 93c5d083..ad5fc6ef 100644
 --- a/src/bridge/HostBridge.P25.cpp
 +++ b/src/bridge/HostBridge.P25.cpp
-@@ -33,8 +33,130 @@ using namespace network::udp;
+@@ -33,8 +33,169 @@ using namespace network::udp;
  #include <cstdio>
  #include <algorithm>
  #include <functional>
@@ -329,19 +333,22 @@ index 93c5d083..0e0be1e4 100644
 +        return static_cast<short>(sample);
 +    }
 +
-+    void applyP25PeakProtectedGain(short* samples, int length, float requestedGain)
++    void applyP25PeakProtectedGain(short* samples, int length, float requestedGain,
++        float peakLimit, float& limiterScale, uint32_t& protectedFrames)
 +    {
 +        if (samples == nullptr || length <= 0)
 +            return;
 +        if (requestedGain <= 0.0f) {
 +            ::memset(samples, 0x00U, static_cast<size_t>(length) * sizeof(short));
++            limiterScale = 1.0f;
 +            return;
 +        }
 +
-+        constexpr float peakLimit = 32000.0f;
 +        constexpr float release = 0.08f;
-+        static float limiterScale = 1.0f;
-+        static uint32_t protectedFrames = 0U;
++        if (peakLimit < 1.0f)
++            peakLimit = 1.0f;
++        if (peakLimit > static_cast<float>(SHORT_CLIP_SMPL_MAX))
++            peakLimit = static_cast<float>(SHORT_CLIP_SMPL_MAX);
 +
 +        int peak = 0;
 +        for (int i = 0; i < length; ++i) {
@@ -366,7 +373,16 @@ index 93c5d083..0e0be1e4 100644
 +        else
 +            limiterScale += (desiredScale - limiterScale) * release;
 +
-+        AnalogAudio::gain(samples, length, requestedGain * limiterScale);
++        const float appliedGain = requestedGain * limiterScale;
++        const int outputLimit = static_cast<int>(peakLimit);
++        for (int i = 0; i < length; ++i) {
++            int adjusted = static_cast<int>(std::lround(static_cast<float>(samples[i]) * appliedGain));
++            if (adjusted > outputLimit)
++                adjusted = outputLimit;
++            else if (adjusted < -outputLimit)
++                adjusted = -outputLimit;
++            samples[i] = clipPcmSample(adjusted);
++        }
 +    }
 +
 +    void applyP25EncodePresence(short* samples, int length, float amount)
@@ -380,6 +396,33 @@ index 93c5d083..0e0be1e4 100644
 +            const int emphasis = static_cast<int>((static_cast<int>(current) - static_cast<int>(previous)) * amount);
 +            samples[i] = clipPcmSample(static_cast<int>(current) + emphasis);
 +            previous = current;
++        }
++    }
++
++    void applyP25EncodeHighCut(short* samples, int length, float cutoffHz, float& state1, float& state2)
++    {
++        if (samples == nullptr || length <= 0 || cutoffHz <= 0.0f)
++            return;
++
++        constexpr float sampleRate = 8000.0f;
++        constexpr float butterworthQ = 0.70710678f;
++        constexpr float pi = 3.14159265358979323846f;
++        const float omega = 2.0f * pi * cutoffHz / sampleRate;
++        const float cosine = std::cos(omega);
++        const float alpha = std::sin(omega) / (2.0f * butterworthQ);
++        const float a0 = 1.0f + alpha;
++        const float b0 = ((1.0f - cosine) * 0.5f) / a0;
++        const float b1 = (1.0f - cosine) / a0;
++        const float b2 = b0;
++        const float a1 = (-2.0f * cosine) / a0;
++        const float a2 = (1.0f - alpha) / a0;
++
++        for (int i = 0; i < length; ++i) {
++            const float input = static_cast<float>(samples[i]);
++            const float output = b0 * input + state1;
++            state1 = b1 * input - a1 * output + state2;
++            state2 = b2 * input - a2 * output;
++            samples[i] = clipPcmSample(static_cast<int>(std::lround(output)));
 +        }
 +    }
 +
@@ -438,7 +481,7 @@ index 93c5d083..0e0be1e4 100644
  #if !defined(_WIN32)
  #include <unistd.h>
  #include <pwd.h>
-@@ -58,14 +180,25 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -58,14 +219,25 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
      using namespace p25::dfsi::defines;
      using namespace p25::data;
  
@@ -467,7 +510,7 @@ index 93c5d083..0e0be1e4 100644
  
      // process network message header
      DUID::E duid = (DUID::E)buffer[22U];
-@@ -101,6 +234,15 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -101,6 +273,15 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
      uint32_t srcId = GET_UINT24(buffer, 5U);
      uint32_t dstId = GET_UINT24(buffer, 8U);
  
@@ -483,7 +526,7 @@ index 93c5d083..0e0be1e4 100644
      uint8_t lsd1 = buffer[20U];
      uint8_t lsd2 = buffer[21U];
  
-@@ -143,8 +285,8 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -143,8 +324,8 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
              return;
          }
  
@@ -494,7 +537,7 @@ index 93c5d083..0e0be1e4 100644
              m_network->resetP25();
              return;
          }
-@@ -153,7 +295,7 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -153,7 +334,7 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
  
          // is this a new call stream?
          uint16_t callKID = 0U;
@@ -503,7 +546,7 @@ index 93c5d083..0e0be1e4 100644
              m_callInProgress = true;
              m_callAlgoId = ALGO_UNENCRYPT;
  
-@@ -204,7 +346,6 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -204,7 +385,6 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
                  uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                  uint64_t diff = now - m_rxStartTime;
  
@@ -511,7 +554,7 @@ index 93c5d083..0e0be1e4 100644
                  if (m_udpUsrp) {
                      sendUsrpEot();
                  }
-@@ -212,6 +353,10 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -212,6 +392,10 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
                  LogInfoEx(LOG_HOST, "P25, call end, srcId = %u, dstId = %u, dur = %us", srcId, dstId, diff / 1000U);
              }
  
@@ -522,7 +565,7 @@ index 93c5d083..0e0be1e4 100644
              m_rxP25LC = lc::LC();
              m_rxStartTime = 0U;
              m_rxStreamId = 0U;
-@@ -225,9 +370,9 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -225,9 +409,9 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
              return;
          }
  
@@ -534,7 +577,7 @@ index 93c5d083..0e0be1e4 100644
              m_ignoreCall = false;
  
          if (duid == DUID::LDU2 && !m_ignoreCall) {
-@@ -396,7 +541,7 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -396,7 +580,7 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
              break;
          }
  
@@ -543,7 +586,7 @@ index 93c5d083..0e0be1e4 100644
      }
  }
  
-@@ -496,25 +641,39 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
+@@ -496,25 +680,39 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
              assertRtsPtt();
          }
  
@@ -598,7 +641,7 @@ index 93c5d083..0e0be1e4 100644
                  writeUDPAudio(srcId, dstId, pcm, AUDIO_SAMPLES_LENGTH_BYTES);
              }
          }
-@@ -544,8 +703,11 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+@@ -544,8 +742,14 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
          smpIdx++;
      }
  
@@ -608,11 +651,14 @@ index 93c5d083..0e0be1e4 100644
 +    applyP25EncodeAgc(samples, AUDIO_SAMPLES_LENGTH, m_p25EncodeAgcEnabled, m_p25EncodeAgcCurrentGain,
 +        m_p25EncodeAgcTargetRms, m_p25EncodeAgcMinGain, m_p25EncodeAgcMaxGain, m_p25EncodeAgcAttack, m_p25EncodeAgcRelease, m_p25EncodeAgcPeakLimit);
 +    applyP25EncodePresence(samples, AUDIO_SAMPLES_LENGTH, m_p25EncodePresenceGain);
-+    applyP25PeakProtectedGain(samples, AUDIO_SAMPLES_LENGTH, m_txAudioGain);
++    applyP25EncodeHighCut(samples, AUDIO_SAMPLES_LENGTH, m_p25EncodeHighCutHz,
++        m_p25EncodeLowPassState1, m_p25EncodeLowPassState2);
++    applyP25PeakProtectedGain(samples, AUDIO_SAMPLES_LENGTH, m_txAudioGain,
++        m_p25EncodeAgcPeakLimit, m_p25EncodeLimiterScale, m_p25EncodeLimiterFrames);
  
      // encode PCM samples into IMBE codewords
      uint8_t imbe[RAW_IMBE_LENGTH_BYTES];
-@@ -696,12 +858,14 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+@@ -696,12 +900,14 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
          LogInfoEx(LOG_HOST, P25_LDU1_STR " audio, srcId = %u, dstId = %u", srcId, dstId);
          m_network->writeP25LDU1(lc, lsd, m_netLDU1, FrameType::HDU_VALID, controlByte);
          m_txStreamId = m_network->getP25StreamId();
@@ -628,7 +674,7 @@ index 93c5d083..0e0be1e4 100644
  
      m_p25SeqNo++;
 diff --git a/src/bridge/HostBridge.cpp b/src/bridge/HostBridge.cpp
-index 3aa4556a..8c406489 100644
+index 3aa4556a..46974313 100644
 --- a/src/bridge/HostBridge.cpp
 +++ b/src/bridge/HostBridge.cpp
 @@ -120,7 +120,6 @@ void audioCallback(ma_device* device, void* output, const void* input, ma_uint32
@@ -639,11 +685,14 @@ index 3aa4556a..8c406489 100644
  /* Helper callback, called when MDC packets are detected. */
  
  void mdcPacketDetected(int frameCount, mdc_u8_t op, mdc_u8_t arg, mdc_u16_t unitID,
-@@ -180,6 +179,15 @@ HostBridge::HostBridge(const std::string& confFile) :
+@@ -180,6 +179,20 @@ HostBridge::HostBridge(const std::string& confFile) :
      m_vocoderDecoderAutoGain(false),
      m_txAudioGain(1.0f),
      m_vocoderEncoderAudioGain(3.0),
 +    m_p25EncodePresenceGain(0.0f),
++    m_p25EncodeHighCutHz(0.0f),
++    m_p25EncodeLowPassState1(0.0f),
++    m_p25EncodeLowPassState2(0.0f),
 +    m_p25EncodeAgcEnabled(false),
 +    m_p25EncodeAgcTargetRms(6500.0f),
 +    m_p25EncodeAgcMinGain(0.55f),
@@ -652,10 +701,12 @@ index 3aa4556a..8c406489 100644
 +    m_p25EncodeAgcRelease(0.06f),
 +    m_p25EncodeAgcPeakLimit(26000.0f),
 +    m_p25EncodeAgcCurrentGain(1.0f),
++    m_p25EncodeLimiterScale(1.0f),
++    m_p25EncodeLimiterFrames(0U),
      m_trace(false),
      m_debug(false),
      m_tekAlgoId(P25DEF::ALGO_UNENCRYPT),
-@@ -256,7 +264,7 @@ HostBridge::HostBridge(const std::string& confFile) :
+@@ -256,7 +269,7 @@ HostBridge::HostBridge(const std::string& confFile) :
      m_rxStreamId(0U),
      m_txStreamId(0U),
      m_detectedSampleCnt(0U),
@@ -664,7 +715,7 @@ index 3aa4556a..8c406489 100644
      m_rtpInitialFrame(false),
      m_rtpSeqNo(0U),
      m_rtpTimestamp(INVALID_TS),
-@@ -400,9 +408,14 @@ int HostBridge::run()
+@@ -400,9 +413,14 @@ int HostBridge::run()
      if (!ret)
          return EXIT_FAILURE;
  
@@ -681,7 +732,7 @@ index 3aa4556a..8c406489 100644
      }
  
      if (m_localAudio) {
-@@ -490,15 +503,14 @@ int HostBridge::run()
+@@ -490,15 +508,14 @@ int HostBridge::run()
      m_mdcDecoder = mdc_decoder_new(SAMPLE_RATE);
      mdc_decoder_set_callback(m_mdcDecoder, mdcPacketDetected, this);
  
@@ -701,7 +752,7 @@ index 3aa4556a..8c406489 100644
          m_encoder = new vocoder::MBEEncoder(vocoder::ENCODE_88BIT_IMBE);
      }
  
-@@ -558,6 +570,8 @@ int HostBridge::run()
+@@ -558,6 +575,8 @@ int HostBridge::run()
      ** Initialize Threads
      */
  
@@ -710,7 +761,7 @@ index 3aa4556a..8c406489 100644
      if (!Thread::runAsThread(this, threadNetworkProcess))
          return EXIT_FAILURE;
      if (!Thread::runAsThread(this, threadCallWatchdog))
-@@ -585,8 +599,6 @@ int HostBridge::run()
+@@ -585,8 +604,6 @@ int HostBridge::run()
  
      ::LogInfoEx(LOG_HOST, "Bridge is up and running");
  
@@ -719,7 +770,7 @@ index 3aa4556a..8c406489 100644
      StopWatch stopWatch;
      stopWatch.start();
  
-@@ -628,6 +640,11 @@ int HostBridge::run()
+@@ -628,6 +645,11 @@ int HostBridge::run()
                  m_networkWatchdog.clock(ms);
  
                  if (m_networkWatchdog.isRunning() && m_networkWatchdog.hasExpired()) {
@@ -731,7 +782,7 @@ index 3aa4556a..8c406489 100644
                      if (m_rxStartTime > 0U) {
                          uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                          uint64_t diff = now - m_rxStartTime;
-@@ -642,6 +659,20 @@ int HostBridge::run()
+@@ -642,6 +664,20 @@ int HostBridge::run()
  
                      m_networkWatchdog.stop();
  
@@ -752,7 +803,7 @@ index 3aa4556a..8c406489 100644
                      m_callInProgress = false;
                      m_ignoreCall = false;
                      m_callAlgoId = P25DEF::ALGO_UNENCRYPT;
-@@ -998,6 +1029,44 @@ bool HostBridge::readParams()
+@@ -998,6 +1034,56 @@ bool HostBridge::readParams()
      m_vocoderDecoderAutoGain = systemConf["vocoderDecoderAutoGain"].as<bool>(false);
      m_txAudioGain = systemConf["txAudioGain"].as<float>(1.0f);
      m_vocoderEncoderAudioGain = systemConf["vocoderEncoderAudioGain"].as<float>(3.0f);
@@ -761,6 +812,16 @@ index 3aa4556a..8c406489 100644
 +        m_p25EncodePresenceGain = 0.0f;
 +    if (m_p25EncodePresenceGain > 0.8f)
 +        m_p25EncodePresenceGain = 0.8f;
++
++    m_p25EncodeHighCutHz = systemConf["p25EncodeHighCutHz"].as<float>(0.0f);
++    if (m_p25EncodeHighCutHz < 0.0f)
++        m_p25EncodeHighCutHz = 0.0f;
++    if (m_p25EncodeHighCutHz > 3500.0f)
++        m_p25EncodeHighCutHz = 3500.0f;
++    if (m_p25EncodeHighCutHz > 0.0f && m_p25EncodeHighCutHz < 1800.0f)
++        m_p25EncodeHighCutHz = 1800.0f;
++    m_p25EncodeLowPassState1 = 0.0f;
++    m_p25EncodeLowPassState2 = 0.0f;
 +
 +    m_p25EncodeAgcEnabled = systemConf["p25EncodeAgc"].as<bool>(false);
 +    m_p25EncodeAgcTargetRms = systemConf["p25EncodeAgcTargetRms"].as<float>(6500.0f);
@@ -794,10 +855,12 @@ index 3aa4556a..8c406489 100644
 +    if (m_p25EncodeAgcPeakLimit > 32000.0f)
 +        m_p25EncodeAgcPeakLimit = 32000.0f;
 +    m_p25EncodeAgcCurrentGain = 1.0f;
++    m_p25EncodeLimiterScale = 1.0f;
++    m_p25EncodeLimiterFrames = 0U;
      
      m_txMode = (uint8_t)systemConf["txMode"].as<uint32_t>(1U);
      if (m_txMode < TX_MODE_DMR)
-@@ -1008,8 +1077,7 @@ bool HostBridge::readParams()
+@@ -1008,8 +1094,7 @@ bool HostBridge::readParams()
      m_voxSampleLevel = systemConf["voxSampleLevel"].as<float>(30.0f);
      m_dropTimeMS = (uint16_t)systemConf["dropTimeMs"].as<uint32_t>(180U);
  
@@ -807,7 +870,7 @@ index 3aa4556a..8c406489 100644
  
      switch (m_txMode) {
      case TX_MODE_DMR:
-@@ -1017,8 +1085,7 @@ bool HostBridge::readParams()
+@@ -1017,8 +1102,7 @@ bool HostBridge::readParams()
      case TX_MODE_P25:
          {
              if (m_udpAudio) {
@@ -817,7 +880,7 @@ index 3aa4556a..8c406489 100644
              }
          }
          break;
-@@ -1028,6 +1095,17 @@ bool HostBridge::readParams()
+@@ -1028,6 +1112,17 @@ bool HostBridge::readParams()
  
      m_localDropTime = Timer(1000U, 0U, m_dropTimeMS);
      m_udpDropTime = Timer(1000U, 0U, m_dropTimeMS);
@@ -835,18 +898,22 @@ index 3aa4556a..8c406489 100644
  
      m_detectAnalogMDC1200 = systemConf["detectAnalogMDC1200"].as<bool>(false);
  
-@@ -1137,6 +1215,10 @@ bool HostBridge::readParams()
+@@ -1137,6 +1232,14 @@ bool HostBridge::readParams()
      LogInfo("    Vocoder Decoder Auto Gain: %s", m_vocoderDecoderAutoGain ? "yes" : "no");
      LogInfo("    Tx Audio Gain: %.1f", m_txAudioGain);
      LogInfo("    Vocoder Encoder Audio Gain: %.1f", m_vocoderEncoderAudioGain);
 +    LogInfo("    P25 Encoder Presence Gain: %.2f", m_p25EncodePresenceGain);
++    if (m_p25EncodeHighCutHz > 0.0f)
++        LogInfo("    P25 Encoder High Cut: %.0f Hz", m_p25EncodeHighCutHz);
++    else
++        LogInfo("    P25 Encoder High Cut: off");
 +    LogInfo("    P25 Encoder AGC: %s", m_p25EncodeAgcEnabled ? "yes" : "no");
 +    LogInfo("    P25 Encoder AGC Target RMS: %.0f, Gain: %.2f..%.2f, Peak Limit: %.0f",
 +        m_p25EncodeAgcTargetRms, m_p25EncodeAgcMinGain, m_p25EncodeAgcMaxGain, m_p25EncodeAgcPeakLimit);
      LogInfo("    Transmit Mode: %s", txModeStr.c_str());
      LogInfo("    VOX Sample Level: %.1f", m_voxSampleLevel);
      LogInfo("    Drop Time: %ums", m_dropTimeMS);
-@@ -1215,11 +1297,8 @@ bool HostBridge::createNetwork()
+@@ -1215,11 +1318,8 @@ bool HostBridge::createNetwork()
          return false;
      }
  
@@ -860,7 +927,7 @@ index 3aa4556a..8c406489 100644
  
      // make sure we're range checked
      switch (m_txMode) {
-@@ -1295,7 +1374,10 @@ bool HostBridge::createNetwork()
+@@ -1295,7 +1395,10 @@ bool HostBridge::createNetwork()
  
      LogInfo("    Encrypted: %s", encrypted ? "yes" : "no");
      LogInfo("    Source ID: %u", m_srcId);
@@ -872,7 +939,7 @@ index 3aa4556a..8c406489 100644
      LogInfo("    DMR Slot: %u", m_slot);
      LogInfo("    Override Source ID from MDC: %s", m_overrideSrcIdFromMDC ? "yes" : "no");
      LogInfo("    Override Source ID from UDP Audio: %s", m_overrideSrcIdFromUDP ? "yes" : "no");
-@@ -1312,6 +1394,8 @@ bool HostBridge::createNetwork()
+@@ -1312,6 +1415,8 @@ bool HostBridge::createNetwork()
      }
  
      bool dmr = false, p25 = false, analog = false;
@@ -881,7 +948,7 @@ index 3aa4556a..8c406489 100644
      switch (m_txMode) {
      case TX_MODE_DMR:
          dmr = true;
-@@ -1324,6 +1408,17 @@ bool HostBridge::createNetwork()
+@@ -1324,6 +1429,17 @@ bool HostBridge::createNetwork()
          break;
      }
  
@@ -899,7 +966,7 @@ index 3aa4556a..8c406489 100644
      // initialize networking
      m_network = new PeerNetwork(address, port, local, id, password, true, debug, dmr, p25, false, analog, true, true, true, allowDiagnosticTransfer, true, false);
  
-@@ -1478,15 +1573,19 @@ void HostBridge::processUDPAudio()
+@@ -1478,15 +1594,19 @@ void HostBridge::processUDPAudio()
  
          if (m_udpMetadata) {
              if (m_udpRTPFrames) {
@@ -921,7 +988,7 @@ index 3aa4556a..8c406489 100644
  
          m_udpPackets.push_back(req);
      }
-@@ -1520,9 +1619,9 @@ void HostBridge::writeUDPAudio(uint32_t srcId, uint32_t dstId, uint8_t* pcm, uin
+@@ -1520,9 +1640,9 @@ void HostBridge::writeUDPAudio(uint32_t srcId, uint32_t dstId, uint8_t* pcm, uin
                  ::memcpy(audioData, rtpFrame, RTP_HEADER_LENGTH_BYTES);
                  ::memcpy(audioData + RTP_HEADER_LENGTH_BYTES, pcm, pcmLength);
  
@@ -934,7 +1001,7 @@ index 3aa4556a..8c406489 100644
              }
          }
  
-@@ -1713,74 +1812,90 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+@@ -1713,74 +1833,90 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
      m_localDropTime.stop();
      m_udpDropTime.stop();
  
@@ -1080,7 +1147,18 @@ index 3aa4556a..8c406489 100644
      }
  
      LogInfoEx(LOG_HOST, "%s, call end, srcId = %u, dstId = %u", trafficType.c_str(), srcId, dstId);
-@@ -2324,13 +2439,22 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
+@@ -1803,6 +1939,10 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+     m_p25SeqNo = 0U;
+     m_p25N = 0U;
+     m_analogN = 0U;
++    m_p25EncodeAgcCurrentGain = 1.0f;
++    m_p25EncodeLowPassState1 = 0.0f;
++    m_p25EncodeLowPassState2 = 0.0f;
++    m_p25EncodeLimiterScale = 1.0f;
+ 
+     if (!m_udpRTPContinuousSeq) {
+         m_rtpInitialFrame = false;
+@@ -2324,13 +2464,22 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
                  delete[] req->pcm;
                  delete req;
                  req = nullptr; // prevent use-after-free
@@ -1105,7 +1183,7 @@ index 3aa4556a..8c406489 100644
                  bridge->m_udpDropTime.start();
  
                  // handle source ID management
-@@ -2346,6 +2470,12 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
+@@ -2346,6 +2495,12 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
                              if (bridge->m_resetCallForSourceIdChange && (frameSrcId != bridge->m_udpSrcId)) {
                                  LogInfoEx(LOG_HOST, "%s, call switch over, old srcId = %u, new srcId = %u", UDP_CALL, bridge->m_udpSrcId, frameSrcId);
                                  bridge->callEnd(bridge->m_udpSrcId, bridge->m_dstId);
@@ -1118,7 +1196,7 @@ index 3aa4556a..8c406489 100644
  
                                  if (bridge->m_udpDropTime.isRunning())
                                      bridge->m_udpDropTime.start();
-@@ -2373,14 +2503,17 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
+@@ -2373,14 +2528,17 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
                      bridge->m_udpSrcId = bridge->m_srcId;
                  }
  
@@ -1139,7 +1217,7 @@ index 3aa4556a..8c406489 100644
  
                          LogInfoEx(LOG_HOST, "%s, call start, srcId = %u, dstId = %u", UDP_CALL, bridge->m_udpSrcId, bridge->m_udpDstId);
                          if (bridge->m_grantDemand) {
-@@ -2464,13 +2597,13 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
+@@ -2464,13 +2622,13 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
  
                  switch (bridge->m_txMode) {
                  case TX_MODE_DMR:
@@ -1156,7 +1234,7 @@ index 3aa4556a..8c406489 100644
                      break;
                  }
  
-@@ -2536,11 +2669,15 @@ void* HostBridge::threadNetworkProcess(void* arg)
+@@ -2536,11 +2694,15 @@ void* HostBridge::threadNetworkProcess(void* arg)
  
              uint32_t length = 0U;
              bool netReadRet = false;
@@ -1175,7 +1253,7 @@ index 3aa4556a..8c406489 100644
                  {
                      std::lock_guard<std::mutex> lock(HostBridge::s_networkMutex);
                      dmrBuffer = bridge->m_network->readDMR(netReadRet, length);
-@@ -2551,11 +2688,9 @@ void* HostBridge::threadNetworkProcess(void* arg)
+@@ -2551,11 +2713,9 @@ void* HostBridge::threadNetworkProcess(void* arg)
                  }
              }
  
@@ -1189,14 +1267,17 @@ index 3aa4556a..8c406489 100644
                      std::lock_guard<std::mutex> lock(HostBridge::s_networkMutex);
                      p25Buffer = bridge->m_network->readP25(netReadRet, length);
 diff --git a/src/bridge/HostBridge.h b/src/bridge/HostBridge.h
-index d2640686..754fb06e 100644
+index d2640686..d2c159d8 100644
 --- a/src/bridge/HostBridge.h
 +++ b/src/bridge/HostBridge.h
-@@ -175,6 +175,15 @@ private:
+@@ -175,6 +175,20 @@ private:
  
      float m_txAudioGain;
      float m_vocoderEncoderAudioGain;
 +    float m_p25EncodePresenceGain;
++    float m_p25EncodeHighCutHz;
++    float m_p25EncodeLowPassState1;
++    float m_p25EncodeLowPassState2;
 +    bool m_p25EncodeAgcEnabled;
 +    float m_p25EncodeAgcTargetRms;
 +    float m_p25EncodeAgcMinGain;
@@ -1205,6 +1286,8 @@ index d2640686..754fb06e 100644
 +    float m_p25EncodeAgcRelease;
 +    float m_p25EncodeAgcPeakLimit;
 +    float m_p25EncodeAgcCurrentGain;
++    float m_p25EncodeLimiterScale;
++    uint32_t m_p25EncodeLimiterFrames;
  
      bool m_trace;
      bool m_debug;
@@ -3005,7 +3088,7 @@ index e95a3568..84294966 100644
      writeRF_TDULC(lc.get(), true);
  
 diff --git a/src/host/p25/packet/Data.cpp b/src/host/p25/packet/Data.cpp
-index dd868c47..9f1f0d08 100644
+index dd868c47..d8d470fa 100644
 --- a/src/host/p25/packet/Data.cpp
 +++ b/src/host/p25/packet/Data.cpp
 @@ -13,13 +13,17 @@
@@ -5003,16 +5086,11 @@ index dd868c47..9f1f0d08 100644
                          m_rfPduUserData);
  
                      // only repeat the PDU locally if the packet isn't for the FNE
-@@ -381,11 +2230,599 @@ bool Data::process(uint8_t* data, uint32_t len)
-         m_inbound = false;
-         return true;
+@@ -385,7 +2234,595 @@ bool Data::process(uint8_t* data, uint32_t len)
+         LogError(LOG_RF, "P25 unhandled data DUID, duid = $%02X", duid);
      }
--    else {
--        LogError(LOG_RF, "P25 unhandled data DUID, duid = $%02X", duid);
-+    else {
-+        LogError(LOG_RF, "P25 unhandled data DUID, duid = $%02X", duid);
-+    }
-+
+ 
+-    return false;
 +    return false;
 +}
 +
@@ -5596,9 +5674,8 @@ index dd868c47..9f1f0d08 100644
 +{
 +    if (pduUserData == nullptr || length < 29U || responderRid == 0U || responderRid > 9999999U) {
 +        return;
-     }
- 
--    return false;
++    }
++
 +    (void)ns;
 +    LogInfoEx(LOG_RF, P25_PDU_STR ", synthetic Motorola TMS delivery using peer follow-up shape, srcId = %u, dstRid = %u",
 +        responderRid, sourceRid);
@@ -6139,15 +6216,12 @@ index dd868c47..9f1f0d08 100644
 +        m_p25->m_rfState != RS_RF_LISTENING || m_retryPDUData != nullptr) {
 +        return false;
 +    }
- 
--                            writeRF_PDU_Ack_Response(m_netAssembler->dataHeader.getResponseClass(), m_netAssembler->dataHeader.getResponseType(), m_netAssembler->dataHeader.getResponseStatus(),
--                                m_netAssembler->dataHeader.getLLId(), (m_netAssembler->dataHeader.getSrcLLId() > 0U), m_netAssembler->dataHeader.getSrcLLId());
++
 +    const size_t fragmentIndex = session->second.pendingTmsFragmentIndex;
 +    const std::vector<uint8_t>& fragment = session->second.pendingTmsFragments[fragmentIndex];
  
--                            resetReceivedBlocks();
--                            return true;
--                        }
+-                            writeRF_PDU_Ack_Response(m_netAssembler->dataHeader.getResponseClass(), m_netAssembler->dataHeader.getResponseType(), m_netAssembler->dataHeader.getResponseStatus(),
+-                                m_netAssembler->dataHeader.getLLId(), (m_netAssembler->dataHeader.getSrcLLId() > 0U), m_netAssembler->dataHeader.getSrcLLId());
 +    data::DataHeader rspHeader = data::DataHeader();
 +    rspHeader.setFormat(PDUFormatType::CONFIRMED);
 +    rspHeader.setMFId(MFG_STANDARD);
@@ -6166,8 +6240,9 @@ index dd868c47..9f1f0d08 100644
 +    rspHeader.setFSN(fsn);
 +    rspHeader.calculateLength(static_cast<uint32_t>(fragment.size()));
  
--                        continue;
--                    }
+-                            resetReceivedBlocks();
+-                            return true;
+-                        }
 +    uint32_t bitLength = 0U;
 +    UInt8Array assembled = m_rfAssembler->assemble(rspHeader, false, false,
 +        fragment.data(), &bitLength);
@@ -6185,16 +6260,8 @@ index dd868c47..9f1f0d08 100644
 +    return true;
 +}
  
--                    bool ret = m_netAssembler->disassemble(m_netReceivedBlocks[i], blockLength);
--                    if (!ret) {
--                        m_p25->m_netState = RS_NET_IDLE;
--                        resetReceivedBlocks();
--                        return false;
+-                        continue;
 -                    }
--                    else {
--                        if (m_netAssembler->getComplete()) {
--                            m_netPduUserDataLength = m_netAssembler->getUserDataLength();
--                            m_netAssembler->getUserData(m_netPduUserData);
 +void Data::resetMotorolaTmsInboundDelivery(MotorolaSession& session)
 +{
 +    session.pendingTmsFragments.clear();
@@ -6206,8 +6273,16 @@ index dd868c47..9f1f0d08 100644
 +    session.pendingTmsApplicationAckMs = 0U;
 +}
  
--                            uint32_t srcId = (m_netAssembler->getExtendedAddress()) ? m_netAssembler->dataHeader.getSrcLLId() : m_netAssembler->dataHeader.getLLId();
--                            uint32_t dstId = m_netAssembler->dataHeader.getLLId();
+-                    bool ret = m_netAssembler->disassemble(m_netReceivedBlocks[i], blockLength);
+-                    if (!ret) {
+-                        m_p25->m_netState = RS_NET_IDLE;
+-                        resetReceivedBlocks();
+-                        return false;
+-                    }
+-                    else {
+-                        if (m_netAssembler->getComplete()) {
+-                            m_netPduUserDataLength = m_netAssembler->getUserDataLength();
+-                            m_netAssembler->getUserData(m_netPduUserData);
 +void Data::processMotorolaTmsOutbox()
 +{
 +#if defined(_WIN32)
@@ -6223,14 +6298,23 @@ index dd868c47..9f1f0d08 100644
 +        return;
 +    }
  
--                            uint8_t sap = (m_netAssembler->getExtendedAddress()) ? m_netAssembler->dataHeader.getEXSAP() : m_netAssembler->dataHeader.getSAP();
--                            if (m_netAssembler->getAuxiliaryES())
--                                sap = m_netAssembler->dataHeader.getEXSAP();
+-                            uint32_t srcId = (m_netAssembler->getExtendedAddress()) ? m_netAssembler->dataHeader.getSrcLLId() : m_netAssembler->dataHeader.getLLId();
+-                            uint32_t dstId = m_netAssembler->dataHeader.getLLId();
 +    DIR* directory = ::opendir(kMotorolaTmsP25OutboxPath);
 +    if (directory == nullptr) {
 +        LogWarning(LOG_RF, P25_PDU_STR ", Motorola TMS outbox scan failed, error = %s", ::strerror(errno));
 +        return;
 +    }
+ 
+-                            uint8_t sap = (m_netAssembler->getExtendedAddress()) ? m_netAssembler->dataHeader.getEXSAP() : m_netAssembler->dataHeader.getSAP();
+-                            if (m_netAssembler->getAuxiliaryES())
+-                                sap = m_netAssembler->dataHeader.getEXSAP();
++    std::vector<std::string> files;
++    while (dirent* entry = ::readdir(directory)) {
++        const std::string name(entry->d_name);
++        if (name.size() < 5U || name.compare(name.size() - 5U, 5U, ".yaml") != 0) {
++            continue;
++        }
  
 -                            // handle standard P25 service access points
 -                            switch (sap) {
@@ -6240,18 +6324,6 @@ index dd868c47..9f1f0d08 100644
 -                                uint8_t arpPacket[P25_PDU_ARP_PCKT_LENGTH];
 -                                ::memset(arpPacket, 0x00U, P25_PDU_ARP_PCKT_LENGTH);
 -                                ::memcpy(arpPacket, m_netPduUserData, P25_PDU_ARP_PCKT_LENGTH);
-+    std::vector<std::string> files;
-+    while (dirent* entry = ::readdir(directory)) {
-+        const std::string name(entry->d_name);
-+        if (name.size() < 5U || name.compare(name.size() - 5U, 5U, ".yaml") != 0) {
-+            continue;
-+        }
- 
--                                uint16_t opcode = GET_UINT16(arpPacket, 6U);
--                                uint32_t srcHWAddr = GET_UINT24(arpPacket, 8U);
--                                uint32_t srcProtoAddr = GET_UINT32(arpPacket, 11U);
--                                //uint32_t tgtHWAddr = GET_UINT24(arpPacket, 15U);
--                                uint32_t tgtProtoAddr = GET_UINT32(arpPacket, 18U);
 +        const std::string path = std::string(kMotorolaTmsP25OutboxPath) + "/" + name;
 +        struct stat info {};
 +        if (::stat(path.c_str(), &info) == 0 && S_ISREG(info.st_mode)) {
@@ -6260,6 +6332,16 @@ index dd868c47..9f1f0d08 100644
 +    }
 +    ::closedir(directory);
  
+-                                uint16_t opcode = GET_UINT16(arpPacket, 6U);
+-                                uint32_t srcHWAddr = GET_UINT24(arpPacket, 8U);
+-                                uint32_t srcProtoAddr = GET_UINT32(arpPacket, 11U);
+-                                //uint32_t tgtHWAddr = GET_UINT24(arpPacket, 15U);
+-                                uint32_t tgtProtoAddr = GET_UINT32(arpPacket, 18U);
++    std::sort(files.begin(), files.end());
++    if (files.size() > kMotorolaTmsP25MaxFilesPerPoll) {
++        files.resize(kMotorolaTmsP25MaxFilesPerPoll);
++    }
+ 
 -                                if (m_verbose) {
 -                                    if (opcode == P25_PDU_ARP_REQUEST) {
 -                                        LogInfoEx(LOG_NET, P25_PDU_STR ", ARP request, who has %s? tell %s (%u)", __IP_FROM_UINT(tgtProtoAddr).c_str(), __IP_FROM_UINT(srcProtoAddr).c_str(), srcHWAddr);
@@ -6267,17 +6349,6 @@ index dd868c47..9f1f0d08 100644
 -                                        LogInfoEx(LOG_NET, P25_PDU_STR ", ARP reply, %s is at %u", __IP_FROM_UINT(srcProtoAddr).c_str(), srcHWAddr);
 -                                    }
 -                                }
-+    std::sort(files.begin(), files.end());
-+    if (files.size() > kMotorolaTmsP25MaxFilesPerPoll) {
-+        files.resize(kMotorolaTmsP25MaxFilesPerPoll);
-+    }
- 
--                                writeNet_PDU_Buffered(); // re-generate buffered PDU and send it on
--                            }
--                            break;
--                            default:
--                                ::ActivityLog("P25", false, "Net data transmission from %u to %u, %u blocks", srcId, dstId, m_netAssembler->dataHeader.getBlocksToFollow());
--                                LogInfoEx(LOG_NET, "P25 Data Call, srcId = %u, dstId = %u", srcId, dstId);
 +    auto archive = [](const std::string& path, const char* archiveDirectory, const char* suffix) {
 +        const size_t separator = path.find_last_of('/');
 +        const std::string fileName = separator == std::string::npos ? path : path.substr(separator + 1U);
@@ -6286,9 +6357,12 @@ index dd868c47..9f1f0d08 100644
 +            return true;
 +        }
  
--                                if (m_verbose) {
--                                    LogInfoEx(LOG_NET, P25_PDU_STR ", transmitting network PDU, llId = %u", (m_netAssembler->getExtendedAddress()) ? m_netAssembler->dataHeader.getSrcLLId() : m_netAssembler->dataHeader.getLLId());
--                                }
+-                                writeNet_PDU_Buffered(); // re-generate buffered PDU and send it on
+-                            }
+-                            break;
+-                            default:
+-                                ::ActivityLog("P25", false, "Net data transmission from %u to %u, %u blocks", srcId, dstId, m_netAssembler->dataHeader.getBlocksToFollow());
+-                                LogInfoEx(LOG_NET, "P25 Data Call, srcId = %u, dstId = %u", srcId, dstId);
 +        std::ifstream input(path, std::ios::binary);
 +        std::ofstream output(target, std::ios::binary | std::ios::trunc);
 +        output << input.rdbuf();
@@ -6310,15 +6384,15 @@ index dd868c47..9f1f0d08 100644
 +                path.c_str(), ex.what());
 +        }
  
--                                writeNet_PDU_Buffered(); // re-generate buffered PDU and send it on
+-                                if (m_verbose) {
+-                                    LogInfoEx(LOG_NET, P25_PDU_STR ", transmitting network PDU, llId = %u", (m_netAssembler->getExtendedAddress()) ? m_netAssembler->dataHeader.getSrcLLId() : m_netAssembler->dataHeader.getLLId());
+-                                }
 +        if (!parsed || !root.isMap()) {
 +            archive(path, kMotorolaTmsP25FailedPath, ".failed");
 +            continue;
 +        }
  
--                                ::ActivityLog("P25", false, "end of Net data transmission");
--                                break;
--                            }
+-                                writeNet_PDU_Buffered(); // re-generate buffered PDU and send it on
 +        const uint32_t sourceRid = root["sourceRid"].as<uint32_t>(0U);
 +        const uint32_t targetRid = root["targetRid"].as<uint32_t>(0U);
 +        std::string text;
@@ -6327,6 +6401,13 @@ index dd868c47..9f1f0d08 100644
 +            LogWarning(LOG_RF, P25_PDU_STR ", invalid Motorola TMS outbox event, file = %s",
 +                path.c_str());
 +            archive(path, kMotorolaTmsP25FailedPath, ".failed");
++            continue;
++        }
+ 
+-                                ::ActivityLog("P25", false, "end of Net data transmission");
+-                                break;
+-                            }
++        if (!writeMotorolaTmsInboundDelivery(targetRid, sourceRid, text)) {
 +            continue;
 +        }
  
@@ -6339,17 +6420,13 @@ index dd868c47..9f1f0d08 100644
 -                    }
 -                }
 -            }
-+        if (!writeMotorolaTmsInboundDelivery(targetRid, sourceRid, text)) {
-+            continue;
-         }
--    }
- 
--    return true;
 +        if (!archive(path, kMotorolaTmsP25SentPath, ".sent")) {
 +            LogWarning(LOG_RF, P25_PDU_STR ", Motorola TMS outbox event sent but could not be archived, file = %s", path.c_str());
-+        }
+         }
 +        return;
-+    }
+     }
+-
+-    return true;
 +#endif
  }
  
@@ -6903,27 +6980,25 @@ index dd868c47..9f1f0d08 100644
                  m_fneRegTable[llId] = ipAddr;
              }
  
-@@ -860,13 +4302,12 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
+@@ -859,14 +4301,13 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
+     {
          uint32_t llId = (pduUserData[1U] << 16) + (pduUserData[2U] << 8) + pduUserData[3U];
--
+ 
 -        if (m_verbose) {
 -            LogInfoEx(LOG_RF, P25_PDU_STR ", DISCONNECT (Registration Request Disconnect), llId = %u", llId);
 -        }
--
-+
 +        LogInfoEx(LOG_RF, P25_PDU_STR ", DISCONNECT (Registration Request Disconnect), llId = %u", llId);
-+
+ 
          // acknowledge
          writeRF_PDU_Ack_Response(PDUAckClass::ACK, PDUAckType::ACK, m_rfAssembler->dataHeader.getNs(), llId, false);
--
-+
+ 
 -        if (hasLLIdFNEReg(llId)) {
 +        m_motorolaSessions.erase(llId);
 +        if (m_fneRegTable.find(llId) != m_fneRegTable.end()) {
              // remove dynamic FNE registration table entry
              try {
                  m_fneRegTable.at(llId);
-@@ -955,12 +4398,24 @@ void Data::writeNetwork(const uint8_t currentBlock, const uint8_t* data, uint32_
+@@ -955,12 +4396,24 @@ void Data::writeNetwork(const uint8_t currentBlock, const uint8_t* data, uint32_
      if (m_p25->m_rfTimeout.isRunning() && m_p25->m_rfTimeout.hasExpired())
          return;
  
@@ -6949,7 +7024,7 @@ index dd868c47..9f1f0d08 100644
  {
      assert(pdu != nullptr);
      assert(bitLength > 0U);
-@@ -970,20 +4425,18 @@ void Data::writeRF_PDU(const uint8_t* pdu, uint32_t bitLength, bool imm, bool ac
+@@ -970,20 +4423,18 @@ void Data::writeRF_PDU(const uint8_t* pdu, uint32_t bitLength, bool imm, bool ac
      for (uint8_t i = 0U; i < 5U; i++)
          m_p25->writeRF_Nulls();
  
@@ -6974,7 +7049,7 @@ index dd868c47..9f1f0d08 100644
          LogInfoEx(LOG_RF, P25_PDU_STR ", OSP, ack retry, bitLength = %u",
                     m_retryPDUBitLength);
      }
-@@ -1049,6 +4502,8 @@ void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipA
+@@ -1049,6 +4500,8 @@ void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipA
  
      DataHeader rspHeader = DataHeader();
      rspHeader.setFormat(PDUFormatType::CONFIRMED);
@@ -6983,7 +7058,7 @@ index dd868c47..9f1f0d08 100644
      rspHeader.setMFId(m_rfAssembler->dataHeader.getMFId());
      rspHeader.setAckNeeded(true);
      rspHeader.setOutbound(true);
-@@ -1071,6 +4526,11 @@ void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipA
+@@ -1071,6 +4524,11 @@ void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipA
      if (m_dumpPDUData)
          Utils::dump(1U, "P25, PDU Registration Response", pduUserData, 12U);
  
@@ -6995,7 +7070,7 @@ index dd868c47..9f1f0d08 100644
      rspHeader.calculateLength(12U);
      writeRF_PDU_User(rspHeader, false, false, pduUserData);
  }
-@@ -1118,5 +4578,15 @@ void Data::writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t a
+@@ -1118,5 +4576,15 @@ void Data::writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t a
              rspHeader.getResponseClass(), rspHeader.getResponseType(), rspHeader.getResponseStatus(), rspHeader.getLLId(), rspHeader.getSrcLLId());
      }
  
@@ -7003,80 +7078,15 @@ index dd868c47..9f1f0d08 100644
 +    // A response PDU is terminal link-layer signalling and must not wait for
 +    // another response of its own.
 +    writeRF_PDU(data, bitLength, false, false, false);
- }
++}
 +
 +#if defined(CATCH2_TEST_COMPILATION)
 +bool parseMotorolaShortArsRequestForTest(const uint8_t* data, uint32_t length,
 +    uint32_t sourceRid, uint32_t& subscriberIp, uint16_t& requestIpId)
 +{
 +    return parseMotorolaArsRefresh(data, length, sourceRid, subscriberIp, requestIpId);
-+}
+ }
 +#endif
-diff --git a/tests/p25/Motorola_ARS_Short_Registration_Test.cpp b/tests/p25/Motorola_ARS_Short_Registration_Test.cpp
-new file mode 100644
-index 00000000..6622d1d1
---- /dev/null
-+++ b/tests/p25/Motorola_ARS_Short_Registration_Test.cpp
-@@ -0,0 +1,59 @@
-+// SPDX-License-Identifier: GPL-2.0-only
-+#include <catch2/catch_test_macros.hpp>
-+
-+#include <array>
-+#include <cstdint>
-+
-+bool parseMotorolaShortArsRequestForTest(const uint8_t* data, uint32_t length,
-+    uint32_t sourceRid, uint32_t& subscriberIp, uint16_t& requestIpId);
-+
-+TEST_CASE("Motorola short ARS registration accepts F020 and F040", "[p25][ars]")
-+{
-+    constexpr uint32_t sourceRid = 1000001U;
-+    constexpr uint32_t expectedSubscriberIp = 0xD0F42411U;
-+    constexpr uint16_t expectedRequestIpId = 0x1234U;
-+    const std::array<uint8_t, 42U> legacyRegistration = {
-+        0x45U, 0x00U, 0x00U, 0x2AU, 0x12U, 0x34U, 0x00U, 0x00U,
-+        0x40U, 0x11U, 0x69U, 0x88U, 0xD0U, 0xF4U, 0x24U, 0x11U,
-+        0x0AU, 0x00U, 0x00U, 0x02U, 0x0FU, 0xA5U, 0x0FU, 0xA5U,
-+        0x00U, 0x16U, 0x59U, 0x81U, 0x00U, 0x0CU, 0xF0U, 0x20U,
-+        0x07U, 0x31U, 0x30U, 0x30U, 0x30U, 0x30U, 0x30U, 0x31U,
-+        0x00U, 0x00U
-+    };
-+
-+    uint32_t subscriberIp = 0U;
-+    uint16_t requestIpId = 0U;
-+    REQUIRE(parseMotorolaShortArsRequestForTest(legacyRegistration.data(),
-+        static_cast<uint32_t>(legacyRegistration.size()), sourceRid, subscriberIp, requestIpId));
-+    CHECK(subscriberIp == expectedSubscriberIp);
-+    CHECK(requestIpId == expectedRequestIpId);
-+
-+    const std::array<uint8_t, 49U> dualIdentityRegistration = {
-+        0x45U, 0x00U, 0x00U, 0x31U, 0x12U, 0x34U, 0x00U, 0x00U,
-+        0x40U, 0x11U, 0x69U, 0x81U, 0xD0U, 0xF4U, 0x24U, 0x11U,
-+        0x0AU, 0x00U, 0x00U, 0x02U, 0x0FU, 0xA5U, 0x0FU, 0xA5U,
-+        0x00U, 0x1DU, 0xC1U, 0xA9U, 0x00U, 0x13U, 0xF0U, 0x20U,
-+        0x07U, 0x31U, 0x30U, 0x30U, 0x30U, 0x30U, 0x30U, 0x31U,
-+        0x07U, 0x31U, 0x30U, 0x30U, 0x30U, 0x30U, 0x30U, 0x31U,
-+        0x00U
-+    };
-+
-+    REQUIRE(parseMotorolaShortArsRequestForTest(dualIdentityRegistration.data(),
-+        static_cast<uint32_t>(dualIdentityRegistration.size()), sourceRid, subscriberIp, requestIpId));
-+    CHECK(subscriberIp == expectedSubscriberIp);
-+    CHECK(requestIpId == expectedRequestIpId);
-+
-+    auto refresh = legacyRegistration;
-+    refresh[26U] = 0x59U;
-+    refresh[27U] = 0x61U;
-+    refresh[31U] = 0x40U;
-+    CHECK(parseMotorolaShortArsRequestForTest(refresh.data(),
-+        static_cast<uint32_t>(refresh.size()), sourceRid, subscriberIp, requestIpId));
-+
-+    auto unsupported = legacyRegistration;
-+    unsupported[26U] = 0x59U;
-+    unsupported[27U] = 0xA1U;
-+    unsupported[31U] = 0x00U;
-+    CHECK_FALSE(parseMotorolaShortArsRequestForTest(unsupported.data(),
-+        static_cast<uint32_t>(unsupported.size()), sourceRid, subscriberIp, requestIpId));
-+}
 diff --git a/src/host/p25/packet/Data.h b/src/host/p25/packet/Data.h
 index 6c550270..c9d733c8 100644
 --- a/src/host/p25/packet/Data.h

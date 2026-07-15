@@ -75,12 +75,19 @@ units also follow every direct `dvmfne.service` restart through systemd.
 | `vocoderDecoderAutoGain` | Automatic decoder gain; can pump on noisy sources |
 | `txAudioGain` | Final level into the destination encoder/RF path |
 | `vocoderEncoderAudioGain` | Level immediately before vocoder encoding |
+| `p25EncodePresenceGain` | DMR-to-P25 high-frequency emphasis; excessive values can sound scratchy |
+| `p25EncodeHighCutHz` | Optional DMR-to-P25 low-pass before IMBE; `0` disables it |
+| `p25EncodeAgcPeakLimit` | Absolute DMR-to-P25 PCM ceiling after final gain, with or without AGC |
 | `dropTimeMs` | Tail time before a call is released |
 
 Raise one gain at a time. If peaks become scratchy while average loudness is
 correct, reduce the last gain before the encoder and use a smaller upstream
 increase. Different subscriber microphones can still produce different peak
 levels.
+
+For a loud but rough DMR-to-P25 path, start with the AGC and presence boost
+disabled, set `p25EncodeHighCutHz` near `2700`, and use a final peak limit near
+`24000`. Tune the high-cut in 100 Hz steps before lowering `txAudioGain`.
 
 ## TMS Test Sequence
 
