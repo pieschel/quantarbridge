@@ -49,6 +49,7 @@ IDENTITY_NEGATIVE_REFRESH_SECONDS = 6 * 60 * 60
 IDENTITY_RETRY_SECONDS = 5 * 60
 IDENTITY_REQUEST_SPACING_SECONDS = 0.25
 SETTINGS_RESTART_IDLE_GUARD_SECONDS = 15
+CALL_STALE_TIMEOUT_SECONDS = 75
 RSSI_SAMPLE_HISTORY_LIMIT = 100_000
 RSSI_START_TOLERANCE_SECONDS = 0.75
 RSSI_END_TOLERANCE_SECONDS = 0.25
@@ -1118,15 +1119,18 @@ class RuntimeState:
     ) -> int:
         current = time.time() if now is None else now
         with self._lock:
-            for direction, call in list(self._active_calls.items()):
-                if current - call["startedAt"] > 180:
-                    self._finish_call(direction, current, reason="timeout")
+            self._expire_stale_calls(current)
             if self._active_calls:
                 return max(1, int(math.ceil(quiet_seconds)))
             if self._last_call_activity <= 0:
                 return 0
             idle_seconds = max(0.0, current - self._last_call_activity)
             return max(0, int(math.ceil(quiet_seconds - idle_seconds)))
+
+    def _expire_stale_calls(self, current: float) -> None:
+        for direction, call in list(self._active_calls.items()):
+            if current - call["startedAt"] > CALL_STALE_TIMEOUT_SECONDS:
+                self._finish_call(direction, current, reason="timeout")
 
     def process_brandmeister_line(self, line: str) -> None:
         timestamp = self._timestamp(line)
@@ -1248,9 +1252,7 @@ class RuntimeState:
             return item
 
         with self._lock:
-            for direction, call in list(self._active_calls.items()):
-                if now - call["startedAt"] > 180:
-                    self._finish_call(direction, now, reason="timeout")
+            self._expire_stale_calls(now)
 
             mappings_by_p25 = {
                 int(entry["p25"]): int(entry["brandmeister"])
@@ -2425,6 +2427,8 @@ class SettingsManager:
                 targets.append("dmrgateway")
             if bridge_changed:
                 targets.append("quantarbridge")
+            if password_changed:
+                targets.append("sms-bridge")
             if host_changed:
                 targets.append("dvmhost")
             if dmr_to_p25_changed or p25_to_dmr_changed:

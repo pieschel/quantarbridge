@@ -587,6 +587,19 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual(11, state.restart_guard_remaining(15, now=112.0))
         self.assertEqual(0, state.restart_guard_remaining(15, now=123.0))
 
+    def test_restart_guard_expires_call_without_terminator(self):
+        state = RuntimeState()
+        started_at = time.time() - 76.0
+        state._start_call("downlink", 1000101, 101, started_at)
+
+        self.assertEqual(
+            15, state.restart_guard_remaining(15, now=started_at + 76.0)
+        )
+        snapshot = state.snapshot({})
+        self.assertEqual([], snapshot["activeCalls"])
+        self.assertEqual("timeout", snapshot["recentCalls"][0]["endReason"])
+        self.assertEqual(76.0, snapshot["recentCalls"][0]["durationSeconds"])
+
 
 class IdentityDirectoryTest(unittest.TestCase):
     def test_cached_names_remain_available_without_network_access(self):
@@ -809,7 +822,8 @@ class SettingsManagerTest(unittest.TestCase):
                 config.dvmhost_config.read_text(encoding="utf-8"),
             )
             self.assertEqual(
-                [["dmrgateway", "quantarbridge", "dvmhost"]], restarter.calls
+                [["dmrgateway", "quantarbridge", "sms-bridge", "dvmhost"]],
+                restarter.calls,
             )
             self.assertTrue((Path(result["backup"]) / "quantarbridge.yml").exists())
             self.assertNotIn("new-bm-password", json.dumps(result))

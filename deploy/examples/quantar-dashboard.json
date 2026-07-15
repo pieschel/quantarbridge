@@ -66,6 +66,10 @@
       "type": "systemd",
       "unit": "quantarbridge.service"
     },
+    "sms-bridge": {
+      "type": "systemd",
+      "unit": "tetrapack-brew-bridge.service"
+    },
     "dvmhost": {
       "type": "systemd",
       "unit": "dvmhost.service"

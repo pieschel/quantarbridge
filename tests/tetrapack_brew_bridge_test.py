@@ -39,6 +39,11 @@ class ErrorBrewClient:
         raise RuntimeError("transport unavailable")
 
 
+class AuthenticationErrorBrewClient:
+    def send_sms(self, source_rid, target_rid, text):
+        raise BRIDGE.BrewAuthenticationError("BREW authentication rejected (HTTP 403)")
+
+
 class TetrapackBridgeTest(unittest.TestCase):
     def test_local_p25_message_keeps_sender_and_target_direction(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -244,6 +249,44 @@ class TetrapackBridgeTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 BRIDGE.flush_pending_text(config, ErrorBrewClient(), pending)
 
+            self.assertEqual([], list(config.service_route_dir.glob("*.json")))
+
+    def test_authentication_failure_is_not_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = BRIDGE.BridgeConfig(
+                inbox_dir=root / "inbox",
+                outbox_dir=root / "outbox",
+                processed_dir=root / "processed",
+                error_dir=root / "error",
+            )
+            config.brew.enabled = True
+            BRIDGE.ensure_dirs(config)
+            now = time.monotonic() - 10
+            key = (1000002, 262993)
+            pending = {
+                key: BRIDGE.PendingText(
+                    source_rid=key[0],
+                    target_rid=key[1],
+                    local_candidate=False,
+                    first_seen=now,
+                    updated_at=now,
+                    fragments=["Wx example"],
+                    event_names=["host-weather"],
+                )
+            }
+
+            processed = BRIDGE.flush_ready_texts(
+                config, AuthenticationErrorBrewClient(), pending
+            )
+
+            self.assertEqual(1, processed)
+            self.assertEqual({}, pending)
+            failures = list(config.processed_dir.glob("failed-*.result.json"))
+            self.assertEqual(1, len(failures))
+            result = json.loads(failures[0].read_text(encoding="utf-8"))
+            self.assertEqual("failed", result["status"])
+            self.assertEqual("brew_authentication_rejected", result["reason"])
             self.assertEqual([], list(config.service_route_dir.glob("*.json")))
 
 

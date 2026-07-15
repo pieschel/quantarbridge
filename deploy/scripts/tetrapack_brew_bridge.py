@@ -40,6 +40,10 @@ class BrewConfig:
     request_timeout_seconds: float = 10.0
 
 
+class BrewAuthenticationError(RuntimeError):
+    pass
+
+
 PID_TEXT_MESSAGING = 0x82
 MESSAGE_TYPE_SDS_TRANSFER = 0x0
 DELIVERY_REPORT_RECEIVED = 0x1
@@ -177,6 +181,10 @@ class BrewClient:
             auth=HTTPDigestAuth(self.config.username, self.config.password),
             timeout=self.config.request_timeout_seconds,
         )
+        if response.status_code in (401, 403):
+            raise BrewAuthenticationError(
+                f"BREW authentication rejected (HTTP {response.status_code})"
+            )
         response.raise_for_status()
         endpoint_path = response.text.strip()
         if not endpoint_path.startswith("/"):
@@ -644,7 +652,33 @@ def flush_ready_texts(config: BridgeConfig, brew: BrewClient, pending_texts: dic
             continue
         try:
             result = flush_pending_text(config, brew, pending)
-        except Exception as exc:  # network/authentication failures are retryable
+        except BrewAuthenticationError as exc:
+            failure_result = {
+                "status": "failed",
+                "reason": "brew_authentication_rejected",
+                "error": str(exc),
+                "sourceRid": pending.source_rid,
+                "targetRid": pending.target_rid,
+                "text": "".join(pending.fragments),
+            }
+            failure_path = config.processed_dir / (
+                f"failed-{int(time.time_ns() // 1_000_000)}-"
+                f"{pending.source_rid}-{pending.target_rid}.result.json"
+            )
+            failure_path.write_text(
+                json.dumps(failure_result, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            print(
+                f"BREW authentication rejected sourceRid={pending.source_rid} "
+                f"targetRid={pending.target_rid}; message will not be retried",
+                file=sys.stderr,
+                flush=True,
+            )
+            del pending_texts[key]
+            processed += 1
+            continue
+        except Exception as exc:  # transient transport failures are retryable
             pending.first_seen = now
             pending.updated_at = now
             retry_result = {

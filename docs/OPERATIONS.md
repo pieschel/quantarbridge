@@ -105,6 +105,19 @@ Queue directories:
 An immediate APX `Send Failed` usually happens before the message reaches the
 queue. Start with ARS/TMS session state rather than the BrandMeister transport.
 
+### TETRAPACK BREW credentials
+
+When BREW delivery is enabled, configure its private SSID username in
+`tetrapack-brew-bridge.json`. Leave `brew.password` empty to load the current
+BrandMeister hotspot password from the private `quantarbridge.yml` at service
+startup. This avoids leaving a stale second copy after changing the device
+password. Restart `tetrapack-brew-bridge.service` after such a change.
+
+Keep both runtime files outside Git. An HTTP `401` or `403` from the BREW
+endpoint is an authentication failure, not an APX delivery failure. The bridge
+records it once as `brew_authentication_rejected` and does not retry the same
+message indefinitely.
+
 ## LRRP and APRS
 
 After TMS becomes available, DVMHost sends the first LRRP request after
