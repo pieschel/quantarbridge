@@ -50,6 +50,8 @@ example IDs from tests or documentation on air.
 P25 RF calls enter `dvmhost`, traverse `dvmfne`, and are decoded by the
 P25-to-DMR bridge. `quantarbridge` sends the resulting DMR stream to
 BrandMeister. Downlink follows the reverse route through the DMR-to-P25 bridge.
+Both DVMBridge services are tied to `dvmfne.service`; an FNE restart must restart
+and reconnect both directions before traffic resumes.
 
 `routing.talkgroupMappings` is bidirectional. Example:
 
@@ -69,6 +71,11 @@ An outgoing P25 group call creates a dynamic BrandMeister route. The route
 expires after `routing.dynamicTimeoutSeconds`. P25 TG `4000` is the default
 disconnect command. Static subscriptions are synchronized from the configured
 BrandMeister device profile.
+
+The static-sync job rebuilds the FNE group-voice rule from the peer IDs in the
+four active runtime YAML files. Example peer IDs must never be written over a
+site-specific FNE configuration, because an unmatched inclusion list prevents
+RF voice from reaching either transcoder while all processes still look active.
 
 Only outgoing P25 RF group activity refreshes an active dynamic route. Incoming
 BrandMeister traffic never extends the configured timeout. The dashboard uses

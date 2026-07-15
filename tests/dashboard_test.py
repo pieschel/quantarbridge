@@ -847,10 +847,38 @@ class SettingsManagerTest(unittest.TestCase):
             self.assertTrue(result["changed"])
             self.assertEqual(2.8, dmr_to_p25["system"]["txAudioGain"])
             self.assertEqual(0.15, dmr_to_p25["system"]["p25EncodePresenceGain"])
-            self.assertEqual([["dmr-to-p25", "dvmfne"]], restarter.calls)
+            self.assertEqual([["dvmfne", "dmr-to-p25"]], restarter.calls)
             self.assertTrue(
                 (Path(result["backup"]) / "dvmbridge-dmr-to-p25.yml").exists()
             )
+
+    def test_p25_uplink_audio_change_reconnects_after_fne_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = make_config(Path(directory))
+            write_runtime(config)
+            restarter = RecordingRestarter()
+            manager = SettingsManager(config, RuntimeState(), restarter)
+            audio = audio_settings()
+            audio["p25ToDmr"]["txAudioGain"] = 2.4
+
+            manager.update(
+                {
+                    **network_settings(),
+                    "brandmeisterPassword": "",
+                    "dynamicTimeoutSeconds": 600,
+                    "talkgroupMappings": [
+                        {"p25": 101, "brandmeister": 262000}
+                    ],
+                    "gps": {
+                        "initialDelaySeconds": 5,
+                        "updateIntervalSeconds": 300,
+                        "noFixRetrySeconds": 60,
+                    },
+                    "audio": audio,
+                }
+            )
+
+            self.assertEqual([["dvmfne", "p25-to-dmr"]], restarter.calls)
 
     def test_audio_change_is_rejected_during_recent_radio_activity(self):
         with tempfile.TemporaryDirectory() as directory:

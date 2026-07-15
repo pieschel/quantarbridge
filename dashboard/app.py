@@ -2427,12 +2427,12 @@ class SettingsManager:
                 targets.append("quantarbridge")
             if host_changed:
                 targets.append("dvmhost")
+            if dmr_to_p25_changed or p25_to_dmr_changed:
+                targets.append("dvmfne")
             if dmr_to_p25_changed:
                 targets.append("dmr-to-p25")
             if p25_to_dmr_changed:
                 targets.append("p25-to-dmr")
-            if dmr_to_p25_changed or p25_to_dmr_changed:
-                targets.append("dvmfne")
 
             guard_remaining = self.state.restart_guard_remaining()
             if targets and guard_remaining > 0:

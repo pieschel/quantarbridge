@@ -2,6 +2,8 @@
 Description=DVM Bridge DMR to P25
 After=network-online.target dvmfne.service
 Wants=network-online.target
+Requires=dvmfne.service
+PartOf=dvmfne.service
 
 [Service]
 Type=simple

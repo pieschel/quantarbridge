@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import yaml
+
 
 SCRIPT_PATH = (
     Path(__file__).resolve().parents[1] / "deploy" / "scripts" / "bm_static_sync.py"
@@ -109,6 +111,38 @@ sms:
             [262000], SYNC.configured_static_talkgroups(payload, 2)
         )
 
+    def test_talkgroup_rules_use_configured_runtime_peer_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            configs = {
+                "dvmhost-config.yml": {"network": {"id": 9100110}},
+                "dvmbridge-p25-to-dmr.yml": {"network": {"id": 9100111}},
+                "quantarbridge.yml": {"fne": {"peerId": 9100101}},
+                "dvmbridge-dmr-to-p25.yml": {"network": {"id": 9100112}},
+            }
+            for name, payload in configs.items():
+                (runtime / name).write_text(
+                    yaml.safe_dump(payload), encoding="utf-8"
+                )
+
+            rules = runtime / "talkgroup_rules.yml"
+            self.assertTrue(SYNC.update_talkgroup_rules(rules, [983872]))
+            rendered = rules.read_text(encoding="utf-8")
+
+            for peer_id in (9100110, 9100111, 9100101, 9100112):
+                self.assertIn(f"        - {peer_id}\n", rendered)
+            self.assertNotIn("        - 9000110\n", rendered)
+
+    def test_partial_runtime_peer_configuration_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            (runtime / "dvmhost-config.yml").write_text(
+                "network:\n  id: 9100110\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "missing"):
+                SYNC.update_talkgroup_rules(runtime / "talkgroup_rules.yml", [])
+
     def test_static_guard_reads_required_talkgroups_from_runtime_config(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "quantarbridge.yml"
@@ -127,7 +161,7 @@ routing:
             self.assertEqual({262000}, GUARD.read_required_talkgroups(path))
 
     @mock.patch.object(SYNC.subprocess, "run")
-    def test_static_sync_restarts_only_requested_services(self, run):
+    def test_static_sync_restarts_both_bridges_after_fne(self, run):
         services = [
             "dvmfne.service",
             "quantarbridge.service",
@@ -139,13 +173,28 @@ routing:
         self.assertEqual(
             [
                 mock.call(["systemctl", "restart", service], check=True)
-                for service in services[:3]
+                for service in (
+                    "dvmfne.service",
+                    "dvmbridge-p25-to-dmr.service",
+                    "dvmbridge-dmr-to-p25.service",
+                    "quantarbridge.service",
+                )
             ],
             run.call_args_list,
         )
         flattened = " ".join(str(call) for call in run.call_args_list)
         self.assertNotIn("dvmhost.service", flattened)
         self.assertNotIn("tetrapack-brew-bridge.service", flattened)
+
+    def test_audio_bridges_follow_fne_restarts(self):
+        deploy = SCRIPT_PATH.parents[1]
+        for name in (
+            "dvmbridge-p25-to-dmr.service",
+            "dvmbridge-dmr-to-p25.service",
+        ):
+            unit = (deploy / name).read_text(encoding="utf-8")
+            self.assertIn("Requires=dvmfne.service", unit)
+            self.assertIn("PartOf=dvmfne.service", unit)
 
 
 if __name__ == "__main__":

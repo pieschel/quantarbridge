@@ -50,6 +50,11 @@ journalctl -fu quantarbridge.service
 3. Generate a BrandMeister downlink and confirm P25 RF audio.
 4. Check that the P25 and BrandMeister talkgroups are mapped in both directions.
 
+If an RF call appears in the dashboard but no dynamic talkgroup is created,
+compare the `inclusion` IDs in `talkgroup_rules.yml` with the `network.id` and
+`fne.peerId` values of all four local peers. The static-sync job derives this list
+from the runtime YAML files and then reconnects both DVMBridge directions.
+
 Do not tune gain while a recovery timer is restarting services. Fix service
 stability first, then compare the same source audio in both directions.
 
@@ -59,8 +64,9 @@ The dashboard exposes separate settings for P25-to-DMR and DMR-to-P25.
 Changes that require a service restart are accepted only after 15 seconds of
 continuous radio-channel idle time. This prevents a short gap within a QSO from
 being mistaken for a safe restart window. Audio changes also reset the local
-FNE router after the affected transcoder has restarted, so stale peer routing
-cannot leave the P25 downlink silent.
+FNE router first and then reconnect the affected transcoder, so stale peer
+routing cannot leave either direction silently disconnected. Both DVMBridge
+units also follow every direct `dvmfne.service` restart through systemd.
 
 | Setting | Effect |
 | --- | --- |

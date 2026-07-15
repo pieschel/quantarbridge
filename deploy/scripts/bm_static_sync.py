@@ -7,7 +7,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Iterable, List
+from typing import Any, Iterable, List
+
+import yaml
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -18,6 +20,13 @@ from runtime_config import read_brandmeister_device
 ALWAYS_SEND_PEERS = []
 INCLUSION_PEERS = [9000110, 9000111, 9000101, 9000112]
 PREFERRED_PEERS = []
+
+LOCAL_PEER_CONFIGS = (
+    ("dvmhost-config.yml", ("network", "id")),
+    ("dvmbridge-p25-to-dmr.yml", ("network", "id")),
+    ("quantarbridge.yml", ("fne", "peerId")),
+    ("dvmbridge-dmr-to-p25.yml", ("network", "id")),
+)
 
 SMS_CONFIG_BLOCK = """
 sms:
@@ -145,16 +154,56 @@ def update_quantarbridge_config(path: Path, static_talkgroups: Iterable[int]) ->
     return write_text_if_changed(path, updated_text)
 
 
-def build_talkgroup_rules(static_talkgroups: Iterable[int]):
+def _nested_value(payload: Any, keys: tuple[str, ...]) -> Any:
+    current = payload
+    for key in keys:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def configured_local_peer_ids(runtime_dir: Path) -> list[int]:
+    existing = [
+        runtime_dir / name
+        for name, _ in LOCAL_PEER_CONFIGS
+        if (runtime_dir / name).exists()
+    ]
+    if not existing:
+        return list(INCLUSION_PEERS)
+    if len(existing) != len(LOCAL_PEER_CONFIGS):
+        missing = [name for name, _ in LOCAL_PEER_CONFIGS if not (runtime_dir / name).exists()]
+        raise RuntimeError(f"Could not discover all local FNE peers; missing: {', '.join(missing)}")
+
+    peers: list[int] = []
+    for name, keys in LOCAL_PEER_CONFIGS:
+        path = runtime_dir / name
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        try:
+            peer_id = int(_nested_value(payload, keys))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"Could not read local FNE peer ID from {path}") from exc
+        if not 1 <= peer_id <= 0xFFFFFFFF:
+            raise RuntimeError(f"Invalid local FNE peer ID in {path}: {peer_id}")
+        if peer_id not in peers:
+            peers.append(peer_id)
+    return peers
+
+
+def build_talkgroup_rules(
+    static_talkgroups: Iterable[int],
+    inclusion_peers: Iterable[int] = INCLUSION_PEERS,
+):
     lines = ["groupVoice:"]
     always_lines = ["      always: []"]
     if ALWAYS_SEND_PEERS:
         always_lines = ["      always:"]
         always_lines.extend(f"        - {peer_id}" for peer_id in ALWAYS_SEND_PEERS)
+    inclusion_peers = list(inclusion_peers)
     inclusion_lines = ["      inclusion: []"]
-    if INCLUSION_PEERS:
+    if inclusion_peers:
         inclusion_lines = ["      inclusion:"]
-        inclusion_lines.extend(f"        - {peer_id}" for peer_id in INCLUSION_PEERS)
+        inclusion_lines.extend(f"        - {peer_id}" for peer_id in inclusion_peers)
     preferred_lines = ["      preferred: []"]
     if PREFERRED_PEERS:
         preferred_lines = ["      preferred:"]
@@ -181,11 +230,21 @@ def build_talkgroup_rules(static_talkgroups: Iterable[int]):
 
 
 def update_talkgroup_rules(path: Path, static_talkgroups: Iterable[int]) -> bool:
-    return write_text_if_changed(path, build_talkgroup_rules(static_talkgroups))
+    inclusion_peers = configured_local_peer_ids(path.parent)
+    return write_text_if_changed(path, build_talkgroup_rules(static_talkgroups, inclusion_peers))
 
 
 def restart_services(services: Iterable[str]) -> None:
-    for service in services:
+    requested = list(dict.fromkeys(services))
+    if "dvmfne.service" in requested:
+        paired = (
+            "dvmfne.service",
+            "dvmbridge-p25-to-dmr.service",
+            "dvmbridge-dmr-to-p25.service",
+        )
+        requested = [*paired, *(service for service in requested if service not in paired)]
+
+    for service in requested:
         if service in {"dvmhost.service", "tetrapack-brew-bridge.service"}:
             print(f"restart skipped for stateful service: {service}")
             continue
