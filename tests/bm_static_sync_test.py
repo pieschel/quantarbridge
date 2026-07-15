@@ -4,8 +4,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import yaml
-
 
 SCRIPT_PATH = (
     Path(__file__).resolve().parents[1] / "deploy" / "scripts" / "bm_static_sync.py"
@@ -115,15 +113,13 @@ sms:
         with tempfile.TemporaryDirectory() as directory:
             runtime = Path(directory)
             configs = {
-                "dvmhost-config.yml": {"network": {"id": 9100110}},
-                "dvmbridge-p25-to-dmr.yml": {"network": {"id": 9100111}},
-                "quantarbridge.yml": {"fne": {"peerId": 9100101}},
-                "dvmbridge-dmr-to-p25.yml": {"network": {"id": 9100112}},
+                "dvmhost-config.yml": "network:\n  id: 9100110\n",
+                "dvmbridge-p25-to-dmr.yml": "network:\n  id: 9100111 # bridge\n",
+                "quantarbridge.yml": 'fne:\n  peerId: "9100101"\n',
+                "dvmbridge-dmr-to-p25.yml": "network:\n  id: 9100112\n",
             }
-            for name, payload in configs.items():
-                (runtime / name).write_text(
-                    yaml.safe_dump(payload), encoding="utf-8"
-                )
+            for name, config in configs.items():
+                (runtime / name).write_text(config, encoding="utf-8")
 
             rules = runtime / "talkgroup_rules.yml"
             self.assertTrue(SYNC.update_talkgroup_rules(rules, [983872]))

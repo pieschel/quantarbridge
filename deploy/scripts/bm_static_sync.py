@@ -7,9 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Iterable, List
-
-import yaml
+from typing import Iterable, List
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -154,13 +152,39 @@ def update_quantarbridge_config(path: Path, static_talkgroups: Iterable[int]) ->
     return write_text_if_changed(path, updated_text)
 
 
-def _nested_value(payload: Any, keys: tuple[str, ...]) -> Any:
-    current = payload
-    for key in keys:
-        if not isinstance(current, dict) or key not in current:
-            return None
-        current = current[key]
-    return current
+def _read_yaml_integer(path: Path, keys: tuple[str, ...]) -> int:
+    """Read one integer from the small mapping-only runtime YAML subset."""
+    stack: list[tuple[int, str]] = []
+    matches: list[str] = []
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.fullmatch(r"( *)([A-Za-z0-9_-]+):(?:[ \t]*(.*))?", line)
+        if match is None:
+            continue
+
+        indent = len(match.group(1))
+        key = match.group(2)
+        value = (match.group(3) or "").strip()
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+
+        current_keys = tuple(item[1] for item in stack) + (key,)
+        if current_keys == keys:
+            matches.append(value)
+        if not value:
+            stack.append((indent, key))
+
+    if len(matches) != 1:
+        raise RuntimeError(f"Could not read {'.'.join(keys)} from {path}")
+
+    value = re.sub(r"\s+#.*$", "", matches[0]).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1].strip()
+    if not re.fullmatch(r"[0-9]+", value):
+        raise RuntimeError(f"Could not read integer {'.'.join(keys)} from {path}")
+    return int(value)
 
 
 def configured_local_peer_ids(runtime_dir: Path) -> list[int]:
@@ -178,11 +202,7 @@ def configured_local_peer_ids(runtime_dir: Path) -> list[int]:
     peers: list[int] = []
     for name, keys in LOCAL_PEER_CONFIGS:
         path = runtime_dir / name
-        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-        try:
-            peer_id = int(_nested_value(payload, keys))
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError(f"Could not read local FNE peer ID from {path}") from exc
+        peer_id = _read_yaml_integer(path, keys)
         if not 1 <= peer_id <= 0xFFFFFFFF:
             raise RuntimeError(f"Invalid local FNE peer ID in {path}: {peer_id}")
         if peer_id not in peers:
