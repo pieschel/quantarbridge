@@ -158,7 +158,7 @@ index 910bfeda..d2a8dc9a 100644
              lc::PrivacyLC lc = lc::PrivacyLC();
              lc::FullLC fullLC = lc::FullLC();
              lc = *fullLC.decodePI(data.get());
-@@ -185,12 +255,23 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+@@ -185,12 +255,29 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
              m_callAlgoId = lc.getAlgId();
          }
  
@@ -169,7 +169,14 @@ index 910bfeda..d2a8dc9a 100644
 +
          // process call termination
          if (dataSync && (dataType == DataType::TERMINATOR_WITH_LC)) {
-             m_callInProgress = false;
+-            m_callInProgress = false;
++            // Direct DMR->P25 transcoding must explicitly close the generated P25
++            // stream. Otherwise the RF host keeps the network call keyed until its
++            // watchdog expires even though the DMR terminator already arrived.
++            if (dmrToP25Bridge)
++                callEnd(srcId, dstId);
++            else
++                m_callInProgress = false;
              m_networkWatchdog.stop();
              m_ignoreCall = false;
              m_callAlgoId = 0U;
