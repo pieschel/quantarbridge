@@ -359,6 +359,11 @@
                   <summary>P25-Feinregelung</summary>
                   <div class="audio-fields">
                     <label class="field field--explained">
+                      <span>AMBE-Decoderqualität</span>
+                      <small class="field__description">Glättet stimmlose Sprachanteile wie S, F und Sch bereits beim DMR-Decoding. Höhere Werte können metallische Artefakte reduzieren, benötigen aber mehr CPU.</small>
+                      <span class="number-unit"><input type="number" name="audioDmrP25UvQuality" min="1" max="64" step="1" required inputmode="numeric"><small>Stufen</small></span>
+                    </label>
+                    <label class="field field--explained">
                       <span>Sprachpräsenz</span>
                       <small class="field__description">Betont Sprachkonturen und Höhen. Zu viel davon verstärkt Zischlaute und Kratzen.</small>
                       <span class="number-unit"><input type="number" name="audioDmrP25Presence" min="0" max="0.8" step="0.05" required inputmode="decimal"><small>×</small></span>

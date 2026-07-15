@@ -145,6 +145,7 @@ def audio_settings() -> dict:
             "rxAudioGain": 0.6,
             "vocoderDecoderAudioGain": 0.8,
             "vocoderDecoderAutoGain": False,
+            "vocoderDecoderUvQuality": 3,
             "txAudioGain": 3.0,
             "vocoderEncoderAudioGain": 0.0,
             "p25EncodePresenceGain": 0.0,
@@ -839,6 +840,7 @@ class SettingsManagerTest(unittest.TestCase):
             audio["dmrToP25"]["txAudioGain"] = 2.8
             audio["dmrToP25"]["p25EncodePresenceGain"] = 0.15
             audio["dmrToP25"]["p25EncodeHighCutHz"] = 2700.0
+            audio["dmrToP25"]["vocoderDecoderUvQuality"] = 7
 
             result = manager.update(
                 {
@@ -864,6 +866,7 @@ class SettingsManagerTest(unittest.TestCase):
             self.assertEqual(2.8, dmr_to_p25["system"]["txAudioGain"])
             self.assertEqual(0.15, dmr_to_p25["system"]["p25EncodePresenceGain"])
             self.assertEqual(2700.0, dmr_to_p25["system"]["p25EncodeHighCutHz"])
+            self.assertEqual(7, dmr_to_p25["system"]["vocoderDecoderUvQuality"])
             self.assertEqual([["dvmfne", "dmr-to-p25"]], restarter.calls)
             self.assertTrue(
                 (Path(result["backup"]) / "dvmbridge-dmr-to-p25.yml").exists()

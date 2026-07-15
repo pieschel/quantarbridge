@@ -73,6 +73,7 @@ units also follow every direct `dvmfne.service` restart through systemd.
 | `rxAudioGain` | Input level before the direction-specific decode path |
 | `vocoderDecoderAudioGain` | Level after vocoder decoding |
 | `vocoderDecoderAutoGain` | Automatic decoder gain; can pump on noisy sources |
+| `vocoderDecoderUvQuality` | mbelib synthesis quality for unvoiced DMR speech; higher values can reduce metallic sibilants at additional CPU cost |
 | `txAudioGain` | Final level into the destination encoder/RF path |
 | `vocoderEncoderAudioGain` | Level immediately before vocoder encoding |
 | `p25EncodePresenceGain` | DMR-to-P25 high-frequency emphasis; excessive values can sound scratchy |
@@ -87,7 +88,9 @@ levels.
 
 For a loud but rough DMR-to-P25 path, start with the AGC and presence boost
 disabled, set `p25EncodeHighCutHz` near `2700`, and use a final peak limit near
-`24000`. Tune the high-cut in 100 Hz steps before lowering `txAudioGain`.
+`24000`. Set `vocoderDecoderUvQuality` to `7` as a moderate first step for
+metallic sibilants. Tune the high-cut in 100 Hz steps before lowering
+`txAudioGain`.
 
 ## TMS Test Sequence
 

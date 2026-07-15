@@ -1863,6 +1863,7 @@ class SettingsManager:
         "vocoderEncoderAudioGain": 3.0,
     }
     _P25_AUDIO_DEFAULTS: dict[str, Any] = {
+        "vocoderDecoderUvQuality": 3,
         "p25EncodePresenceGain": 0.0,
         "p25EncodeHighCutHz": 0.0,
         "p25EncodeAgc": False,
@@ -1908,6 +1909,12 @@ class SettingsManager:
                 if not isinstance(raw, bool):
                     raise ValueError(f"Invalid boolean audio value {key}: {path}")
                 values[key] = raw
+                continue
+            if isinstance(default, int):
+                try:
+                    values[key] = int(raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"Invalid integer audio value {key}: {path}") from exc
                 continue
             try:
                 value = float(raw)
@@ -2053,6 +2060,12 @@ class SettingsManager:
 
         values.update(
             {
+                "vocoderDecoderUvQuality": cls._validate_int(
+                    payload.get("vocoderDecoderUvQuality"),
+                    f"{label}: AMBE-Decoderqualität",
+                    1,
+                    64,
+                ),
                 "p25EncodePresenceGain": cls._validate_float(
                     payload.get("p25EncodePresenceGain"),
                     f"{label}: Sprachpräsenz",

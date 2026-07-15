@@ -34,6 +34,7 @@ system:
   rxAudioGain: 0.60
   vocoderDecoderAudioGain: 0.8
   vocoderDecoderAutoGain: false
+  vocoderDecoderUvQuality: 7
   txAudioGain: 3.00
   vocoderEncoderAudioGain: 0.0
   p25EncodePresenceGain: 0.0

@@ -575,6 +575,7 @@ function populateSettings(settings) {
   form.elements.audioDmrP25DecoderAuto.checked = dmrToP25.vocoderDecoderAutoGain;
   form.elements.audioDmrP25Tx.value = dmrToP25.txAudioGain;
   form.elements.audioDmrP25Encoder.value = dmrToP25.vocoderEncoderAudioGain;
+  form.elements.audioDmrP25UvQuality.value = dmrToP25.vocoderDecoderUvQuality;
   form.elements.audioDmrP25Presence.value = dmrToP25.p25EncodePresenceGain;
   form.elements.audioDmrP25HighCut.value = dmrToP25.p25EncodeHighCutHz;
   form.elements.audioDmrP25Agc.checked = dmrToP25.p25EncodeAgc;
@@ -654,6 +655,7 @@ function settingsPayload() {
         vocoderDecoderAutoGain: form.elements.audioDmrP25DecoderAuto.checked,
         txAudioGain: Number(form.elements.audioDmrP25Tx.value),
         vocoderEncoderAudioGain: Number(form.elements.audioDmrP25Encoder.value),
+        vocoderDecoderUvQuality: Number(form.elements.audioDmrP25UvQuality.value),
         p25EncodePresenceGain: Number(form.elements.audioDmrP25Presence.value),
         p25EncodeHighCutHz: Number(form.elements.audioDmrP25HighCut.value),
         p25EncodeAgc: form.elements.audioDmrP25Agc.checked,

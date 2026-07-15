@@ -674,7 +674,7 @@ index 93c5d083..ad5fc6ef 100644
  
      m_p25SeqNo++;
 diff --git a/src/bridge/HostBridge.cpp b/src/bridge/HostBridge.cpp
-index 3aa4556a..46974313 100644
+index 3aa4556a..4ec4e27b 100644
 --- a/src/bridge/HostBridge.cpp
 +++ b/src/bridge/HostBridge.cpp
 @@ -120,7 +120,6 @@ void audioCallback(ma_device* device, void* output, const void* input, ma_uint32
@@ -685,8 +685,11 @@ index 3aa4556a..46974313 100644
  /* Helper callback, called when MDC packets are detected. */
  
  void mdcPacketDetected(int frameCount, mdc_u8_t op, mdc_u8_t arg, mdc_u16_t unitID,
-@@ -180,6 +179,20 @@ HostBridge::HostBridge(const std::string& confFile) :
+@@ -178,8 +177,23 @@ HostBridge::HostBridge(const std::string& confFile) :
+     m_rxAudioGain(1.0f),
+     m_vocoderDecoderAudioGain(3.0f),
      m_vocoderDecoderAutoGain(false),
++    m_vocoderDecoderUvQuality(3U),
      m_txAudioGain(1.0f),
      m_vocoderEncoderAudioGain(3.0),
 +    m_p25EncodePresenceGain(0.0f),
@@ -706,7 +709,7 @@ index 3aa4556a..46974313 100644
      m_trace(false),
      m_debug(false),
      m_tekAlgoId(P25DEF::ALGO_UNENCRYPT),
-@@ -256,7 +269,7 @@ HostBridge::HostBridge(const std::string& confFile) :
+@@ -256,7 +270,7 @@ HostBridge::HostBridge(const std::string& confFile) :
      m_rxStreamId(0U),
      m_txStreamId(0U),
      m_detectedSampleCnt(0U),
@@ -715,7 +718,7 @@ index 3aa4556a..46974313 100644
      m_rtpInitialFrame(false),
      m_rtpSeqNo(0U),
      m_rtpTimestamp(INVALID_TS),
-@@ -400,9 +413,14 @@ int HostBridge::run()
+@@ -400,9 +414,14 @@ int HostBridge::run()
      if (!ret)
          return EXIT_FAILURE;
  
@@ -732,7 +735,7 @@ index 3aa4556a..46974313 100644
      }
  
      if (m_localAudio) {
-@@ -490,15 +508,14 @@ int HostBridge::run()
+@@ -490,21 +509,21 @@ int HostBridge::run()
      m_mdcDecoder = mdc_decoder_new(SAMPLE_RATE);
      mdc_decoder_set_callback(m_mdcDecoder, mdcPacketDetected, this);
  
@@ -752,7 +755,14 @@ index 3aa4556a..46974313 100644
          m_encoder = new vocoder::MBEEncoder(vocoder::ENCODE_88BIT_IMBE);
      }
  
-@@ -558,6 +575,8 @@ int HostBridge::run()
+     if (m_txMode != TX_MODE_ANALOG) {
+         m_decoder->setGainAdjust(m_vocoderDecoderAudioGain);
+         m_decoder->setAutoGain(m_vocoderDecoderAutoGain);
++        m_decoder->setUvQuality((int)m_vocoderDecoderUvQuality);
+         m_encoder->setGainAdjust(m_vocoderEncoderAudioGain);
+     }
+ 
+@@ -558,6 +577,8 @@ int HostBridge::run()
      ** Initialize Threads
      */
  
@@ -761,7 +771,7 @@ index 3aa4556a..46974313 100644
      if (!Thread::runAsThread(this, threadNetworkProcess))
          return EXIT_FAILURE;
      if (!Thread::runAsThread(this, threadCallWatchdog))
-@@ -585,8 +604,6 @@ int HostBridge::run()
+@@ -585,8 +606,6 @@ int HostBridge::run()
  
      ::LogInfoEx(LOG_HOST, "Bridge is up and running");
  
@@ -770,7 +780,7 @@ index 3aa4556a..46974313 100644
      StopWatch stopWatch;
      stopWatch.start();
  
-@@ -628,6 +645,11 @@ int HostBridge::run()
+@@ -628,6 +647,11 @@ int HostBridge::run()
                  m_networkWatchdog.clock(ms);
  
                  if (m_networkWatchdog.isRunning() && m_networkWatchdog.hasExpired()) {
@@ -782,7 +792,7 @@ index 3aa4556a..46974313 100644
                      if (m_rxStartTime > 0U) {
                          uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                          uint64_t diff = now - m_rxStartTime;
-@@ -642,6 +664,20 @@ int HostBridge::run()
+@@ -642,6 +666,20 @@ int HostBridge::run()
  
                      m_networkWatchdog.stop();
  
@@ -803,8 +813,15 @@ index 3aa4556a..46974313 100644
                      m_callInProgress = false;
                      m_ignoreCall = false;
                      m_callAlgoId = P25DEF::ALGO_UNENCRYPT;
-@@ -998,6 +1034,56 @@ bool HostBridge::readParams()
+@@ -996,8 +1034,63 @@ bool HostBridge::readParams()
+     m_rxAudioGain = systemConf["rxAudioGain"].as<float>(1.0f);
+     m_vocoderDecoderAudioGain = systemConf["vocoderDecoderAudioGain"].as<float>(3.0f);
      m_vocoderDecoderAutoGain = systemConf["vocoderDecoderAutoGain"].as<bool>(false);
++    m_vocoderDecoderUvQuality = systemConf["vocoderDecoderUvQuality"].as<uint32_t>(3U);
++    if (m_vocoderDecoderUvQuality < 1U)
++        m_vocoderDecoderUvQuality = 1U;
++    if (m_vocoderDecoderUvQuality > 64U)
++        m_vocoderDecoderUvQuality = 64U;
      m_txAudioGain = systemConf["txAudioGain"].as<float>(1.0f);
      m_vocoderEncoderAudioGain = systemConf["vocoderEncoderAudioGain"].as<float>(3.0f);
 +    m_p25EncodePresenceGain = systemConf["p25EncodePresenceGain"].as<float>(0.0f);
@@ -860,7 +877,7 @@ index 3aa4556a..46974313 100644
      
      m_txMode = (uint8_t)systemConf["txMode"].as<uint32_t>(1U);
      if (m_txMode < TX_MODE_DMR)
-@@ -1008,8 +1094,7 @@ bool HostBridge::readParams()
+@@ -1008,8 +1101,7 @@ bool HostBridge::readParams()
      m_voxSampleLevel = systemConf["voxSampleLevel"].as<float>(30.0f);
      m_dropTimeMS = (uint16_t)systemConf["dropTimeMs"].as<uint32_t>(180U);
  
@@ -870,7 +887,7 @@ index 3aa4556a..46974313 100644
  
      switch (m_txMode) {
      case TX_MODE_DMR:
-@@ -1017,8 +1102,7 @@ bool HostBridge::readParams()
+@@ -1017,8 +1109,7 @@ bool HostBridge::readParams()
      case TX_MODE_P25:
          {
              if (m_udpAudio) {
@@ -880,7 +897,7 @@ index 3aa4556a..46974313 100644
              }
          }
          break;
-@@ -1028,6 +1112,17 @@ bool HostBridge::readParams()
+@@ -1028,6 +1119,17 @@ bool HostBridge::readParams()
  
      m_localDropTime = Timer(1000U, 0U, m_dropTimeMS);
      m_udpDropTime = Timer(1000U, 0U, m_dropTimeMS);
@@ -898,8 +915,11 @@ index 3aa4556a..46974313 100644
  
      m_detectAnalogMDC1200 = systemConf["detectAnalogMDC1200"].as<bool>(false);
  
-@@ -1137,6 +1232,14 @@ bool HostBridge::readParams()
+@@ -1135,8 +1237,17 @@ bool HostBridge::readParams()
+     LogInfo("    Rx Audio Gain: %.1f", m_rxAudioGain);
+     LogInfo("    Vocoder Decoder Audio Gain: %.1f", m_vocoderDecoderAudioGain);
      LogInfo("    Vocoder Decoder Auto Gain: %s", m_vocoderDecoderAutoGain ? "yes" : "no");
++    LogInfo("    Vocoder Decoder Unvoiced Quality: %u", m_vocoderDecoderUvQuality);
      LogInfo("    Tx Audio Gain: %.1f", m_txAudioGain);
      LogInfo("    Vocoder Encoder Audio Gain: %.1f", m_vocoderEncoderAudioGain);
 +    LogInfo("    P25 Encoder Presence Gain: %.2f", m_p25EncodePresenceGain);
@@ -913,7 +933,7 @@ index 3aa4556a..46974313 100644
      LogInfo("    Transmit Mode: %s", txModeStr.c_str());
      LogInfo("    VOX Sample Level: %.1f", m_voxSampleLevel);
      LogInfo("    Drop Time: %ums", m_dropTimeMS);
-@@ -1215,11 +1318,8 @@ bool HostBridge::createNetwork()
+@@ -1215,11 +1326,8 @@ bool HostBridge::createNetwork()
          return false;
      }
  
@@ -927,7 +947,7 @@ index 3aa4556a..46974313 100644
  
      // make sure we're range checked
      switch (m_txMode) {
-@@ -1295,7 +1395,10 @@ bool HostBridge::createNetwork()
+@@ -1295,7 +1403,10 @@ bool HostBridge::createNetwork()
  
      LogInfo("    Encrypted: %s", encrypted ? "yes" : "no");
      LogInfo("    Source ID: %u", m_srcId);
@@ -939,7 +959,7 @@ index 3aa4556a..46974313 100644
      LogInfo("    DMR Slot: %u", m_slot);
      LogInfo("    Override Source ID from MDC: %s", m_overrideSrcIdFromMDC ? "yes" : "no");
      LogInfo("    Override Source ID from UDP Audio: %s", m_overrideSrcIdFromUDP ? "yes" : "no");
-@@ -1312,6 +1415,8 @@ bool HostBridge::createNetwork()
+@@ -1312,6 +1423,8 @@ bool HostBridge::createNetwork()
      }
  
      bool dmr = false, p25 = false, analog = false;
@@ -948,7 +968,7 @@ index 3aa4556a..46974313 100644
      switch (m_txMode) {
      case TX_MODE_DMR:
          dmr = true;
-@@ -1324,6 +1429,17 @@ bool HostBridge::createNetwork()
+@@ -1324,6 +1437,17 @@ bool HostBridge::createNetwork()
          break;
      }
  
@@ -966,7 +986,7 @@ index 3aa4556a..46974313 100644
      // initialize networking
      m_network = new PeerNetwork(address, port, local, id, password, true, debug, dmr, p25, false, analog, true, true, true, allowDiagnosticTransfer, true, false);
  
-@@ -1478,15 +1594,19 @@ void HostBridge::processUDPAudio()
+@@ -1478,15 +1602,19 @@ void HostBridge::processUDPAudio()
  
          if (m_udpMetadata) {
              if (m_udpRTPFrames) {
@@ -988,7 +1008,7 @@ index 3aa4556a..46974313 100644
  
          m_udpPackets.push_back(req);
      }
-@@ -1520,9 +1640,9 @@ void HostBridge::writeUDPAudio(uint32_t srcId, uint32_t dstId, uint8_t* pcm, uin
+@@ -1520,9 +1648,9 @@ void HostBridge::writeUDPAudio(uint32_t srcId, uint32_t dstId, uint8_t* pcm, uin
                  ::memcpy(audioData, rtpFrame, RTP_HEADER_LENGTH_BYTES);
                  ::memcpy(audioData + RTP_HEADER_LENGTH_BYTES, pcm, pcmLength);
  
@@ -1001,7 +1021,7 @@ index 3aa4556a..46974313 100644
              }
          }
  
-@@ -1713,74 +1833,90 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+@@ -1713,74 +1841,90 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
      m_localDropTime.stop();
      m_udpDropTime.stop();
  
@@ -1147,7 +1167,7 @@ index 3aa4556a..46974313 100644
      }
  
      LogInfoEx(LOG_HOST, "%s, call end, srcId = %u, dstId = %u", trafficType.c_str(), srcId, dstId);
-@@ -1803,6 +1939,10 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+@@ -1803,6 +1947,10 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
      m_p25SeqNo = 0U;
      m_p25N = 0U;
      m_analogN = 0U;
@@ -1158,7 +1178,7 @@ index 3aa4556a..46974313 100644
  
      if (!m_udpRTPContinuousSeq) {
          m_rtpInitialFrame = false;
-@@ -2324,13 +2464,22 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
+@@ -2324,13 +2472,22 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
                  delete[] req->pcm;
                  delete req;
                  req = nullptr; // prevent use-after-free
@@ -1183,7 +1203,7 @@ index 3aa4556a..46974313 100644
                  bridge->m_udpDropTime.start();
  
                  // handle source ID management
-@@ -2346,6 +2495,12 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
+@@ -2346,6 +2503,12 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
                              if (bridge->m_resetCallForSourceIdChange && (frameSrcId != bridge->m_udpSrcId)) {
                                  LogInfoEx(LOG_HOST, "%s, call switch over, old srcId = %u, new srcId = %u", UDP_CALL, bridge->m_udpSrcId, frameSrcId);
                                  bridge->callEnd(bridge->m_udpSrcId, bridge->m_dstId);
@@ -1196,7 +1216,7 @@ index 3aa4556a..46974313 100644
  
                                  if (bridge->m_udpDropTime.isRunning())
                                      bridge->m_udpDropTime.start();
-@@ -2373,14 +2528,17 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
+@@ -2373,14 +2536,17 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
                      bridge->m_udpSrcId = bridge->m_srcId;
                  }
  
@@ -1217,7 +1237,7 @@ index 3aa4556a..46974313 100644
  
                          LogInfoEx(LOG_HOST, "%s, call start, srcId = %u, dstId = %u", UDP_CALL, bridge->m_udpSrcId, bridge->m_udpDstId);
                          if (bridge->m_grantDemand) {
-@@ -2464,13 +2622,13 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
+@@ -2464,13 +2630,13 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
  
                  switch (bridge->m_txMode) {
                  case TX_MODE_DMR:
@@ -1234,7 +1254,7 @@ index 3aa4556a..46974313 100644
                      break;
                  }
  
-@@ -2536,11 +2694,15 @@ void* HostBridge::threadNetworkProcess(void* arg)
+@@ -2536,11 +2702,15 @@ void* HostBridge::threadNetworkProcess(void* arg)
  
              uint32_t length = 0U;
              bool netReadRet = false;
@@ -1253,7 +1273,7 @@ index 3aa4556a..46974313 100644
                  {
                      std::lock_guard<std::mutex> lock(HostBridge::s_networkMutex);
                      dmrBuffer = bridge->m_network->readDMR(netReadRet, length);
-@@ -2551,11 +2713,9 @@ void* HostBridge::threadNetworkProcess(void* arg)
+@@ -2551,11 +2721,9 @@ void* HostBridge::threadNetworkProcess(void* arg)
                  }
              }
  
@@ -1267,10 +1287,14 @@ index 3aa4556a..46974313 100644
                      std::lock_guard<std::mutex> lock(HostBridge::s_networkMutex);
                      p25Buffer = bridge->m_network->readP25(netReadRet, length);
 diff --git a/src/bridge/HostBridge.h b/src/bridge/HostBridge.h
-index d2640686..d2c159d8 100644
+index d2640686..3088b0f1 100644
 --- a/src/bridge/HostBridge.h
 +++ b/src/bridge/HostBridge.h
-@@ -175,6 +175,20 @@ private:
+@@ -172,9 +172,24 @@ private:
+     float m_rxAudioGain;
+     float m_vocoderDecoderAudioGain;
+     bool m_vocoderDecoderAutoGain;
++    uint32_t m_vocoderDecoderUvQuality;
  
      float m_txAudioGain;
      float m_vocoderEncoderAudioGain;
@@ -7354,3 +7378,51 @@ index e0f22aa0..1c543667 100644
                  LogWarning(LOG_NET, "Traffic collision detect, preempting new network traffic to existing RF traffic (Are we in a voting condition?), rfSrcId = %u, rfDstId = %u, netSrcId = %u, netDstId = %u", m_rfLC.getSrcId(), m_rfLC.getDstId(),
                      srcId, dstId);
                  resetNet();
+diff --git a/src/vocoder/MBEDecoder.cpp b/src/vocoder/MBEDecoder.cpp
+index 32f5084a..da8a1d6d 100644
+--- a/src/vocoder/MBEDecoder.cpp
++++ b/src/vocoder/MBEDecoder.cpp
+@@ -72,7 +72,9 @@ const int MBEDecoder::rZ[36] = {
+ MBEDecoder::MBEDecoder(MBE_DECODER_MODE mode) :
+     m_mbelibParms(NULL),
+     m_mbeMode(mode),
+-    m_gainAdjust(1.0f)
++    m_gainAdjust(1.0f),
++    m_autoGain(false),
++    m_uvQuality(3)
+ {
+     m_mbelibParms = new mbelibParms();
+     mbe_initMbeParms(m_mbelibParms->m_cur_mp, m_mbelibParms->m_prev_mp, m_mbelibParms->m_prev_mp_enhanced);
+@@ -188,7 +190,7 @@ int32_t MBEDecoder::decodeF(uint8_t* codeword, float samples[])
+         char ambeErrStr[64U];
+         ::memset(ambeErrStr, 0x20U, 64U);
+ 
+-        mbe_processAmbe3600x2450FrameF(samples, &ambeErrs, &errs, ambeErrStr, ambe_fr, ambe_d, m_mbelibParms->m_cur_mp, m_mbelibParms->m_prev_mp, m_mbelibParms->m_prev_mp_enhanced, 3);
++        mbe_processAmbe3600x2450FrameF(samples, &ambeErrs, &errs, ambeErrStr, ambe_fr, ambe_d, m_mbelibParms->m_cur_mp, m_mbelibParms->m_prev_mp, m_mbelibParms->m_prev_mp_enhanced, m_uvQuality);
+     }
+     break;
+ 
+@@ -207,7 +209,7 @@ int32_t MBEDecoder::decodeF(uint8_t* codeword, float samples[])
+         char ambeErrStr[64U];
+         ::memset(ambeErrStr, 0x20U, 64U);
+ 
+-        mbe_processImbe4400DataF(samples, &ambeErrs, &errs, ambeErrStr, imbe_d, m_mbelibParms->m_cur_mp, m_mbelibParms->m_prev_mp, m_mbelibParms->m_prev_mp_enhanced, 3);
++        mbe_processImbe4400DataF(samples, &ambeErrs, &errs, ambeErrStr, imbe_d, m_mbelibParms->m_cur_mp, m_mbelibParms->m_prev_mp, m_mbelibParms->m_prev_mp_enhanced, m_uvQuality);
+     }
+     break;
+     }
+diff --git a/src/vocoder/MBEDecoder.h b/src/vocoder/MBEDecoder.h
+index e55eedef..2e08f468 100644
+--- a/src/vocoder/MBEDecoder.h
++++ b/src/vocoder/MBEDecoder.h
+@@ -135,6 +135,10 @@ namespace vocoder
+          * @brief Flag indicating automatic gain adjustment is enabled.
+          */
+         DECLARE_PROPERTY(bool, autoGain, AutoGain);
++        /**
++         * @brief Number of synthesis waves used for unvoiced speech.
++         */
++        DECLARE_PROPERTY(int, uvQuality, UvQuality);
+     };
+ } // namespace vocoder
+ 
