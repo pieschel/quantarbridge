@@ -78,6 +78,7 @@ units also follow every direct `dvmfne.service` restart through systemd.
 | `vocoderEncoderAudioGain` | Level immediately before vocoder encoding |
 | `p25EncodePresenceGain` | DMR-to-P25 high-frequency emphasis; excessive values can sound scratchy |
 | `p25EncodeHighCutHz` | Optional DMR-to-P25 low-pass before IMBE; `0` disables it |
+| `dmrEncodeHighCutHz` | Optional P25-to-DMR low-pass before AMBE; `0` disables it |
 | `p25EncodeAgcPeakLimit` | Absolute DMR-to-P25 PCM ceiling after final gain, with or without AGC |
 | `dropTimeMs` | Tail time before a call is released |
 
@@ -93,6 +94,13 @@ decoder AGC off, `vocoderDecoderUvQuality: 12`, `txAudioGain: 3.6`,
 P25 AGC off, and a final peak limit of `24000`. Keep these values together when
 restoring the baseline; changing one stage can move clipping or artifacts into
 the next codec stage.
+
+The shipped P25-to-DMR baseline is likewise tuned on the reference installation:
+`rxAudioGain: 1.0`, `vocoderDecoderAudioGain: 0.4`, decoder AGC off,
+`vocoderDecoderUvQuality: 3`, `txAudioGain: 2.0`,
+`vocoderEncoderAudioGain: 0.0`, and a `2500 Hz` DMR high-cut. The lower decoder
+gain provides headroom before its integer PCM clipping stage; the final gain
+restores the required BrandMeister level after decoding.
 
 ## TMS Test Sequence
 

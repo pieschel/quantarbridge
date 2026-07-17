@@ -122,7 +122,7 @@ sms:
                 (runtime / name).write_text(config, encoding="utf-8")
 
             rules = runtime / "talkgroup_rules.yml"
-            self.assertTrue(SYNC.update_talkgroup_rules(rules, [983872]))
+            self.assertTrue(SYNC.update_talkgroup_rules(rules, [262000]))
             rendered = rules.read_text(encoding="utf-8")
 
             for peer_id in (9100110, 9100111, 9100101, 9100112):

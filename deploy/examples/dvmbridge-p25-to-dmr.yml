@@ -31,11 +31,13 @@ system:
   sysId: 001
   grantDemand: false
   txMode: 1
-  rxAudioGain: 0.9
-  vocoderDecoderAudioGain: 1.35
+  rxAudioGain: 1.0
+  vocoderDecoderAudioGain: 0.4
   vocoderDecoderAutoGain: false
-  txAudioGain: 1.0
-  vocoderEncoderAudioGain: 1.5
+  vocoderDecoderUvQuality: 3
+  txAudioGain: 2.0
+  vocoderEncoderAudioGain: 0.0
+  dmrEncodeHighCutHz: 2500
   trace: false
   debug: false
   tek:

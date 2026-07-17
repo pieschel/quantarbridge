@@ -1879,6 +1879,14 @@ class SettingsManager:
         "p25EncodeAgcRelease": 0.06,
         "p25EncodeAgcPeakLimit": 24000.0,
     }
+    _DMR_AUDIO_DEFAULTS: dict[str, Any] = {
+        "rxAudioGain": 1.0,
+        "vocoderDecoderAudioGain": 0.4,
+        "vocoderDecoderAutoGain": False,
+        "txAudioGain": 2.0,
+        "vocoderEncoderAudioGain": 0.0,
+        "dmrEncodeHighCutHz": 2500.0,
+    }
 
     def __init__(
         self,
@@ -1907,6 +1915,8 @@ class SettingsManager:
         defaults = dict(cls._AUDIO_DEFAULTS)
         if p25_output:
             defaults.update(cls._P25_AUDIO_DEFAULTS)
+        else:
+            defaults.update(cls._DMR_AUDIO_DEFAULTS)
         values: dict[str, Any] = {}
         for key, default in defaults.items():
             raw = system.get(key, default)
@@ -2061,6 +2071,12 @@ class SettingsManager:
             ),
         }
         if not p25_output:
+            values["dmrEncodeHighCutHz"] = cls._validate_float(
+                payload.get("dmrEncodeHighCutHz"),
+                f"{label}: DMR-Hochtonfilter",
+                0.0,
+                3500.0,
+            )
             return values
 
         values.update(

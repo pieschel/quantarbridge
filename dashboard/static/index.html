@@ -442,6 +442,16 @@
                   <span><strong>Decoder-Automatik</strong><small>Gleicht Pegelschwankungen verschiedener P25-Funkgeräte aus; kann dabei leise Nebengeräusche anheben.</small></span>
                   <span class="toggle-control"><input type="checkbox" name="audioP25DmrDecoderAuto"><span aria-hidden="true"></span></span>
                 </label>
+                <details class="audio-advanced">
+                  <summary>DMR-Feinregelung</summary>
+                  <div class="audio-fields">
+                    <label class="field field--explained">
+                      <span>DMR-Hochtonfilter</span>
+                      <small class="field__description">Dämpft Zischen und kratzige Spitzen vor dem AMBE-Encoder. 0 schaltet den Filter aus; das abgestimmte P25→BM-Profil verwendet 2500 Hz.</small>
+                      <span class="number-unit"><input type="number" name="audioP25DmrHighCut" min="0" max="3500" step="100" required inputmode="numeric"><small>Hz</small></span>
+                    </label>
+                  </div>
+                </details>
               </fieldset>
             </div>
           </section>

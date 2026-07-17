@@ -590,6 +590,7 @@ function populateSettings(settings) {
   form.elements.audioP25DmrDecoderAuto.checked = p25ToDmr.vocoderDecoderAutoGain;
   form.elements.audioP25DmrTx.value = p25ToDmr.txAudioGain;
   form.elements.audioP25DmrEncoder.value = p25ToDmr.vocoderEncoderAudioGain;
+  form.elements.audioP25DmrHighCut.value = p25ToDmr.dmrEncodeHighCutHz;
   updateAudioControlState();
   elements["mapping-rows"].innerHTML = "";
   for (const mapping of settings.talkgroupMappings) addMappingRow(mapping);
@@ -672,6 +673,7 @@ function settingsPayload() {
         vocoderDecoderAutoGain: form.elements.audioP25DmrDecoderAuto.checked,
         txAudioGain: Number(form.elements.audioP25DmrTx.value),
         vocoderEncoderAudioGain: Number(form.elements.audioP25DmrEncoder.value),
+        dmrEncodeHighCutHz: Number(form.elements.audioP25DmrHighCut.value),
       },
     },
   };

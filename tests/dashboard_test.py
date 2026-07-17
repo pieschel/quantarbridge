@@ -129,11 +129,12 @@ Password=old-password
     config.p25_to_dmr_config.write_text(
         """system:
   identity: BRIDGE-P25-DMR
-  rxAudioGain: 0.9
-  vocoderDecoderAudioGain: 1.35
+  rxAudioGain: 1.0
+  vocoderDecoderAudioGain: 0.4
   vocoderDecoderAutoGain: false
-  txAudioGain: 1.0
-  vocoderEncoderAudioGain: 1.5
+  txAudioGain: 2.0
+  vocoderEncoderAudioGain: 0.0
+  dmrEncodeHighCutHz: 2500
 """,
         encoding="utf-8",
     )
@@ -159,11 +160,12 @@ def audio_settings() -> dict:
             "p25EncodeAgcPeakLimit": 24000.0,
         },
         "p25ToDmr": {
-            "rxAudioGain": 0.9,
-            "vocoderDecoderAudioGain": 1.35,
+            "rxAudioGain": 1.0,
+            "vocoderDecoderAudioGain": 0.4,
             "vocoderDecoderAutoGain": False,
-            "txAudioGain": 1.0,
-            "vocoderEncoderAudioGain": 1.5,
+            "txAudioGain": 2.0,
+            "vocoderEncoderAudioGain": 0.0,
+            "dmrEncodeHighCutHz": 2500.0,
         },
     }
 
@@ -661,6 +663,19 @@ class SettingsManagerTest(unittest.TestCase):
 
             self.assertEqual(audio_settings()["dmrToP25"], settings["audio"]["dmrToP25"])
 
+    def test_read_uses_known_good_p25_to_dmr_audio_defaults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = make_config(Path(directory))
+            write_runtime(config)
+            config.p25_to_dmr_config.write_text(
+                "system:\n  identity: BRIDGE-P25-DMR\n", encoding="utf-8"
+            )
+            manager = SettingsManager(config, RuntimeState(), RecordingRestarter())
+
+            settings = manager.read()
+
+            self.assertEqual(audio_settings()["p25ToDmr"], settings["audio"]["p25ToDmr"])
+
     def test_read_does_not_clear_observed_ars_server_address(self):
         with tempfile.TemporaryDirectory() as directory:
             config = make_config(Path(directory))
@@ -893,6 +908,7 @@ class SettingsManagerTest(unittest.TestCase):
             manager = SettingsManager(config, RuntimeState(), restarter)
             audio = audio_settings()
             audio["p25ToDmr"]["txAudioGain"] = 2.4
+            audio["p25ToDmr"]["dmrEncodeHighCutHz"] = 2300.0
 
             manager.update(
                 {
@@ -911,6 +927,11 @@ class SettingsManagerTest(unittest.TestCase):
                 }
             )
 
+            p25_to_dmr = yaml.safe_load(
+                config.p25_to_dmr_config.read_text(encoding="utf-8")
+            )
+            self.assertEqual(2.4, p25_to_dmr["system"]["txAudioGain"])
+            self.assertEqual(2300.0, p25_to_dmr["system"]["dmrEncodeHighCutHz"])
             self.assertEqual([["dvmfne", "p25-to-dmr"]], restarter.calls)
 
     def test_audio_change_is_rejected_during_recent_radio_activity(self):
