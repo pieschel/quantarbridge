@@ -118,10 +118,10 @@ Password=old-password
     config.dmr_to_p25_config.write_text(
         """system:
   identity: BRIDGE-DMR-P25
-  rxAudioGain: 0.60
-  vocoderDecoderAudioGain: 0.8
+  rxAudioGain: 0.2
+  vocoderDecoderAudioGain: 0.4
   vocoderDecoderAutoGain: false
-  txAudioGain: 3.00
+  txAudioGain: 3.6
   vocoderEncoderAudioGain: 0.0
 """,
         encoding="utf-8",
@@ -142,21 +142,21 @@ Password=old-password
 def audio_settings() -> dict:
     return {
         "dmrToP25": {
-            "rxAudioGain": 0.6,
-            "vocoderDecoderAudioGain": 0.8,
+            "rxAudioGain": 0.2,
+            "vocoderDecoderAudioGain": 0.4,
             "vocoderDecoderAutoGain": False,
-            "vocoderDecoderUvQuality": 3,
-            "txAudioGain": 3.0,
+            "vocoderDecoderUvQuality": 12,
+            "txAudioGain": 3.6,
             "vocoderEncoderAudioGain": 0.0,
             "p25EncodePresenceGain": 0.0,
-            "p25EncodeHighCutHz": 0.0,
+            "p25EncodeHighCutHz": 2500.0,
             "p25EncodeAgc": False,
             "p25EncodeAgcTargetRms": 6500.0,
             "p25EncodeAgcMinGain": 0.55,
             "p25EncodeAgcMaxGain": 1.9,
             "p25EncodeAgcAttack": 0.4,
             "p25EncodeAgcRelease": 0.06,
-            "p25EncodeAgcPeakLimit": 26000.0,
+            "p25EncodeAgcPeakLimit": 24000.0,
         },
         "p25ToDmr": {
             "rxAudioGain": 0.9,
@@ -647,6 +647,19 @@ class SettingsManagerTest(unittest.TestCase):
         config.dvmhost_config.write_text(
             yaml.safe_dump(host, sort_keys=False), encoding="utf-8"
         )
+
+    def test_read_uses_known_good_dmr_to_p25_audio_defaults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = make_config(Path(directory))
+            write_runtime(config)
+            config.dmr_to_p25_config.write_text(
+                "system:\n  identity: BRIDGE-DMR-P25\n", encoding="utf-8"
+            )
+            manager = SettingsManager(config, RuntimeState(), RecordingRestarter())
+
+            settings = manager.read()
+
+            self.assertEqual(audio_settings()["dmrToP25"], settings["audio"]["dmrToP25"])
 
     def test_read_does_not_clear_observed_ars_server_address(self):
         with tempfile.TemporaryDirectory() as directory:

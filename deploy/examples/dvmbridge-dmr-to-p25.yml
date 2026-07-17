@@ -31,14 +31,14 @@ system:
   sysId: 001
   grantDemand: false
   txMode: 2
-  rxAudioGain: 0.60
-  vocoderDecoderAudioGain: 0.8
+  rxAudioGain: 0.2
+  vocoderDecoderAudioGain: 0.4
   vocoderDecoderAutoGain: false
-  vocoderDecoderUvQuality: 7
-  txAudioGain: 3.00
+  vocoderDecoderUvQuality: 12
+  txAudioGain: 3.6
   vocoderEncoderAudioGain: 0.0
   p25EncodePresenceGain: 0.0
-  p25EncodeHighCutHz: 2700
+  p25EncodeHighCutHz: 2500
   p25EncodeAgc: false
   p25EncodeAgcPeakLimit: 24000
   trace: false

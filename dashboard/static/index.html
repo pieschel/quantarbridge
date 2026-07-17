@@ -360,7 +360,7 @@
                   <div class="audio-fields">
                     <label class="field field--explained">
                       <span>AMBE-Decoderqualität</span>
-                      <small class="field__description">Glättet stimmlose Sprachanteile wie S, F und Sch bereits beim DMR-Decoding. Höhere Werte können metallische Artefakte reduzieren, benötigen aber mehr CPU.</small>
+                      <small class="field__description">Glättet stimmlose Sprachanteile wie S, F und Sch bereits beim DMR-Decoding. Das abgestimmte BM→P25-Profil verwendet Stufe 12.</small>
                       <span class="number-unit"><input type="number" name="audioDmrP25UvQuality" min="1" max="64" step="1" required inputmode="numeric"><small>Stufen</small></span>
                     </label>
                     <label class="field field--explained">
@@ -370,7 +370,7 @@
                     </label>
                     <label class="field field--explained">
                       <span>P25-Hochtonfilter</span>
-                      <small class="field__description">Dämpft kratzige Höhen vor dem IMBE-Encoder. 0 schaltet den Filter aus; 2700 Hz ist ein sanfter Startwert.</small>
+                      <small class="field__description">Dämpft kratzige Höhen vor dem IMBE-Encoder. 0 schaltet den Filter aus; das abgestimmte BM→P25-Profil verwendet 2500 Hz.</small>
                       <span class="number-unit"><input type="number" name="audioDmrP25HighCut" min="0" max="3500" step="100" required inputmode="numeric"><small>Hz</small></span>
                     </label>
                     <label class="field field--explained">

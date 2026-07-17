@@ -86,11 +86,13 @@ correct, reduce the last gain before the encoder and use a smaller upstream
 increase. Different subscriber microphones can still produce different peak
 levels.
 
-For a loud but rough DMR-to-P25 path, start with the AGC and presence boost
-disabled, set `p25EncodeHighCutHz` near `2700`, and use a final peak limit near
-`24000`. Set `vocoderDecoderUvQuality` to `7` as a moderate first step for
-metallic sibilants. Tune the high-cut in 100 Hz steps before lowering
-`txAudioGain`.
+The shipped DMR-to-P25 baseline is the known-good profile tuned on the reference
+Quantar installation: `rxAudioGain: 0.2`, `vocoderDecoderAudioGain: 0.4`,
+decoder AGC off, `vocoderDecoderUvQuality: 12`, `txAudioGain: 3.6`,
+`vocoderEncoderAudioGain: 0.0`, presence boost off, a `2500 Hz` high-cut,
+P25 AGC off, and a final peak limit of `24000`. Keep these values together when
+restoring the baseline; changing one stage can move clipping or artifacts into
+the next codec stage.
 
 ## TMS Test Sequence
 

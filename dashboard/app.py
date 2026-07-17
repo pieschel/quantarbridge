@@ -1863,16 +1863,21 @@ class SettingsManager:
         "vocoderEncoderAudioGain": 3.0,
     }
     _P25_AUDIO_DEFAULTS: dict[str, Any] = {
-        "vocoderDecoderUvQuality": 3,
+        "rxAudioGain": 0.2,
+        "vocoderDecoderAudioGain": 0.4,
+        "vocoderDecoderAutoGain": False,
+        "vocoderDecoderUvQuality": 12,
+        "txAudioGain": 3.6,
+        "vocoderEncoderAudioGain": 0.0,
         "p25EncodePresenceGain": 0.0,
-        "p25EncodeHighCutHz": 0.0,
+        "p25EncodeHighCutHz": 2500.0,
         "p25EncodeAgc": False,
         "p25EncodeAgcTargetRms": 6500.0,
         "p25EncodeAgcMinGain": 0.55,
         "p25EncodeAgcMaxGain": 1.9,
         "p25EncodeAgcAttack": 0.4,
         "p25EncodeAgcRelease": 0.06,
-        "p25EncodeAgcPeakLimit": 26000.0,
+        "p25EncodeAgcPeakLimit": 24000.0,
     }
 
     def __init__(
