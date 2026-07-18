@@ -88,12 +88,13 @@ increase. Different subscriber microphones can still produce different peak
 levels.
 
 The shipped DMR-to-P25 baseline is the known-good profile tuned on the reference
-Quantar installation: `rxAudioGain: 0.2`, `vocoderDecoderAudioGain: 0.4`,
-decoder AGC off, `vocoderDecoderUvQuality: 12`, `txAudioGain: 3.6`,
+Quantar installation: `rxAudioGain: 0.3`, `vocoderDecoderAudioGain: 0.4`,
+decoder AGC off, `vocoderDecoderUvQuality: 12`, `txAudioGain: 7.0`,
 `vocoderEncoderAudioGain: 0.0`, presence boost off, a `2500 Hz` high-cut,
 P25 AGC off, and a final peak limit of `24000`. Keep these values together when
 restoring the baseline; changing one stage can move clipping or artifacts into
-the next codec stage.
+the next codec stage. The dashboard therefore permits a final DMR-to-P25 output
+gain up to `10.0`; the opposite direction remains limited to `5.0`.
 
 The shipped P25-to-DMR baseline is likewise tuned on the reference installation:
 `rxAudioGain: 1.0`, `vocoderDecoderAudioGain: 0.4`, decoder AGC off,

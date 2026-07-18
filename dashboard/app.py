@@ -1863,11 +1863,11 @@ class SettingsManager:
         "vocoderEncoderAudioGain": 3.0,
     }
     _P25_AUDIO_DEFAULTS: dict[str, Any] = {
-        "rxAudioGain": 0.2,
+        "rxAudioGain": 0.3,
         "vocoderDecoderAudioGain": 0.4,
         "vocoderDecoderAutoGain": False,
         "vocoderDecoderUvQuality": 12,
-        "txAudioGain": 3.6,
+        "txAudioGain": 7.0,
         "vocoderEncoderAudioGain": 0.0,
         "p25EncodePresenceGain": 0.0,
         "p25EncodeHighCutHz": 2500.0,
@@ -2061,7 +2061,10 @@ class SettingsManager:
                 f"{label}: Decoder-Automatik",
             ),
             "txAudioGain": cls._validate_float(
-                payload.get("txAudioGain"), f"{label}: Ausgangspegel", 0.0, 5.0
+                payload.get("txAudioGain"),
+                f"{label}: Ausgangspegel",
+                0.0,
+                10.0 if p25_output else 5.0,
             ),
             "vocoderEncoderAudioGain": cls._validate_float(
                 payload.get("vocoderEncoderAudioGain"),

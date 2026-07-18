@@ -118,10 +118,10 @@ Password=old-password
     config.dmr_to_p25_config.write_text(
         """system:
   identity: BRIDGE-DMR-P25
-  rxAudioGain: 0.2
+  rxAudioGain: 0.3
   vocoderDecoderAudioGain: 0.4
   vocoderDecoderAutoGain: false
-  txAudioGain: 3.6
+  txAudioGain: 7.0
   vocoderEncoderAudioGain: 0.0
 """,
         encoding="utf-8",
@@ -143,11 +143,11 @@ Password=old-password
 def audio_settings() -> dict:
     return {
         "dmrToP25": {
-            "rxAudioGain": 0.2,
+            "rxAudioGain": 0.3,
             "vocoderDecoderAudioGain": 0.4,
             "vocoderDecoderAutoGain": False,
             "vocoderDecoderUvQuality": 12,
-            "txAudioGain": 3.6,
+            "txAudioGain": 7.0,
             "vocoderEncoderAudioGain": 0.0,
             "p25EncodePresenceGain": 0.0,
             "p25EncodeHighCutHz": 2500.0,
@@ -865,7 +865,7 @@ class SettingsManagerTest(unittest.TestCase):
             restarter = RecordingRestarter()
             manager = SettingsManager(config, RuntimeState(), restarter)
             audio = audio_settings()
-            audio["dmrToP25"]["txAudioGain"] = 2.8
+            audio["dmrToP25"]["txAudioGain"] = 7.5
             audio["dmrToP25"]["p25EncodePresenceGain"] = 0.15
             audio["dmrToP25"]["p25EncodeHighCutHz"] = 2700.0
             audio["dmrToP25"]["vocoderDecoderUvQuality"] = 7
@@ -891,7 +891,7 @@ class SettingsManagerTest(unittest.TestCase):
                 config.dmr_to_p25_config.read_text(encoding="utf-8")
             )
             self.assertTrue(result["changed"])
-            self.assertEqual(2.8, dmr_to_p25["system"]["txAudioGain"])
+            self.assertEqual(7.5, dmr_to_p25["system"]["txAudioGain"])
             self.assertEqual(0.15, dmr_to_p25["system"]["p25EncodePresenceGain"])
             self.assertEqual(2700.0, dmr_to_p25["system"]["p25EncodeHighCutHz"])
             self.assertEqual(7, dmr_to_p25["system"]["vocoderDecoderUvQuality"])
