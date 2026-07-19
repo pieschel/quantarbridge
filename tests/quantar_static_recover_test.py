@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -14,8 +15,13 @@ SPEC.loader.exec_module(MODULE)
 
 class StaticRecoveryTest(unittest.TestCase):
     def test_recovery_preserves_p25_host_sessions(self):
-        with mock.patch.object(MODULE.subprocess, "run") as run:
-            self.assertEqual(MODULE.main(), 0)
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "quantarbridge.yml"
+            config.write_text("brandmeister:\n  voiceEnabled: true\n", encoding="utf-8")
+            with mock.patch.object(MODULE, "CONFIG", config), mock.patch.object(
+                MODULE.subprocess, "run"
+            ) as run:
+                self.assertEqual(MODULE.main(), 0)
 
         commands = [call.args[0] for call in run.call_args_list]
         self.assertIn(
@@ -23,6 +29,16 @@ class StaticRecoveryTest(unittest.TestCase):
             commands,
         )
         self.assertFalse(any("dvmhost.service" in command for command in commands))
+
+    def test_brew_audio_mode_skips_legacy_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "quantarbridge.yml"
+            config.write_text("brandmeister:\n  voiceEnabled: false\n", encoding="utf-8")
+            with mock.patch.object(MODULE, "CONFIG", config), mock.patch.object(
+                MODULE.subprocess, "run"
+            ) as run:
+                self.assertEqual(MODULE.main(), 0)
+            run.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -150,6 +150,8 @@ class DashboardConfig:
     dmr_gateway_config: Path
     dmr_to_p25_config: Path
     p25_to_dmr_config: Path
+    brew_audio_config: Path
+    brew_audio_status_file: Path
     rid_file: Path
     backup_dir: Path
     bm_api_key_file: Path
@@ -188,6 +190,12 @@ class DashboardConfig:
             ),
             p25_to_dmr_config=resolve(
                 "p25ToDmrConfig", "dvmbridge-p25-to-dmr.yml"
+            ),
+            brew_audio_config=resolve(
+                "brewAudioConfig", "tetrapack-brew-audio.json"
+            ),
+            brew_audio_status_file=resolve(
+                "brewAudioStatusFile", "brew-audio-status.json"
             ),
             rid_file=resolve("ridFile", "rid_acl.dat"),
             backup_dir=resolve("backupDir", "dashboard-backups"),
@@ -816,6 +824,35 @@ class RuntimeState:
     def set_talkgroup_config(self, dynamic_timeout_seconds: int) -> None:
         with self._lock:
             self._dynamic_timeout_seconds = max(1, int(dynamic_timeout_seconds))
+
+    def set_brew_audio_status(self, payload: dict[str, Any]) -> None:
+        with self._lock:
+            dynamic_activity: dict[int, float] = {}
+            for entry in payload.get("dynamicTalkgroups", []):
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    talkgroup = int(entry.get("talkgroup", 0))
+                    last_active = float(entry.get("lastActiveEpoch", 0.0))
+                except (TypeError, ValueError):
+                    continue
+                if talkgroup > 0 and last_active > 0:
+                    dynamic_activity[talkgroup] = last_active
+            self._dynamic_activity = dynamic_activity
+
+            for direction, key in (("uplink", "activeUplink"), ("downlink", "activeDownlink")):
+                active = payload.get(key)
+                if isinstance(active, dict):
+                    try:
+                        source = int(active.get("source", 0))
+                        talkgroup = int(active.get("p25Talkgroup", 0))
+                        started_at = float(active.get("startedAtEpoch", time.time()))
+                    except (TypeError, ValueError):
+                        continue
+                    if source > 0 and talkgroup > 0:
+                        self._start_call(direction, source, talkgroup, started_at)
+                elif direction in self._active_calls:
+                    self._finish_call(direction, time.time())
 
     def update_position(
         self, radio_id: int, latitude: float, longitude: float, timestamp: float
@@ -1508,6 +1545,44 @@ class LogMonitor:
             stream.close()
 
 
+class BrewAudioStatusMonitor:
+    def __init__(self, status_file: Path, state: RuntimeState):
+        self.status_file = status_file
+        self.state = state
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name="brew-audio-status-monitor", daemon=True
+        )
+        self._last_mtime_ns = -1
+
+    def start(self) -> None:
+        self._poll()
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2)
+
+    def _poll(self) -> None:
+        try:
+            mtime_ns = self.status_file.stat().st_mtime_ns
+            if mtime_ns == self._last_mtime_ns:
+                return
+            payload = json.loads(self.status_file.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("status root is not an object")
+            self._last_mtime_ns = mtime_ns
+            self.state.set_brew_audio_status(payload)
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            LOG.debug("Skipping BREW audio status: %s", exc)
+
+    def _run(self) -> None:
+        while not self._stop.wait(0.5):
+            self._poll()
+
+
 class LocationMonitor:
     _event_time_re = re.compile(r"^host-raw-(\d{13})-")
 
@@ -1649,18 +1724,23 @@ class ServiceMonitor:
         return None
 
     @staticmethod
-    def _unit_status(unit: str) -> dict[str, str]:
+    def _unit_status(unit: str, user_unit: bool = False) -> dict[str, str]:
         if not unit:
             return {}
         try:
-            result = subprocess.run(
+            command = ["systemctl"]
+            if user_unit:
+                command.append("--user")
+            command.extend(
                 [
-                    "systemctl",
                     "show",
                     unit,
                     "--property=ActiveState,SubState,MainPID,ExecMainStartTimestamp",
                     "--no-pager",
-                ],
+                ]
+            )
+            result = subprocess.run(
+                command,
                 check=False,
                 capture_output=True,
                 text=True,
@@ -1678,7 +1758,9 @@ class ServiceMonitor:
     def collect(self) -> list[dict[str, Any]]:
         services: list[dict[str, Any]] = []
         for spec in self.config.service_units:
-            values = self._unit_status(str(spec.get("unit", "")))
+            values = self._unit_status(
+                str(spec.get("unit", "")), bool(spec.get("userUnit", False))
+            )
             pid = int(values.get("MainPID", "0") or 0)
             running = values.get("ActiveState") == "active" and pid > 0
             source = "systemd"
@@ -1722,6 +1804,8 @@ class RestartCoordinator:
             target_type = spec.get("type")
             if target_type == "systemd":
                 self._restart_systemd(str(spec["unit"]))
+            elif target_type == "systemd-user":
+                self._restart_systemd_user(str(spec["unit"]))
             elif target_type == "process":
                 self._restart_process(spec)
             else:
@@ -1742,6 +1826,16 @@ class RestartCoordinator:
             return int(result.stdout.strip())
         except ValueError:
             return 0
+
+    @staticmethod
+    def _restart_systemd_user(unit: str) -> None:
+        subprocess.run(
+            ["systemctl", "--user", "restart", unit],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=12,
+        )
 
     def _restart_systemd(self, unit: str) -> None:
         try:
@@ -1867,7 +1961,7 @@ class SettingsManager:
         "vocoderDecoderAudioGain": 0.4,
         "vocoderDecoderAutoGain": False,
         "vocoderDecoderUvQuality": 12,
-        "txAudioGain": 7.0,
+        "txAudioGain": 1.1,
         "vocoderEncoderAudioGain": 0.0,
         "p25EncodePresenceGain": 0.0,
         "p25EncodeHighCutHz": 2500.0,
@@ -1950,6 +2044,16 @@ class SettingsManager:
             p25_to_dmr_audio = self._read_audio(
                 self.config.p25_to_dmr_config, p25_output=False
             )
+            brew_audio: dict[str, Any] = {}
+            if self.config.brew_audio_config.exists():
+                loaded_brew_audio = json.loads(
+                    self.config.brew_audio_config.read_text(encoding="utf-8")
+                )
+                if isinstance(loaded_brew_audio, dict):
+                    brew_audio = loaded_brew_audio
+                    p25_to_dmr_audio["txAudioGain"] = float(
+                        brew_audio.get("uplinkGain", p25_to_dmr_audio["txAudioGain"])
+                    )
             bm = bridge.get("brandmeister", {})
             routing = bridge.get("routing", {})
             p25 = host.get("protocols", {}).get("p25", {})
@@ -1977,6 +2081,8 @@ class SettingsManager:
                 + self.config.dmr_to_p25_config.read_bytes()
                 + self.config.p25_to_dmr_config.read_bytes()
             )
+            if self.config.brew_audio_config.exists():
+                version_source += self.config.brew_audio_config.read_bytes()
             return {
                 "version": hashlib.sha256(version_source).hexdigest()[:16],
                 "repeaterId": int(bm.get("repeaterId", 0)),
@@ -2237,10 +2343,10 @@ class SettingsManager:
             raise ValueError("Audioeinstellungen sind ungültig.")
         audio_values = {
             "dmrToP25": self._validate_audio_direction(
-                audio.get("dmrToP25"), "DMR nach P25", p25_output=True
+                audio.get("dmrToP25"), "BREW nach P25", p25_output=True
             ),
             "p25ToDmr": self._validate_audio_direction(
-                audio.get("p25ToDmr"), "P25 nach DMR", p25_output=False
+                audio.get("p25ToDmr"), "P25 nach BREW", p25_output=False
             ),
         }
         return {
@@ -2399,6 +2505,19 @@ class SettingsManager:
             current_p25_to_dmr_audio = self._read_audio(
                 self.config.p25_to_dmr_config, p25_output=False
             )
+            brew_audio_document: dict[str, Any] = {}
+            current_brew_uplink_gain = float(current_p25_to_dmr_audio["txAudioGain"])
+            if self.config.brew_audio_config.exists():
+                loaded_brew_audio = json.loads(
+                    self.config.brew_audio_config.read_text(encoding="utf-8")
+                )
+                if not isinstance(loaded_brew_audio, dict):
+                    raise ValueError(f"Invalid JSON document: {self.config.brew_audio_config}")
+                brew_audio_document = loaded_brew_audio
+                current_brew_uplink_gain = float(
+                    brew_audio_document.get("uplinkGain", current_brew_uplink_gain)
+                )
+                current_p25_to_dmr_audio["txAudioGain"] = current_brew_uplink_gain
             bm = bridge.setdefault("brandmeister", {})
             routing = bridge.setdefault("routing", {})
             location = (
@@ -2448,6 +2567,15 @@ class SettingsManager:
             p25_to_dmr_changed = (
                 current_p25_to_dmr_audio != values["audio"]["p25ToDmr"]
             )
+            brew_uplink_gain_changed = (
+                self.config.brew_audio_config.exists()
+                and current_brew_uplink_gain
+                != values["audio"]["p25ToDmr"]["txAudioGain"]
+            )
+            brew_routing_changed = (
+                current_dynamic_timeout != values["dynamicTimeoutSeconds"]
+                or current_mappings != values["talkgroupMappings"]
+            )
             bridge_changed = (
                 current_id != values["repeaterId"]
                 or current_callsign != values["brandmeisterCallsign"]
@@ -2479,12 +2607,12 @@ class SettingsManager:
                 targets.append("sms-bridge")
             if host_changed:
                 targets.append("dvmhost")
-            if dmr_to_p25_changed or p25_to_dmr_changed:
-                targets.append("dvmfne")
             if dmr_to_p25_changed:
                 targets.append("dmr-to-p25")
             if p25_to_dmr_changed:
                 targets.append("p25-to-dmr")
+            if password_changed or brew_routing_changed or brew_uplink_gain_changed:
+                targets.append("brew-audio")
 
             guard_remaining = self.state.restart_guard_remaining()
             if targets and guard_remaining > 0:
@@ -2592,6 +2720,15 @@ class SettingsManager:
                         updated, "system", key, self._yaml_scalar(value)
                     )
                 pending[path] = updated.encode("utf-8")
+            if brew_uplink_gain_changed:
+                original = self.config.brew_audio_config.read_bytes()
+                originals[self.config.brew_audio_config] = original
+                brew_audio_document["uplinkGain"] = values["audio"]["p25ToDmr"][
+                    "txAudioGain"
+                ]
+                pending[self.config.brew_audio_config] = (
+                    json.dumps(brew_audio_document, indent=2, ensure_ascii=True) + "\n"
+                ).encode("utf-8")
             if password_changed and self.config.dmr_gateway_config.exists():
                 originals[self.config.dmr_gateway_config] = (
                     self.config.dmr_gateway_config.read_bytes()
@@ -2642,6 +2779,9 @@ class DashboardApplication:
             config.identity_cache_file, config.bm_api_key_file
         )
         self.log_monitor = LogMonitor(config, self.state)
+        self.brew_audio_status_monitor = BrewAudioStatusMonitor(
+            config.brew_audio_status_file, self.state
+        )
         self.location_monitor = LocationMonitor(config.location_event_dir, self.state)
         self.brandmeister_profile_monitor = BrandmeisterProfileMonitor(
             config, self.state
@@ -2655,6 +2795,7 @@ class DashboardApplication:
         self.auth._read()
         self.settings.read()
         self.log_monitor.start()
+        self.brew_audio_status_monitor.start()
         self.location_monitor.start()
         self.brandmeister_profile_monitor.start()
         self.identities.start()
@@ -2662,6 +2803,7 @@ class DashboardApplication:
 
     def stop(self) -> None:
         self.log_monitor.stop()
+        self.brew_audio_status_monitor.stop()
         self.location_monitor.stop()
         self.brandmeister_profile_monitor.stop()
         self.identities.stop()

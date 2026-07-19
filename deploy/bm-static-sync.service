@@ -5,4 +5,4 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/deploy/scripts/bm_static_sync.py --api-key-file /home/quantar/quantar-runtime/bm_api.key --quantarbridge-config /home/quantar/quantar-runtime/quantarbridge.yml --talkgroup-rules /home/quantar/quantar-runtime/talkgroup_rules.yml --restart dvmfne.service --restart dvmbridge-p25-to-dmr.service --restart dvmbridge-dmr-to-p25.service --restart quantarbridge.service
+ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/deploy/scripts/bm_static_sync.py --api-key-file /home/quantar/quantar-runtime/bm_api.key --quantarbridge-config /home/quantar/quantar-runtime/quantarbridge.yml --talkgroup-rules /home/quantar/quantar-runtime/talkgroup_rules.yml --restart tetrapack-brew-audio.service

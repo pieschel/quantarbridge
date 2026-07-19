@@ -105,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bm-id", required=True, type=parse_repeater_id)
     parser.add_argument("--bm-callsign", required=True, type=parse_callsign)
     parser.add_argument("--bm-master", required=True)
+    parser.add_argument("--brew-username", required=True)
     parser.add_argument("--rx-frequency", required=True, type=parse_frequency)
     parser.add_argument("--tx-frequency", required=True, type=parse_frequency)
     parser.add_argument("--serial-port", default="/dev/ttyUSB0")
@@ -142,6 +143,8 @@ def validate_arguments(args: argparse.Namespace) -> None:
         raise ValueError("runtime and install directories must be absolute")
     if not re.fullmatch(r"[A-Za-z0-9.-]+", args.bm_master) or "." not in args.bm_master:
         raise ValueError("BrandMeister master must be a hostname without a URL scheme")
+    if not re.fullmatch(r"[A-Za-z0-9_.@+-]{1,64}", args.brew_username):
+        raise ValueError("BREW username contains unsupported characters")
     if not -90.0 <= args.latitude <= 90.0:
         raise ValueError("latitude must be between -90 and 90")
     if not -180.0 <= args.longitude <= 180.0:
@@ -171,6 +174,7 @@ def configure(args: argparse.Namespace, brandmeister_password: str) -> None:
         "dvmbridge-dmr-to-p25.yml",
         "quantar-dashboard.json",
         "tetrapack-brew-bridge.json",
+        "tetrapack-brew-audio.json",
         "iden_table.dat",
         "peer_list.dat",
         "talkgroup_rules.yml",
@@ -266,9 +270,26 @@ def configure(args: argparse.Namespace, brandmeister_password: str) -> None:
         runtime_dir,
         install_dir,
     )
+    tetrapack["brew"].update(
+        {
+            "enabled": True,
+            "username": args.brew_username,
+            "password": "",
+        }
+    )
     atomic_write(
         runtime_dir / "tetrapack-brew-bridge.json",
         json.dumps(tetrapack, indent=2, ensure_ascii=True) + "\n",
+    )
+
+    brew_audio = replace_paths(
+        json.loads((EXAMPLE_DIR / "tetrapack-brew-audio.json").read_text(encoding="utf-8")),
+        runtime_dir,
+        install_dir,
+    )
+    atomic_write(
+        runtime_dir / "tetrapack-brew-audio.json",
+        json.dumps(brew_audio, indent=2, ensure_ascii=True) + "\n",
     )
 
     for name in ("iden_table.dat", "peer_list.dat", "RSSI.dat"):
@@ -298,6 +319,7 @@ def configure(args: argparse.Namespace, brandmeister_password: str) -> None:
     print(f"runtime={runtime_dir}")
     print(f"brandmeister_repeater_id={args.bm_id}")
     print(f"ars_server={args.ars_server_ip}")
+    print(f"brew_username={args.brew_username}")
     print("credentials_written=true")
 
 

@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 
 import subprocess
+import sys
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from runtime_config import read_brandmeister_voice_enabled
 
 
 ROOT = Path("/home/quantar/quantarbridge/deploy/scripts")
@@ -12,6 +19,9 @@ API_KEY = Path("/home/quantar/quantar-runtime/bm_api.key")
 
 
 def main() -> int:
+    if CONFIG.exists() and not read_brandmeister_voice_enabled(CONFIG):
+        print("skip=tetrapack-brew-audio-owns-voice")
+        return 0
     # First clear any stale BM dynamic route and republish the primary static TG.
     subprocess.run(
         [

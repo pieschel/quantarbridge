@@ -49,6 +49,7 @@ AppConfig loadConfig(const std::string& path)
     assignIfPresent(bm, "repeaterId", config.bm.repeaterId);
     assignIfPresent(bm, "password", config.bm.password);
     assignIfPresent(bm, "transport", config.bm.transport);
+    assignIfPresent(bm, "voiceEnabled", config.bm.voiceEnabled);
     assignIfPresent(bm, "address", config.bm.address);
     assignIfPresent(bm, "port", config.bm.port);
     assignIfPresent(bm, "localPort", config.bm.localPort);

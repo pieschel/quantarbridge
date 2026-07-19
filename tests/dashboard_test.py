@@ -6,6 +6,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -17,6 +18,7 @@ from dashboard.app import (
     DashboardConfig,
     IdentityDirectory,
     LoginLimiter,
+    RestartCoordinator,
     RuntimeState,
     SettingsBusyError,
     SettingsManager,
@@ -38,6 +40,30 @@ class RecordingRestarter:
         return names
 
 
+class RestartCoordinatorTest(unittest.TestCase):
+    def test_restarts_user_service_without_sudo(self):
+        coordinator = RestartCoordinator(
+            {
+                "brew-audio": {
+                    "type": "systemd-user",
+                    "unit": "tetrapack-brew-audio.service",
+                }
+            }
+        )
+
+        with patch("dashboard.app.subprocess.run") as run:
+            restarted = coordinator.restart(["brew-audio"])
+
+        self.assertEqual(["brew-audio"], restarted)
+        run.assert_called_once_with(
+            ["systemctl", "--user", "restart", "tetrapack-brew-audio.service"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=12,
+        )
+
+
 def make_config(root: Path) -> DashboardConfig:
     static_dir = root / "static"
     static_dir.mkdir()
@@ -53,6 +79,8 @@ def make_config(root: Path) -> DashboardConfig:
         dmr_gateway_config=root / "DMRGateway.ini",
         dmr_to_p25_config=root / "dvmbridge-dmr-to-p25.yml",
         p25_to_dmr_config=root / "dvmbridge-p25-to-dmr.yml",
+        brew_audio_config=root / "tetrapack-brew-audio.json",
+        brew_audio_status_file=root / "brew-audio-status.json",
         rid_file=root / "rid_acl.dat",
         backup_dir=root / "backups",
         bm_api_key_file=root / "bm_api.key",
@@ -121,7 +149,7 @@ Password=old-password
   rxAudioGain: 0.3
   vocoderDecoderAudioGain: 0.4
   vocoderDecoderAutoGain: false
-  txAudioGain: 7.0
+  txAudioGain: 1.1
   vocoderEncoderAudioGain: 0.0
 """,
         encoding="utf-8",
@@ -138,6 +166,10 @@ Password=old-password
 """,
         encoding="utf-8",
     )
+    config.brew_audio_config.write_text(
+        json.dumps({"enabled": True, "uplinkGain": 2.0}, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def audio_settings() -> dict:
@@ -147,7 +179,7 @@ def audio_settings() -> dict:
             "vocoderDecoderAudioGain": 0.4,
             "vocoderDecoderAutoGain": False,
             "vocoderDecoderUvQuality": 12,
-            "txAudioGain": 7.0,
+            "txAudioGain": 1.1,
             "vocoderEncoderAudioGain": 0.0,
             "p25EncodePresenceGain": 0.0,
             "p25EncodeHighCutHz": 2500.0,
@@ -852,7 +884,7 @@ class SettingsManagerTest(unittest.TestCase):
                 config.dvmhost_config.read_text(encoding="utf-8"),
             )
             self.assertEqual(
-                [["dmrgateway", "quantarbridge", "sms-bridge", "dvmhost"]],
+                [["dmrgateway", "quantarbridge", "sms-bridge", "dvmhost", "brew-audio"]],
                 restarter.calls,
             )
             self.assertTrue((Path(result["backup"]) / "quantarbridge.yml").exists())
@@ -895,7 +927,7 @@ class SettingsManagerTest(unittest.TestCase):
             self.assertEqual(0.15, dmr_to_p25["system"]["p25EncodePresenceGain"])
             self.assertEqual(2700.0, dmr_to_p25["system"]["p25EncodeHighCutHz"])
             self.assertEqual(7, dmr_to_p25["system"]["vocoderDecoderUvQuality"])
-            self.assertEqual([["dvmfne", "dmr-to-p25"]], restarter.calls)
+            self.assertEqual([["dmr-to-p25"]], restarter.calls)
             self.assertTrue(
                 (Path(result["backup"]) / "dvmbridge-dmr-to-p25.yml").exists()
             )
@@ -932,7 +964,7 @@ class SettingsManagerTest(unittest.TestCase):
             )
             self.assertEqual(2.4, p25_to_dmr["system"]["txAudioGain"])
             self.assertEqual(2300.0, p25_to_dmr["system"]["dmrEncodeHighCutHz"])
-            self.assertEqual([["dvmfne", "p25-to-dmr"]], restarter.calls)
+            self.assertEqual([["p25-to-dmr", "brew-audio"]], restarter.calls)
 
     def test_audio_change_is_rejected_during_recent_radio_activity(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -998,7 +1030,7 @@ class SettingsManagerTest(unittest.TestCase):
             self.assertTrue(result["changed"])
             self.assertEqual(1_200, bridge["routing"]["dynamicTimeoutSeconds"])
             self.assertEqual(1_200, result["settings"]["dynamicTimeoutSeconds"])
-            self.assertEqual([["quantarbridge"]], restarter.calls)
+            self.assertEqual([["quantarbridge", "brew-audio"]], restarter.calls)
             self.assertEqual(
                 1_200, state.snapshot({})["talkgroups"]["dynamicTimeoutSeconds"]
             )

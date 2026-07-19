@@ -326,23 +326,23 @@
             <div class="audio-directions">
               <fieldset class="audio-direction">
                 <legend>
-                  <strong>DMR → P25</strong>
-                  <span>BrandMeister zum Quantar</span>
+                  <strong>BREW → P25</strong>
+                  <span>TETRAPACK / BrandMeister zum Quantar</span>
                 </legend>
                 <div class="audio-fields">
                   <label class="field field--explained">
                     <span>Eingangspegel</span>
-                    <small class="field__description">Verstärkung direkt nach dem DMR-Decoder. Zu hohe Werte können bereits hier Spitzen abschneiden.</small>
+                    <small class="field__description">Verstärkung des von BREW dekodierten PCM-Signals. Zu hohe Werte können bereits hier Spitzen abschneiden.</small>
                     <span class="number-unit"><input type="number" name="audioDmrP25Rx" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
                   </label>
                   <label class="field field--explained">
                     <span>Vocoder-Decoder</span>
-                    <small class="field__description">Interner DMR-Decoder-Pegel. Beeinflusst Grundlautstärke und Rauschanteil vor der weiteren Bearbeitung.</small>
+                    <small class="field__description">Interner PCM-Verarbeitungspegel vor dem P25-Encoder.</small>
                     <span class="number-unit"><input type="number" name="audioDmrP25Decoder" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
                   </label>
                   <label class="field field--explained">
                     <span>P25-Ausgangspegel</span>
-                    <small class="field__description">Letzter Hauptpegel vor dem P25-Vocoder. Das abgestimmte BM→P25-Profil verwendet 7,0.</small>
+                    <small class="field__description">Letzter Hauptpegel vor dem P25-Vocoder. Das abgestimmte BREW→P25-Profil verwendet 1,10.</small>
                     <span class="number-unit"><input type="number" name="audioDmrP25Tx" min="0" max="10" step="0.05" required inputmode="decimal"><small>×</small></span>
                   </label>
                   <label class="field field--explained">
@@ -352,15 +352,15 @@
                   </label>
                 </div>
                 <label class="toggle-field">
-                  <span><strong>Decoder-Automatik</strong><small>Gleicht wechselnde DMR-Eingangspegel im Vocoder aus; kann leise Passagen und Hintergrundrauschen anheben.</small></span>
+                  <span><strong>Decoder-Automatik</strong><small>Bleibt im abgestimmten BREW-PCM-Profil ausgeschaltet.</small></span>
                   <span class="toggle-control"><input type="checkbox" name="audioDmrP25DecoderAuto"><span aria-hidden="true"></span></span>
                 </label>
                 <details class="audio-advanced">
                   <summary>P25-Feinregelung</summary>
                   <div class="audio-fields">
                     <label class="field field--explained">
-                      <span>AMBE-Decoderqualität</span>
-                      <small class="field__description">Glättet stimmlose Sprachanteile wie S, F und Sch bereits beim DMR-Decoding. Das abgestimmte BM→P25-Profil verwendet Stufe 12.</small>
+                      <span>Decoderqualität</span>
+                      <small class="field__description">Qualitätsstufe der internen Sprachverarbeitung. Das abgestimmte BREW→P25-Profil verwendet Stufe 12.</small>
                       <span class="number-unit"><input type="number" name="audioDmrP25UvQuality" min="1" max="64" step="1" required inputmode="numeric"><small>Stufen</small></span>
                     </label>
                     <label class="field field--explained">
@@ -405,7 +405,7 @@
                     </label>
                   </div>
                   <label class="toggle-field toggle-field--nested">
-                    <span><strong>P25-Pegelautomatik</strong><small>Regelt unterschiedlich laute DMR-Gegenstationen auf einen gleichmäßigeren P25-Pegel.</small></span>
+                    <span><strong>P25-Pegelautomatik</strong><small>Regelt unterschiedlich laute BREW-Gegenstationen auf einen gleichmäßigeren P25-Pegel.</small></span>
                     <span class="toggle-control"><input type="checkbox" name="audioDmrP25Agc"><span aria-hidden="true"></span></span>
                   </label>
                 </details>
@@ -413,8 +413,8 @@
 
               <fieldset class="audio-direction">
                 <legend>
-                  <strong>P25 → DMR</strong>
-                  <span>Quantar zu BrandMeister</span>
+                  <strong>P25 → BREW</strong>
+                  <span>Quantar zu TETRAPACK / BrandMeister</span>
                 </legend>
                 <div class="audio-fields">
                   <label class="field field--explained">
@@ -424,12 +424,12 @@
                   </label>
                   <label class="field field--explained">
                     <span>Vocoder-Decoder</span>
-                    <small class="field__description">Interner P25-Decoder-Pegel. Zu hohe Werte können kräftige Funkgeräte bereits vor dem DMR-Weg übersteuern.</small>
+                    <small class="field__description">Interner P25-Decoder-Pegel. Zu hohe Werte können kräftige Funkgeräte bereits vor dem BREW-Weg übersteuern.</small>
                     <span class="number-unit"><input type="number" name="audioP25DmrDecoder" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
                   </label>
                   <label class="field field--explained">
-                    <span>DMR-Ausgangspegel</span>
-                    <small class="field__description">Letzter PCM-Pegel vor dem DMR-Vocoder. Hauptregler für die Lautstärke im BrandMeister-Netz.</small>
+                    <span>BREW-Ausgangspegel</span>
+                    <small class="field__description">PCM-Pegel vor dem TETRA-Codec. Hauptregler für die Lautstärke im BREW- und BrandMeister-Netz.</small>
                     <span class="number-unit"><input type="number" name="audioP25DmrTx" min="0" max="5" step="0.05" required inputmode="decimal"><small>×</small></span>
                   </label>
                   <label class="field field--explained">
@@ -443,11 +443,11 @@
                   <span class="toggle-control"><input type="checkbox" name="audioP25DmrDecoderAuto"><span aria-hidden="true"></span></span>
                 </label>
                 <details class="audio-advanced">
-                  <summary>DMR-Feinregelung</summary>
+                  <summary>BREW-Feinregelung</summary>
                   <div class="audio-fields">
                     <label class="field field--explained">
-                      <span>DMR-Hochtonfilter</span>
-                      <small class="field__description">Dämpft Zischen und kratzige Spitzen vor dem AMBE-Encoder. 0 schaltet den Filter aus; das abgestimmte P25→BM-Profil verwendet 2500 Hz.</small>
+                      <span>Hochtonfilter</span>
+                      <small class="field__description">Kompatibilitätswert des PCM-Profils; der produktive BREW-Codec verwendet den unveränderten getesteten Sprachpfad.</small>
                       <span class="number-unit"><input type="number" name="audioP25DmrHighCut" min="0" max="3500" step="100" required inputmode="numeric"><small>Hz</small></span>
                     </label>
                   </div>

@@ -31,6 +31,7 @@ systemctl status \
   dvmhost.service \
   dvmbridge-p25-to-dmr.service \
   dvmbridge-dmr-to-p25.service \
+  tetrapack-brew-audio.service \
   quantarbridge.service \
   quantar-dashboard.service
 ```
@@ -41,6 +42,7 @@ Follow logs with:
 journalctl -fu dvmhost.service
 journalctl -fu dvmfne.service
 journalctl -fu quantarbridge.service
+tail -F /home/quantar/quantar-runtime/log/tetrapack-brew-audio.log
 ```
 
 ## First Voice Test
@@ -60,26 +62,24 @@ stability first, then compare the same source audio in both directions.
 
 ## Audio Controls
 
-The dashboard exposes separate settings for P25-to-DMR and DMR-to-P25.
+The dashboard exposes separate settings for P25-to-BREW and BREW-to-P25.
 Changes that require a service restart are accepted only after 15 seconds of
 continuous radio-channel idle time. This prevents a short gap within a QSO from
-being mistaken for a safe restart window. Audio changes also reset the local
-FNE router first and then reconnect the affected transcoder, so stale peer
-routing cannot leave either direction silently disconnected. Both DVMBridge
-units also follow every direct `dvmfne.service` restart through systemd.
+being mistaken for a safe restart window. Audio changes restart only the
+affected stateless PCM bridge and, when its gain changed, the BREW audio worker.
+They do not restart DVMFNE or DVMHost, so APX registrations remain intact.
 
 | Setting | Effect |
 | --- | --- |
 | `rxAudioGain` | Input level before the direction-specific decode path |
 | `vocoderDecoderAudioGain` | Level after vocoder decoding |
 | `vocoderDecoderAutoGain` | Automatic decoder gain; can pump on noisy sources |
-| `vocoderDecoderUvQuality` | mbelib synthesis quality for unvoiced DMR speech; higher values can reduce metallic sibilants at additional CPU cost |
+| `vocoderDecoderUvQuality` | Internal decoder synthesis quality |
 | `txAudioGain` | Final level into the destination encoder/RF path |
 | `vocoderEncoderAudioGain` | Level immediately before vocoder encoding |
-| `p25EncodePresenceGain` | DMR-to-P25 high-frequency emphasis; excessive values can sound scratchy |
-| `p25EncodeHighCutHz` | Optional DMR-to-P25 low-pass before IMBE; `0` disables it |
-| `dmrEncodeHighCutHz` | Optional P25-to-DMR low-pass before AMBE; `0` disables it |
-| `p25EncodeAgcPeakLimit` | Absolute DMR-to-P25 PCM ceiling after final gain, with or without AGC |
+| `p25EncodePresenceGain` | BREW-to-P25 high-frequency emphasis; excessive values can sound scratchy |
+| `p25EncodeHighCutHz` | Optional BREW-to-P25 low-pass before IMBE; `0` disables it |
+| `p25EncodeAgcPeakLimit` | Absolute BREW-to-P25 PCM ceiling after final gain, with or without AGC |
 | `dropTimeMs` | Tail time before a call is released |
 
 Raise one gain at a time. If peaks become scratchy while average loudness is
@@ -87,21 +87,19 @@ correct, reduce the last gain before the encoder and use a smaller upstream
 increase. Different subscriber microphones can still produce different peak
 levels.
 
-The shipped DMR-to-P25 baseline is the known-good profile tuned on the reference
-Quantar installation: `rxAudioGain: 0.3`, `vocoderDecoderAudioGain: 0.4`,
-decoder AGC off, `vocoderDecoderUvQuality: 12`, `txAudioGain: 7.0`,
+The shipped BREW-to-P25 baseline is the known-good profile tuned on the reference
+Quantar installation: worker `downlinkGain: 1.0`, `rxAudioGain: 0.3`,
+`vocoderDecoderAudioGain: 0.4`, decoder AGC off,
+`vocoderDecoderUvQuality: 12`, `txAudioGain: 1.10`,
 `vocoderEncoderAudioGain: 0.0`, presence boost off, a `2500 Hz` high-cut,
 P25 AGC off, and a final peak limit of `24000`. Keep these values together when
-restoring the baseline; changing one stage can move clipping or artifacts into
-the next codec stage. The dashboard therefore permits a final DMR-to-P25 output
-gain up to `10.0`; the opposite direction remains limited to `5.0`.
+restoring the baseline; changing one stage can move clipping into the next codec.
 
-The shipped P25-to-DMR baseline is likewise tuned on the reference installation:
+The shipped P25-to-BREW baseline is likewise tuned on the reference installation:
 `rxAudioGain: 1.0`, `vocoderDecoderAudioGain: 0.4`, decoder AGC off,
-`vocoderDecoderUvQuality: 3`, `txAudioGain: 2.0`,
-`vocoderEncoderAudioGain: 0.0`, and a `2500 Hz` DMR high-cut. The lower decoder
-gain provides headroom before its integer PCM clipping stage; the final gain
-restores the required BrandMeister level after decoding.
+`vocoderDecoderUvQuality: 3`, and worker `uplinkGain: 2.0` with a PCM ceiling of
+`24000`. The lower decoder gain provides headroom before the TETRA encoder; the
+worker gain restores the required network level after P25 decoding.
 
 ## TMS Test Sequence
 
@@ -159,10 +157,9 @@ Only local P25 RF activity refreshes the timer. The log records `Updated dynamic
 TG ... from RF activity`; incoming BrandMeister traffic must not move the expiry.
 The dashboard expiry follows the most recent RF timestamp.
 
-Ordinary dynamic expiry restarts only the stateless DMR-to-P25 bridge. It must
-not restart `dvmhost`, because that would discard APX packet-data sessions.
-`quantar-static-recover.path` is the sole expiry-event handler; it clears the
-BrandMeister dynamic route before the configured static route is ensured.
+Ordinary dynamic expiry sends a BREW de-affiliation and updates
+`dynamic_routes.state`; it does not restart a service. The legacy direct-audio
+recovery timers and `quantar-static-recover.path` stay disabled.
 
 ## Backups
 

@@ -44,6 +44,7 @@ struct BMConfig {
     uint32_t repeaterId {123456U};
     std::string password;
     std::string transport {"brandmeister"};
+    bool voiceEnabled {true};
     std::string address {"2622.master.brandmeister.network"};
     uint16_t port {62031U};
     uint16_t localPort {62032U};

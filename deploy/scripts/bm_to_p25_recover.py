@@ -6,6 +6,18 @@ import sys
 import time
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from runtime_config import read_brandmeister_voice_enabled
+
+
+def brew_audio_owns_voice(config_path):
+    if not config_path.exists():
+        return False
+    return not read_brandmeister_voice_enabled(config_path)
+
 
 def run(command):
     return subprocess.run(
@@ -59,7 +71,12 @@ def main():
     parser.add_argument("--cooldown-seconds", type=int, default=300)
     parser.add_argument("--stamp", type=Path, default=Path("/home/quantar/quantar-runtime/bm_to_p25_recover.stamp"))
     parser.add_argument("--min-interval", type=float, default=600.0)
+    parser.add_argument("--config", type=Path, default=Path("/home/quantar/quantar-runtime/quantarbridge.yml"))
     args = parser.parse_args()
+
+    if brew_audio_owns_voice(args.config):
+        print("skip=tetrapack-brew-audio-owns-voice")
+        return 0
 
     if throttle_active(args.stamp, args.min_interval):
         print("skip=throttled")

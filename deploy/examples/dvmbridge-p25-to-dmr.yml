@@ -26,7 +26,7 @@ network:
   slot: 2
 
 system:
-  identity: BRIDGE-P25-DMR
+  identity: BRIDGE-P25-PCM-ONLY
   netId: BB800
   sysId: 001
   grantDemand: false
@@ -46,19 +46,19 @@ system:
     tekKeyId: 1
   localAudio: false
   voxSampleLevel: 80.0
-  dropTimeMs: 1200
+  dropTimeMs: 600
   detectAnalogMDC1200: false
   preambleLeaderTone: false
   preambleTone: 2175
   preambleLength: 200
   udpAudio: true
   udpMetadata: true
-  udpSendPort: 31012
+  udpSendPort: 31120
   udpSendAddress: "127.0.0.1"
-  udpReceivePort: 31012
+  udpReceivePort: 31122
   udpReceiveAddress: "127.0.0.1"
   udpRTPFrames: true
-  udpIgnoreRTPTiming: false
+  udpIgnoreRTPTiming: true
   udpRTPContinuousSeq: false
   udpUseULaw: false
   udpUsrp: false

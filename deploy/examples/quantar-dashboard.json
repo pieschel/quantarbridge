@@ -10,6 +10,8 @@
   "dmrGatewayConfig": "/home/quantar/quantar-runtime/DMRGateway.ini",
   "dmrToP25Config": "/home/quantar/quantar-runtime/dvmbridge-dmr-to-p25.yml",
   "p25ToDmrConfig": "/home/quantar/quantar-runtime/dvmbridge-p25-to-dmr.yml",
+  "brewAudioConfig": "/home/quantar/quantar-runtime/tetrapack-brew-audio.json",
+  "brewAudioStatusFile": "/home/quantar/quantar-runtime/brew-audio-status.json",
   "ridFile": "/home/quantar/quantar-runtime/rid_acl.dat",
   "backupDir": "/home/quantar/quantar-runtime/dashboard-backups",
   "bmApiKeyFile": "/home/quantar/quantar-runtime/bm_api.key",
@@ -34,21 +36,28 @@
     },
     {
       "id": "p25-to-dmr",
-      "label": "P25 nach DMR",
+      "label": "P25 nach BREW PCM",
       "unit": "dvmbridge-p25-to-dmr.service",
       "processMatch": "/home/quantar/src/dvmhost/build/dvmbridge -c /home/quantar/quantar-runtime/dvmbridge-p25-to-dmr.yml",
       "critical": true
     },
     {
       "id": "dmr-to-p25",
-      "label": "DMR nach P25",
+      "label": "BREW PCM nach P25",
       "unit": "dvmbridge-dmr-to-p25.service",
       "processMatch": "/home/quantar/src/dvmhost/build/dvmbridge -c /home/quantar/quantar-runtime/dvmbridge-dmr-to-p25.yml",
       "critical": true
     },
     {
+      "id": "brew-audio",
+      "label": "TETRAPACK BREW Audio",
+      "unit": "tetrapack-brew-audio.service",
+      "processMatch": "/home/quantar/quantarbridge/deploy/scripts/tetrapack_brew_audio.py --config /home/quantar/quantar-runtime/tetrapack-brew-audio.json",
+      "critical": true
+    },
+    {
       "id": "quantarbridge",
-      "label": "BrandMeister Bridge",
+      "label": "BrandMeister Datenbruecke",
       "unit": "quantarbridge.service",
       "processMatch": "/home/quantar/quantarbridge/build/quantarbridge /home/quantar/quantar-runtime/quantarbridge.yml",
       "critical": true
@@ -69,6 +78,10 @@
     "sms-bridge": {
       "type": "systemd",
       "unit": "tetrapack-brew-bridge.service"
+    },
+    "brew-audio": {
+      "type": "systemd",
+      "unit": "tetrapack-brew-audio.service"
     },
     "dvmhost": {
       "type": "systemd",

@@ -574,8 +574,9 @@ int main(int argc, char** argv)
         }
 
         ::LogInfoEx(LOG_HOST, "Starting quantarbridge using %s", configPath.c_str());
-        ::LogInfoEx(LOG_HOST, "BM transport=%s callsign=%s lat=%s lon=%s height=%s location=%s description=%s softwareId=%s packageId=%s slot1=%u slot2=%u",
+        ::LogInfoEx(LOG_HOST, "BM transport=%s voice=%s callsign=%s lat=%s lon=%s height=%s location=%s description=%s softwareId=%s packageId=%s slot1=%u slot2=%u",
             config.bm.transport.c_str(),
+            config.bm.voiceEnabled ? "direct" : "disabled (TETRAPACK BREW audio)",
             config.bm.callsign.c_str(), config.bm.latitude.c_str(), config.bm.longitude.c_str(), config.bm.height.c_str(),
             config.bm.location.c_str(), config.bm.description.c_str(), config.bm.softwareId.c_str(), config.bm.packageId.c_str(),
             config.bm.slot1 ? 1U : 0U, config.bm.slot2 ? 1U : 0U);
@@ -658,7 +659,7 @@ int main(int argc, char** argv)
                 dynamicTalkgroups.emplace(entry.first, state);
                 ::LogInfoEx(LOG_HOST, "Restored dynamic TG %u from persisted state", entry.first);
             }
-        } else {
+        } else if (config.bm.voiceEnabled) {
             std::error_code ec;
             std::filesystem::remove(dynamicStatePath, ec);
         }
@@ -901,6 +902,11 @@ int main(int argc, char** argv)
                 ::LogDebug(LOG_HOST, "FNE->BM DMR frame srcId=%u dstId=%u slot=%u type=%u private=%u len=%u",
                     data.getSrcId(), data.getDstId(), slotNo, static_cast<uint32_t>(data.getDataType()), isPrivate ? 1U : 0U, length);
 
+                if (!config.bm.voiceEnabled && !isPrivate) {
+                    ::LogDebug(LOG_HOST, "Suppressing direct FNE->BM group voice/control; TETRAPACK BREW owns audio");
+                    continue;
+                }
+
                 if (!gatewayManagedRouting && !config.routing.allowPrivateCalls && isPrivate && !isDmrPacketDataFrame(data)) {
                     ::LogInfoEx(LOG_HOST, "Dropping private DMR voice/control frame on uplink srcId=%u dstId=%u slot=%u type=%u",
                         data.getSrcId(), data.getDstId(), slotNo, static_cast<uint32_t>(data.getDataType()));
@@ -1068,6 +1074,10 @@ int main(int argc, char** argv)
             dmr::data::NetData inbound;
             for (uint32_t inboundPackets = 0U; inboundPackets < kMaxBmPacketsPerLoop && bm.read(inbound); ++inboundPackets) {
                 const bool isPrivate = inbound.getFLCO() != FLCO::GROUP;
+                if (!config.bm.voiceEnabled && !isPrivate) {
+                    ::LogDebug(LOG_HOST, "Suppressing direct BM->FNE group voice/control; TETRAPACK BREW owns audio");
+                    continue;
+                }
                 bool mappedInboundTalkgroup = false;
                 if (gatewayManagedRouting && !isPrivate && inbound.getSlotNo() == 2U && inbound.getDstId() == 9U) {
                     const uint32_t dynamicTalkgroup = selectActiveDynamicTalkgroup(dynamicTalkgroups, now, dynamicTimeout);

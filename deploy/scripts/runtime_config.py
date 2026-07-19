@@ -61,6 +61,13 @@ def read_brandmeister_device(config_path: Path) -> tuple[int, int]:
     return device_id, 0 if device_id > 999_999 else timeslot
 
 
+def read_brandmeister_voice_enabled(config_path: Path, default: bool = True) -> bool:
+    text = config_path.read_text(encoding="utf-8")
+    return _parse_bool(
+        _section_scalar(text, "brandmeister", "voiceEnabled"), default=default
+    )
+
+
 def read_static_talkgroups(config_path: Path) -> list[int]:
     text = config_path.read_text(encoding="utf-8")
     lines = _section_lines(text, "routing")

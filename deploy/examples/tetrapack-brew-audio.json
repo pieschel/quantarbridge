@@ -1,0 +1,30 @@
+{
+  "enabled": true,
+  "existingBrewConfig": "/home/quantar/quantar-runtime/tetrapack-brew-bridge.json",
+  "existingBrewModule": "/home/quantar/quantarbridge/deploy/scripts/tetrapack_brew_bridge.py",
+  "quantarbridgeConfig": "/home/quantar/quantar-runtime/quantarbridge.yml",
+  "codecLibrary": "/home/quantar/src/tetra-codec/build/libtetra-codec.so",
+  "statusFile": "/home/quantar/quantar-runtime/brew-audio-status.json",
+  "logFile": "/home/quantar/quantar-runtime/log/tetrapack-brew-audio.log",
+  "dynamicStateFile": "/home/quantar/quantar-runtime/dynamic_routes.state",
+  "observedIssisFile": "/home/quantar/quantar-runtime/brew-audio-observed-issis.json",
+  "dvmhostLogDir": "/home/quantar/quantar-runtime/log",
+  "localIssis": [],
+  "p25PcmInput": {
+    "address": "127.0.0.1",
+    "port": 31120
+  },
+  "p25PcmOutput": {
+    "address": "127.0.0.1",
+    "port": 31121
+  },
+  "jitterFrames": 4,
+  "rebufferFrames": 2,
+  "uplinkInitialFrames": 6,
+  "uplinkInactivityMs": 420,
+  "uplinkGain": 2.0,
+  "downlinkGain": 1.0,
+  "uplinkPeakLimit": 24000,
+  "downlinkPeakLimit": 24000,
+  "userAgent": "quantarbridge-brew-audio/1"
+}

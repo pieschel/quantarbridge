@@ -13,7 +13,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from runtime_config import read_brandmeister_device
+from runtime_config import read_brandmeister_device, read_brandmeister_voice_enabled
 
 ALWAYS_SEND_PEERS = []
 INCLUSION_PEERS = [9000110, 9000111, 9000101, 9000112]
@@ -25,6 +25,10 @@ LOCAL_PEER_CONFIGS = (
     ("quantarbridge.yml", ("fne", "peerId")),
     ("dvmbridge-dmr-to-p25.yml", ("network", "id")),
 )
+
+
+def brew_audio_owns_voice(config_path: Path) -> bool:
+    return not read_brandmeister_voice_enabled(config_path)
 
 SMS_CONFIG_BLOCK = """
 sms:
@@ -327,8 +331,10 @@ def main() -> int:
     }
     print(json.dumps(summary, separators=(",", ":")))
 
-    if changed and args.restart:
+    if changed and args.restart and not brew_audio_owns_voice(args.quantarbridge_config):
         restart_services(args.restart)
+    elif changed and args.restart:
+        print("restart_skipped=tetrapack-brew-audio-hot-reload")
 
     return 0
 

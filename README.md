@@ -1,8 +1,9 @@
 # QuantarBridge
 
 QuantarBridge connects a Motorola Quantar in P25 conventional mode to
-BrandMeister. It combines a patched DVMHost/DVMFNE stack, two DVMBridge audio
-paths, a native BrandMeister client, Motorola APX packet-data services, and a
+BrandMeister through the TETRAPACK BREW interface. It combines a patched
+DVMHost/DVMFNE stack, two PCM-facing DVMBridge processes, a TETRA speech codec,
+a separate BrandMeister packet-data client, Motorola APX data services, and a
 local operations dashboard.
 
 This repository contains no station credentials, operator data, packet
@@ -11,14 +12,14 @@ a separate runtime directory outside Git.
 
 ## Features
 
-- Bidirectional P25/DMR voice through a Quantar DFSI/V.24 connection
+- Bidirectional P25/TETRA voice through BREW and a Quantar DFSI/V.24 connection
 - Configurable P25 to BrandMeister talkgroup mapping
 - Static and dynamic BrandMeister talkgroups with configurable expiry
 - Per-direction audio gain, AGC, and timing controls
 - Motorola APX conventional packet-data registration (ARS/SCEP)
 - APX Text Messaging Service (TMS), local delivery, and BrandMeister routing
 - Motorola LRRP polling and forwarding toward BrandMeister APRS
-- Optional TETRAPACK BREW transport for compatible messaging services
+- TETRAPACK BREW voice, affiliation, and compatible messaging transport
 - Dashboard for registrations, positions, active calls, talkgroups, and service state
 - Authenticated administration for network, mapping, audio, GPS, and timeout settings
 
@@ -35,11 +36,13 @@ Motorola APX / P25 RF
           |
         dvmfne
        /      \
-P25->DMR      DMR->P25
+ P25->PCM      PCM->P25
        \      /
-      quantarbridge
+  BREW audio bridge
           |
-     BrandMeister
+ TETRAPACK / BrandMeister
+
+Native BrandMeister client -------- TMS / LRRP / APRS data only
 ```
 
 The DVMHost modifications are distributed as
@@ -68,6 +71,7 @@ sudo ./scripts/install.sh \
   --bm-id 123456 \
   --bm-callsign N0CALL \
   --bm-master 2622.master.brandmeister.network \
+  --brew-username 123456 \
   --rx-frequency 430800000 \
   --tx-frequency 438800000 \
   --serial-port /dev/ttyUSB0
@@ -91,4 +95,6 @@ by Motorola Solutions or BrandMeister.
 
 GPL-2.0-only. The DVMHost patch retains the upstream copyright notices and is
 distributed under the same license. Leaflet keeps its own license under
-`dashboard/static/vendor/leaflet/LICENSE`.
+`dashboard/static/vendor/leaflet/LICENSE`. The installer downloads the pinned
+external `tetra-codec` source from its upstream repository; it is not vendored
+here and remains subject to its upstream notices and terms.

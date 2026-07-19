@@ -17,6 +17,7 @@ fne:
 
 brandmeister:
   transport: "brandmeister"
+  voiceEnabled: false
   repeaterId: 123456
   password: "BRANDMEISTER_PASSWORD"
   address: "2622.master.brandmeister.network"

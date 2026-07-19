@@ -90,6 +90,10 @@ if(BUILD_TESTING)
   if(Python3_Interpreter_FOUND)
     add_test(NAME tetrapack_brew_bridge
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tetrapack_brew_bridge_test.py")
+    add_test(NAME tetrapack_brew_audio
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tetrapack_brew_audio_test.py")
+    add_test(NAME enable_brew_audio
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/enable_brew_audio_test.py")
     add_test(NAME quantar_dashboard
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard_test.py")
     add_test(NAME bm_static_sync

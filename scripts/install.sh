@@ -3,15 +3,18 @@
 set -euo pipefail
 
 DVMHOST_COMMIT="01979084df9fc6a5737fac9efb213430268377c9"
+TETRA_CODEC_COMMIT="21d884064478d63306ec654378e666ae41503d00"
 SERVICE_USER="quantar"
 INSTALL_DIR="/home/${SERVICE_USER}/quantarbridge"
 RUNTIME_DIR="/home/${SERVICE_USER}/quantar-runtime"
 DVMHOST_DIR="/home/${SERVICE_USER}/src/dvmhost"
+TETRA_CODEC_DIR="/home/${SERVICE_USER}/src/tetra-codec"
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 BM_ID=""
 BM_CALLSIGN=""
 BM_MASTER=""
+BREW_USERNAME=""
 RX_FREQUENCY=""
 TX_FREQUENCY=""
 SERIAL_PORT="/dev/ttyUSB0"
@@ -38,6 +41,7 @@ Required:
   --bm-id ID                 Six-digit BrandMeister repeater ID
   --bm-callsign CALLSIGN     Callsign assigned to the repeater
   --bm-master HOSTNAME       BrandMeister master hostname
+  --brew-username USERNAME   TETRAPACK BREW username assigned to this bridge
   --rx-frequency HZ          Repeater receive frequency in Hz
   --tx-frequency HZ          Repeater transmit frequency in Hz
 
@@ -73,6 +77,7 @@ while [[ $# -gt 0 ]]; do
     --bm-id) require_value "$@"; BM_ID="$2"; shift 2 ;;
     --bm-callsign) require_value "$@"; BM_CALLSIGN="$2"; shift 2 ;;
     --bm-master) require_value "$@"; BM_MASTER="$2"; shift 2 ;;
+    --brew-username) require_value "$@"; BREW_USERNAME="$2"; shift 2 ;;
     --rx-frequency) require_value "$@"; RX_FREQUENCY="$2"; shift 2 ;;
     --tx-frequency) require_value "$@"; TX_FREQUENCY="$2"; shift 2 ;;
     --serial-port) require_value "$@"; SERIAL_PORT="$2"; shift 2 ;;
@@ -100,7 +105,7 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-for value in BM_ID BM_CALLSIGN BM_MASTER RX_FREQUENCY TX_FREQUENCY; do
+for value in BM_ID BM_CALLSIGN BM_MASTER BREW_USERNAME RX_FREQUENCY TX_FREQUENCY; do
   if [[ -z "${!value}" ]]; then
     echo "Missing required option for ${value}." >&2
     usage >&2
@@ -167,6 +172,7 @@ CONFIGURE_ARGS=(
   --bm-id "${BM_ID}"
   --bm-callsign "${BM_CALLSIGN}"
   --bm-master "${BM_MASTER}"
+  --brew-username "${BREW_USERNAME}"
   --rx-frequency "${RX_FREQUENCY}"
   --tx-frequency "${TX_FREQUENCY}"
   --serial-port "${SERIAL_PORT}"
@@ -212,6 +218,21 @@ runuser -u "${SERVICE_USER}" -- cmake \
   -DENABLE_SETUP_TUI=0
 runuser -u "${SERVICE_USER}" -- cmake --build "${DVMHOST_DIR}/build" --parallel "$(nproc)"
 
+if [[ -e "${TETRA_CODEC_DIR}" && "${FORCE}" -ne 1 ]]; then
+  echo "${TETRA_CODEC_DIR} already exists; rerun with --force only after backing it up." >&2
+  exit 1
+fi
+if [[ -e "${TETRA_CODEC_DIR}" ]]; then
+  rm -rf --one-file-system "${TETRA_CODEC_DIR}"
+fi
+runuser -u "${SERVICE_USER}" -- git clone https://github.com/outerplane/tetra-codec.git "${TETRA_CODEC_DIR}"
+runuser -u "${SERVICE_USER}" -- git -C "${TETRA_CODEC_DIR}" checkout --detach "${TETRA_CODEC_COMMIT}"
+runuser -u "${SERVICE_USER}" -- cmake \
+  -S "${TETRA_CODEC_DIR}" \
+  -B "${TETRA_CODEC_DIR}/build" \
+  -DCMAKE_BUILD_TYPE=Release
+runuser -u "${SERVICE_USER}" -- cmake --build "${TETRA_CODEC_DIR}/build" --parallel "$(nproc)"
+
 runuser -u "${SERVICE_USER}" -- cmake \
   -S "${INSTALL_DIR}" \
   -B "${INSTALL_DIR}/build" \
@@ -239,7 +260,10 @@ if [[ -n "${BM_API_KEY}" ]]; then
   chmod 0600 "${RUNTIME_DIR}/bm_api.key"
 fi
 
-install -m 0644 "${INSTALL_DIR}"/deploy/*.service /etc/systemd/system/
+for service_file in "${INSTALL_DIR}"/deploy/*.service; do
+  [[ "${service_file}" == *.user.service ]] && continue
+  install -m 0644 "${service_file}" /etc/systemd/system/
+done
 install -m 0644 "${INSTALL_DIR}"/deploy/*.timer /etc/systemd/system/
 install -m 0644 "${INSTALL_DIR}"/deploy/*.path /etc/systemd/system/
 
@@ -250,11 +274,17 @@ quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart dvmbridge-p25-to-dmr.ser
 quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart dvmbridge-dmr-to-p25.service
 quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart quantarbridge.service
 quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart tetrapack-brew-bridge.service
+quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart tetrapack-brew-audio.service
 EOF
 chmod 0440 /etc/sudoers.d/quantarbridge-dashboard
 visudo -cf /etc/sudoers.d/quantarbridge-dashboard
 
 systemctl daemon-reload
+systemctl disable --now \
+  quantar-static-recover.path \
+  dmr-to-p25-recover.timer \
+  bm-to-p25-recover.timer \
+  ensure-static-tg.timer 2>/dev/null || true
 CORE_UNITS=(
   dvmfne.service
   dvmhost.service
@@ -262,6 +292,7 @@ CORE_UNITS=(
   dvmbridge-dmr-to-p25.service
   quantarbridge.service
   tetrapack-brew-bridge.service
+  tetrapack-brew-audio.service
   quantar-dashboard.service
 )
 systemctl enable --now "${CORE_UNITS[@]}"
@@ -269,15 +300,10 @@ systemctl enable --now "${CORE_UNITS[@]}"
 if [[ -n "${BM_API_KEY}" ]]; then
   systemctl enable --now \
     bm-static-sync.timer \
-    bm-static-guard.timer \
-    ensure-static-tg.timer \
-    quantar-static-recover.path
+    bm-static-guard.timer
 fi
 if [[ "${ENABLE_WATCHDOGS}" -eq 1 ]]; then
-  systemctl enable --now \
-    dvmhost-recover.timer \
-    dmr-to-p25-recover.timer \
-    bm-to-p25-recover.timer
+  systemctl enable --now dvmhost-recover.timer
 fi
 
 unset BM_PASSWORD DASHBOARD_PASSWORD DASHBOARD_PASSWORD_CONFIRM BM_API_KEY

@@ -1,5 +1,5 @@
 [Unit]
-Description=DVM Bridge P25 to DMR
+Description=DVM Bridge P25 to PCM for TETRAPACK BREW
 After=network-online.target dvmfne.service
 Wants=network-online.target
 Requires=dvmfne.service

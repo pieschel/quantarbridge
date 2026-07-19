@@ -1,0 +1,13 @@
+[Unit]
+Description=Quantar P25 audio bridge to TETRAPACK BREW (user service)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/quantar/quantarbridge
+ExecStart=/usr/bin/python3 /home/quantar/quantarbridge/deploy/scripts/tetrapack_brew_audio.py --config /home/quantar/quantar-runtime/tetrapack-brew-audio.json
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

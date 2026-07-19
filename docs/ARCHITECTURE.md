@@ -6,9 +6,10 @@
 | --- | --- |
 | `dvmhost` | Terminates Quantar DFSI/V.24 and owns P25 RF, ARS, TMS, and LRRP state |
 | `dvmfne` | Local fixed-network core and peer router |
-| `dvmbridge-p25-to-dmr` | Decodes P25 voice and emits the DMR-side audio stream |
-| `dvmbridge-dmr-to-p25` | Encodes BrandMeister downlink audio for P25 RF |
-| `quantarbridge` | BrandMeister protocol, call routing, talkgroup mapping, and packet-data transport |
+| `dvmbridge-p25-to-dmr` | Compatibility unit name for the P25-to-PCM decoder |
+| `dvmbridge-dmr-to-p25` | Compatibility unit name for the PCM-to-P25 encoder |
+| `tetrapack_brew_audio.py` | TETRA codec, BREW group calls, affiliations, mapping, and dynamic routes |
+| `quantarbridge` | Native BrandMeister session for packet data and management; group voice disabled |
 | `tetrapack_brew_bridge.py` | Optional TMS queue adapter and BREW transport |
 | `dashboard/app.py` | Read-only operations view plus authenticated administration |
 
@@ -26,8 +27,8 @@ substitute for an assigned BrandMeister repeater ID:
 | `9000100` | DVMFNE master |
 | `9000101` | QuantarBridge peer |
 | `9000110` | DVMHost peer |
-| `9000111` | P25 to DMR bridge |
-| `9000112` | DMR to P25 bridge |
+| `9000111` | P25 to PCM bridge |
+| `9000112` | PCM to P25 bridge |
 | `9000199` | Internal transcoder source fallback |
 
 These local IDs are part of the public defaults and therefore must match
@@ -47,11 +48,15 @@ example IDs from tests or documentation on air.
 
 ## Voice Routing
 
-P25 RF calls enter `dvmhost`, traverse `dvmfne`, and are decoded by the
-P25-to-DMR bridge. `quantarbridge` sends the resulting DMR stream to
-BrandMeister. Downlink follows the reverse route through the DMR-to-P25 bridge.
-Both DVMBridge services are tied to `dvmfne.service`; an FNE restart must restart
-and reconnect both directions before traffic resumes.
+P25 RF calls enter `dvmhost`, traverse `dvmfne`, and are decoded to 8 kHz PCM.
+`tetrapack_brew_audio.py` encodes that PCM with the pinned TETRA codec and sends
+a BREW group call. Downlink follows the reverse route from BREW/TETRA to PCM and
+then through the P25 encoder. No AMBE/DMR codec remains in the group-voice path.
+
+The native `quantarbridge` BrandMeister connection stays logged in for private
+packet data, TMS, LRRP/APRS, device metadata, and dashboard integration. Its
+`brandmeister.voiceEnabled` setting is `false`, preventing duplicate group
+audio and loops.
 
 `routing.talkgroupMappings` is bidirectional. Example:
 
@@ -67,10 +72,10 @@ call to `262000` is transmitted on P25 TG `101`.
 
 ## Dynamic Talkgroups
 
-An outgoing P25 group call creates a dynamic BrandMeister route. The route
-expires after `routing.dynamicTimeoutSeconds`. P25 TG `4000` is the default
-disconnect command. Static subscriptions are synchronized from the configured
-BrandMeister device profile.
+An outgoing P25 group call creates a BREW affiliation and dynamic route. The
+route expires after `routing.dynamicTimeoutSeconds`. P25 TG `4000` is the
+default disconnect command. Static affiliations are synchronized from the
+configured BrandMeister device profile.
 
 The static-sync job rebuilds the FNE group-voice rule from the peer IDs in the
 four active runtime YAML files. Example peer IDs must never be written over a
@@ -127,8 +132,8 @@ under `deploy/examples`; do not run services directly from those templates.
 | Port | Scope | Purpose |
 | --- | --- | --- |
 | `62031/UDP` | loopback + outbound | Local FNE and BrandMeister protocol |
-| `31011/UDP` | loopback | DMR to P25 audio/metadata |
-| `31012/UDP` | loopback | P25 to DMR audio/metadata |
+| `31120/UDP` | loopback | P25 decoder PCM to BREW audio worker |
+| `31121/UDP` | loopback | BREW audio worker PCM to P25 encoder |
 | `4005/UDP` | loopback | Host ARS packet-data adapter |
 | `4007/UDP` | loopback | Host TMS packet-data adapter |
 | `4015/UDP` | loopback | QuantarBridge ARS input |
