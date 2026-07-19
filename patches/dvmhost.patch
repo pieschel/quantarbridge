@@ -603,12 +603,20 @@ index 93c5d083..f6877924 100644
              m_network->resetP25();
              return;
          }
-@@ -153,7 +335,7 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -153,7 +335,15 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
  
          // is this a new call stream?
          uint16_t callKID = 0U;
 -        if (m_network->getP25StreamId() != m_rxStreamId && ((duid != DUID::TDU) && (duid != DUID::TDULC)) && !m_callInProgress) {
 +        if (currentStreamId != m_rxStreamId && ((duid != DUID::TDU) && (duid != DUID::TDULC)) && !m_callInProgress) {
++            if (p25PcmOnlyBridge) {
++                delete m_decoder;
++                m_decoder = new vocoder::MBEDecoder(vocoder::DECODE_88BIT_IMBE);
++                m_decoder->setGainAdjust(m_vocoderDecoderAudioGain);
++                m_decoder->setAutoGain(m_vocoderDecoderAutoGain);
++                m_decoder->setUvQuality((int)m_vocoderDecoderUvQuality);
++            }
++
              m_callInProgress = true;
              m_callAlgoId = ALGO_UNENCRYPT;
  

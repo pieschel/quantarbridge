@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 from pathlib import Path
 
 
@@ -222,6 +223,20 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             "rejected_class=0xf1 rejected_type=3",
             AUDIO.brew_error_reason(rejected),
         )
+        call_uuid = uuid.UUID("cd8be847-0a18-4a41-85ea-421afc4a081a")
+        restricted = (
+            bytes((AUDIO.BREW_CLASS_ERROR, AUDIO.BREW_TYPE_RESTRICTED))
+            + call_uuid.bytes_le
+            + b"\x01\x02\x03"
+        )
+        self.assertEqual(
+            "call_uuid=cd8be847-0a18-4a41-85ea-421afc4a081a detail=010203",
+            AUDIO.brew_error_reason(restricted),
+        )
+
+    def test_pcm_rms_reports_measured_signal_level(self):
+        self.assertEqual(0.0, AUDIO.pcm_rms(0, 0))
+        self.assertEqual(1000.0, AUDIO.pcm_rms(2_000_000, 2))
 
     def test_subscriber_refresh_reregisters_and_reaffiliates_known_radios(self):
         class FakeTransport:
@@ -264,7 +279,7 @@ class TetrapackBrewAudioTest(unittest.TestCase):
                 bridge.status.data["counters"]["brewSubscriberRefreshes"],
             )
 
-    def test_restricted_brew_response_resets_the_transport(self):
+    def test_restricted_brew_response_is_scoped_to_the_call(self):
         class FakeTransport:
             def __init__(self):
                 self.closed = False
@@ -287,10 +302,10 @@ class TetrapackBrewAudioTest(unittest.TestCase):
 
             bridge._on_brew_binary(frame)
 
-            self.assertTrue(bridge.transport.closed)
+            self.assertFalse(bridge.transport.closed)
             self.assertEqual(
                 1,
-                bridge.status.data["counters"]["brewRestrictedReconnects"],
+                bridge.status.data["counters"]["brewRestrictedCalls"],
             )
 
     def test_dvm_rtp_round_trip_keeps_radio_and_talkgroup_metadata(self):

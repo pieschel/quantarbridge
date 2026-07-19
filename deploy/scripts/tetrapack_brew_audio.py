@@ -95,10 +95,25 @@ def brew_error_reason(frame: bytes) -> str:
         BREW_CLASS_FRAME,
     }:
         return f"rejected_class=0x{raw[0]:02x} rejected_type={raw[1]}"
+    text_prefix = raw.split(b"\x00", 1)[0]
+    if len(text_prefix) >= 3 and all(0x20 <= value < 0x7F for value in text_prefix):
+        return "".join(
+            character if character.isprintable() else "?"
+            for character in raw.decode("utf-8", errors="replace")
+        )[:160]
+    if len(raw) >= 16:
+        detail = raw[16:].hex() or "none"
+        return f"call_uuid={uuid_text(raw[:16])} detail={detail}"
     return "".join(
         character if character.isprintable() else "?"
         for character in raw.decode("utf-8", errors="replace")
     )[:160]
+
+
+def pcm_rms(sum_squares: int, sample_count: int) -> float:
+    if sample_count <= 0:
+        return 0.0
+    return math.sqrt(sum_squares / sample_count)
 
 
 def get_packed_bit(data: bytes, bit_index: int) -> int:
@@ -856,6 +871,9 @@ class UplinkCall:
     encoder: CodecHandle
     pcm_samples: list[int] = field(default_factory=list)
     voice_frames: int = 0
+    pcm_peak: int = 0
+    pcm_sum_squares: int = 0
+    pcm_sample_count: int = 0
 
 
 @dataclass
@@ -871,6 +889,9 @@ class DownlinkCall:
     ended: bool = False
     started: bool = False
     underruns: int = 0
+    pcm_peak: int = 0
+    pcm_sum_squares: int = 0
+    pcm_sample_count: int = 0
 
 
 @dataclass
@@ -1289,9 +1310,7 @@ class BrewAudioBridge:
                 reason,
             )
             if message_type == BREW_TYPE_RESTRICTED:
-                self.status.increment("brewRestrictedReconnects")
-                logging.warning("Resetting BREW session after restricted server response")
-                self.transport.close_socket()
+                self.status.increment("brewRestrictedCalls")
             return
         if message_class == BREW_CLASS_FRAME and message_type == FRAME_TYPE_SDS_REPORT:
             self.status.increment("brewSmsReportsReceived")
@@ -1582,6 +1601,9 @@ class BrewAudioBridge:
             next_due += 0.020
 
             samples = list(struct.unpack("<160h", frame.pcm))
+            active.pcm_peak = max(active.pcm_peak, max(abs(value) for value in samples))
+            active.pcm_sum_squares += sum(value * value for value in samples)
+            active.pcm_sample_count += len(samples)
             active.pcm_samples.extend(samples)
             if len(active.pcm_samples) >= TETRA_SAMPLES_60MS:
                 block = active.pcm_samples[:TETRA_SAMPLES_60MS]
@@ -1655,8 +1677,26 @@ class BrewAudioBridge:
         self.transport.send(build_group_idle(call.call_uuid))
         self.owned_uuids[call.call_uuid] = time.monotonic() + 10.0
         call.encoder.close()
-        logging.info("P25 uplink call idle uuid=%s frames=%u", uuid_text(call.call_uuid), call.voice_frames)
-        self.status.set(activeUplink=None)
+        rms = pcm_rms(call.pcm_sum_squares, call.pcm_sample_count)
+        logging.info(
+            "P25 uplink call idle uuid=%s frames=%u pcm_peak=%u pcm_rms=%.1f",
+            uuid_text(call.call_uuid),
+            call.voice_frames,
+            call.pcm_peak,
+            rms,
+        )
+        self.status.set(
+            activeUplink=None,
+            lastUplinkAudio={
+                "source": call.source,
+                "p25Talkgroup": call.p25_destination,
+                "brewTalkgroup": call.brew_destination,
+                "voiceFrames": call.voice_frames,
+                "pcmPeak": call.pcm_peak,
+                "pcmRms": round(rms, 1),
+                "endedAt": utc_now(),
+            },
+        )
 
     def _downlink_loop(self) -> None:
         next_due = 0.0
@@ -1723,6 +1763,9 @@ class BrewAudioBridge:
             self.status.increment("downlinkDecodeFailures")
             return
         samples = scale_pcm(samples, self.config.downlink_gain, self.config.downlink_peak_limit)
+        call.pcm_peak = max(call.pcm_peak, max(abs(value) for value in samples))
+        call.pcm_sum_squares += sum(value * value for value in samples)
+        call.pcm_sample_count += len(samples)
         block_start = time.monotonic()
         for index in range(3):
             if self.stop_event.is_set():
@@ -1752,11 +1795,25 @@ class BrewAudioBridge:
         self.downlink_calls.pop(call.call_uuid, None)
         if self.active_downlink_uuid == call.call_uuid:
             self.active_downlink_uuid = None
-        self.status.set(activeDownlink=None)
+        rms = pcm_rms(call.pcm_sum_squares, call.pcm_sample_count)
+        self.status.set(
+            activeDownlink=None,
+            lastDownlinkAudio={
+                "source": call.source,
+                "brewTalkgroup": call.brew_destination,
+                "p25Talkgroup": call.p25_destination,
+                "pcmPeak": call.pcm_peak,
+                "pcmRms": round(rms, 1),
+                "underruns": call.underruns,
+                "endedAt": utc_now(),
+            },
+        )
         logging.info(
-            "BREW downlink playout complete uuid=%s underruns=%u",
+            "BREW downlink playout complete uuid=%s underruns=%u pcm_peak=%u pcm_rms=%.1f",
             uuid_text(call.call_uuid),
             call.underruns,
+            call.pcm_peak,
+            rms,
         )
 
     def _expire_owned_uuids(self) -> None:
