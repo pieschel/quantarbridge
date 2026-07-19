@@ -2,9 +2,11 @@
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Iterable, List
@@ -24,6 +26,11 @@ LOCAL_PEER_CONFIGS = (
     ("dvmbridge-p25-to-dmr.yml", ("network", "id")),
     ("quantarbridge.yml", ("fne", "peerId")),
     ("dvmbridge-dmr-to-p25.yml", ("network", "id")),
+)
+
+STATIC_TALKGROUPS_BLOCK_RE = re.compile(
+    r"(?m)^  staticTalkgroups:[^\r\n]*(?:\r?\n|$)"
+    r"(?:^[ \t]{2,}-[^\r\n]*(?:\r?\n|$))*"
 )
 
 
@@ -107,7 +114,25 @@ def write_text_if_changed(path: Path, new_text: str) -> bool:
     if current_text == new_text:
         return False
 
-    path.write_text(new_text, encoding="utf-8")
+    metadata = path.stat() if path.exists() else None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(new_text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if metadata is not None:
+            os.chmod(temporary, metadata.st_mode & 0o777)
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                os.chown(temporary, metadata.st_uid, metadata.st_gid)
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
     return True
 
 
@@ -122,11 +147,7 @@ def ensure_talkgroup_mappings(text: str) -> str:
     if re.search(r"(?m)^  talkgroupMappings\s*:", text):
         return text
 
-    static_pattern = re.compile(
-        r"(?m)^  staticTalkgroups:[^\r\n]*\r?\n"
-        r"(?:^    - [^\r\n]*(?:\r?\n|$))*"
-    )
-    match = static_pattern.search(text)
+    match = STATIC_TALKGROUPS_BLOCK_RE.search(text)
     if not match:
         raise RuntimeError("Could not find routing.staticTalkgroups for talkgroup mappings")
     return text[:match.end()] + "  talkgroupMappings: []\n" + text[match.end():]
@@ -143,13 +164,9 @@ def read_configured_api_slot(path: Path) -> int:
 def update_quantarbridge_config(path: Path, static_talkgroups: Iterable[int]) -> bool:
     current_text = path.read_text(encoding="utf-8")
     replacement = format_static_talkgroups_block(static_talkgroups)
-    pattern = re.compile(
-        r"(?m)^  staticTalkgroups:[^\r\n]*\r?\n"
-        r"(?:^    - [^\r\n]*(?:\r?\n|$))*"
-    )
-    if not pattern.search(current_text):
+    if not STATIC_TALKGROUPS_BLOCK_RE.search(current_text):
         raise RuntimeError(f"Could not find routing.staticTalkgroups in {path}")
-    updated_text = pattern.sub(replacement, current_text, count=1)
+    updated_text = STATIC_TALKGROUPS_BLOCK_RE.sub(replacement, current_text, count=1)
     updated_text = ensure_talkgroup_mappings(updated_text)
     if not re.search(r"(?m)^sms:\s*$", updated_text):
         updated_text = updated_text.rstrip() + "\n\n" + SMS_CONFIG_BLOCK + "\n"

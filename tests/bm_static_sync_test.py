@@ -58,6 +58,31 @@ sms:
         updated = SYNC.ensure_talkgroup_mappings(source)
         self.assertIn("  talkgroupMappings: []\n", updated)
 
+    def test_sync_repairs_legacy_same_indent_talkgroup_item(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "quantarbridge.yml"
+            path.write_text(
+                """brandmeister:
+  repeaterId: 123456
+routing:
+  staticTalkgroups:
+    - 262001
+  - 262001
+  talkgroupMappings:
+    - p25: 101
+      brandmeister: 262000
+sms:
+  enabled: true
+""",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(SYNC.update_quantarbridge_config(path, [262001]))
+            updated = path.read_text(encoding="utf-8")
+            self.assertEqual(1, updated.count("    - 262001\n"))
+            self.assertNotIn("\n  - 262001\n", updated)
+            self.assertIn("    - p25: 101\n", updated)
+
     def test_repeater_profile_is_filtered_to_configured_timeslot(self):
         payload = {
             "staticSubscriptions": [
