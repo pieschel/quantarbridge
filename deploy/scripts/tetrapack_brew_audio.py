@@ -360,7 +360,7 @@ class AudioConfig:
         )
         runtime = yaml.safe_load(quantarbridge_config.read_text(encoding="utf-8")) or {}
         routing = runtime.get("routing", {}) or {}
-        mappings = raw.get("talkgroupMappings", routing.get("talkgroupMappings", []))
+        mappings = routing.get("talkgroupMappings", raw.get("talkgroupMappings", []))
         p25_to_brew: dict[int, int] = {}
         brew_to_p25: dict[int, int] = {}
         for item in mappings:
@@ -377,7 +377,7 @@ class AudioConfig:
 
         static_groups = {
             int(value)
-            for value in raw.get("staticTalkgroups", routing.get("staticTalkgroups", []))
+            for value in routing.get("staticTalkgroups", raw.get("staticTalkgroups", []))
         }
         if any(group < 1 or group > 0xFFFFFF for group in static_groups):
             raise ValueError("staticTalkgroups values must be between 1 and 16777215")
@@ -386,7 +386,7 @@ class AudioConfig:
         if any(issi < 1 or issi > 0xFFFFFF for issi in local_issis):
             raise ValueError("localIssis values must be between 1 and 16777215")
         disconnect_talkgroup = int(
-            raw.get("disconnectTalkgroup", routing.get("disconnectTalkgroup", 4000))
+            routing.get("disconnectTalkgroup", raw.get("disconnectTalkgroup", 4000))
         )
         if not 1 <= disconnect_talkgroup <= 0xFFFFFF:
             raise ValueError("disconnectTalkgroup must be between 1 and 16777215")
@@ -413,7 +413,7 @@ class AudioConfig:
             static_brew_groups=static_groups,
             dynamic_timeout_seconds=max(
                 10,
-                int(raw.get("dynamicTimeoutSeconds", routing.get("dynamicTimeoutSeconds", 600))),
+                int(routing.get("dynamicTimeoutSeconds", raw.get("dynamicTimeoutSeconds", 600))),
             ),
             disconnect_talkgroup=disconnect_talkgroup,
             pcm_input=PcmInputConfig(
@@ -462,12 +462,12 @@ class TalkgroupRouter:
         return self.config.p25_to_brew.get(p25_talkgroup, p25_talkgroup)
 
     def p25_for_brew(self, brew_talkgroup: int) -> int | None:
+        if not self.is_active(brew_talkgroup):
+            return None
         mapped = self.config.brew_to_p25.get(brew_talkgroup)
         if mapped is not None:
             return mapped
-        if brew_talkgroup in self.config.static_brew_groups or brew_talkgroup in self.dynamic:
-            return brew_talkgroup
-        return None
+        return brew_talkgroup
 
     def activate(self, brew_talkgroup: int, now_monotonic: float, now_epoch: float) -> bool:
         if self.is_static(brew_talkgroup):
@@ -502,10 +502,13 @@ class TalkgroupRouter:
         return cleared
 
     def groups(self) -> list[int]:
-        return sorted(self.config.static_brew_groups | set(self.config.brew_to_p25) | set(self.dynamic))
+        return sorted(self.config.static_brew_groups | set(self.dynamic))
 
     def is_static(self, brew_talkgroup: int) -> bool:
-        return brew_talkgroup in self.config.static_brew_groups or brew_talkgroup in self.config.brew_to_p25
+        return brew_talkgroup in self.config.static_brew_groups
+
+    def is_active(self, brew_talkgroup: int) -> bool:
+        return self.is_static(brew_talkgroup) or brew_talkgroup in self.dynamic
 
     def snapshot(self) -> list[dict[str, int | float | str]]:
         return [
@@ -1313,6 +1316,14 @@ class BrewAudioBridge:
         with self.router_lock:
             p25_destination = self.router.p25_for_brew(destination)
         if p25_destination is None:
+            self.ignored_downlink_uuids.add(call_uuid)
+            self.status.increment("unsubscribedDownlinkCalls")
+            logging.info(
+                "Ignoring BREW downlink for unsubscribed TG uuid=%s src=%u brew_tg=%u",
+                uuid_text(call_uuid),
+                source,
+                destination,
+            )
             return
         with self.local_issis_lock:
             local_issis = set(self.local_issis)

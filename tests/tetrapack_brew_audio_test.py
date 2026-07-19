@@ -37,7 +37,7 @@ def make_config(root: Path):
         local_issis=[],
         p25_to_brew={999: 983872},
         brew_to_p25={983872: 999},
-        static_brew_groups={983872},
+        static_brew_groups={262},
         dynamic_timeout_seconds=600,
         disconnect_talkgroup=4000,
         pcm_input=AUDIO.PcmInputConfig("127.0.0.1", 31120),
@@ -46,6 +46,44 @@ def make_config(root: Path):
 
 
 class TetrapackBrewAudioTest(unittest.TestCase):
+    def test_runtime_routing_overrides_stale_audio_config_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "quantarbridge.yml").write_text(
+                "routing:\n"
+                "  staticTalkgroups: [262]\n"
+                "  talkgroupMappings:\n"
+                "    - p25: 999\n"
+                "      brandmeister: 26291\n"
+                "  dynamicTimeoutSeconds: 900\n"
+                "  disconnectTalkgroup: 4001\n",
+                encoding="utf-8",
+            )
+            audio_config = {
+                "existingBrewConfig": "brew.json",
+                "existingBrewModule": "brew.py",
+                "quantarbridgeConfig": "quantarbridge.yml",
+                "codecLibrary": "libtetra-codec.so",
+                "statusFile": "status.json",
+                "logFile": "audio.log",
+                "p25PcmInput": {"port": 31120},
+                "p25PcmOutput": {"port": 31121},
+                "staticTalkgroups": [983872],
+                "talkgroupMappings": [{"p25": 999, "brew": 983872}],
+                "dynamicTimeoutSeconds": 600,
+                "disconnectTalkgroup": 4000,
+            }
+            path = root / "audio.json"
+            path.write_text(json.dumps(audio_config), encoding="utf-8")
+
+            config = AUDIO.AudioConfig.load(path)
+
+            self.assertEqual({262}, config.static_brew_groups)
+            self.assertEqual({999: 26291}, config.p25_to_brew)
+            self.assertEqual({26291: 999}, config.brew_to_p25)
+            self.assertEqual(900, config.dynamic_timeout_seconds)
+            self.assertEqual(4001, config.disconnect_talkgroup)
+
     def test_inbound_brew_sds_is_queued_for_registered_p25_radio(self):
         test_case = self
 
@@ -183,16 +221,42 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             (1000001, 999, 42, True, pcm), AUDIO.parse_dvm_rtp(packet)
         )
 
-    def test_explicit_mapping_is_static_and_identity_route_is_dynamic(self):
+    def test_mapping_is_only_routable_while_statically_or_dynamically_subscribed(self):
         with tempfile.TemporaryDirectory() as directory:
             config = make_config(Path(directory))
             router = AUDIO.TalkgroupRouter(config)
             self.assertEqual(983872, router.brew_for_p25(999))
+            self.assertIsNone(router.p25_for_brew(983872))
+            self.assertEqual(262, router.p25_for_brew(262))
+            self.assertEqual([262], router.groups())
+
+            self.assertTrue(router.activate(983872, 10.0, 1000.0))
             self.assertEqual(999, router.p25_for_brew(983872))
-            self.assertFalse(router.activate(983872, 10.0, 1000.0))
             self.assertTrue(router.activate(26291, 20.0, 1010.0))
             self.assertEqual(26291, router.p25_for_brew(26291))
-            self.assertEqual([26291, 983872], router.groups())
+            self.assertEqual([262, 26291, 983872], router.groups())
+
+            self.assertEqual([983872], router.expire(611.0))
+            self.assertIsNone(router.p25_for_brew(983872))
+            self.assertEqual([262, 26291], router.groups())
+
+    def test_unsubscribed_mapped_downlink_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bridge = object.__new__(AUDIO.BrewAudioBridge)
+            bridge.router = AUDIO.TalkgroupRouter(make_config(root))
+            bridge.router_lock = threading.Lock()
+            bridge.ignored_downlink_uuids = set()
+            bridge.status = AUDIO.AtomicStatus(root / "status.json")
+
+            call_uuid = bytes.fromhex("8aa5b78d6053f04f929dcf20b578cdce")
+            bridge._start_or_update_downlink(call_uuid, 1000001, 983872)
+
+            self.assertIn(call_uuid, bridge.ignored_downlink_uuids)
+            self.assertEqual(
+                1,
+                bridge.status.data["counters"]["unsubscribedDownlinkCalls"],
+            )
 
     def test_dynamic_route_is_only_extended_by_explicit_activation(self):
         with tempfile.TemporaryDirectory() as directory:
