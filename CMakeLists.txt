@@ -106,5 +106,7 @@ if(BUILD_TESTING)
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantar_static_recover_test.py")
     add_test(NAME bm_to_p25_recover
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/bm_to_p25_recover_test.py")
+    add_test(NAME dvmhost_patch
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dvmhost_patch_test.py")
   endif()
 endif()

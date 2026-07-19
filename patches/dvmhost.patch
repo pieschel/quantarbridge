@@ -3251,7 +3251,7 @@ index dd868c47..d8d470fa 100644
  
  using namespace p25;
  using namespace p25::defines;
-@@ -27,8 +31,1372 @@ using namespace p25::data;
+@@ -27,8 +31,1373 @@ using namespace p25::data;
  using namespace p25::sndcp;
  using namespace p25::packet;
  
@@ -3297,6 +3297,7 @@ index dd868c47..d8d470fa 100644
 +// This keeps every RF fragment in the Quantar's proven header/end V.24 path.
 +constexpr size_t kMotorolaTmsP25FragmentBytes = 76U;
 +constexpr uint32_t kMotorolaTmsP25FragmentGapMs = 300U;
++constexpr uint32_t kMotorolaTmsP25FragmentAckTimeoutMs = 5000U;
 +constexpr uint32_t kMotorolaTmsApplicationAckTimeoutMs = 15000U;
 +constexpr uint32_t kMotorolaTmsServiceFallbackDelayMs = 2800U;
 +constexpr uint32_t kMotorolaTmsServiceRetryDelayMs = 5000U;
@@ -4624,7 +4625,7 @@ index dd868c47..d8d470fa 100644
  
  // ---------------------------------------------------------------------------
  //  Constants
-@@ -132,16 +1500,98 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -132,16 +1501,99 @@ bool Data::process(uint8_t* data, uint32_t len)
                          m_rfAssembler->dataHeader.getFormat(), m_rfAssembler->dataHeader.getResponseClass(), m_rfAssembler->dataHeader.getResponseType(), m_rfAssembler->dataHeader.getResponseStatus(),
                          m_rfAssembler->dataHeader.getLLId(), m_rfAssembler->dataHeader.getSrcLLId());
  
@@ -4691,6 +4692,7 @@ index dd868c47..d8d470fa 100644
 +                        if (ackSession->second.pendingTmsFragmentAck &&
 +                            ackSession->second.pendingTmsFragmentNs == m_rfAssembler->dataHeader.getResponseStatus()) {
 +                            ackSession->second.pendingTmsFragmentAck = false;
++                            ackSession->second.pendingTmsFragmentAckMs = 0U;
 +                            ackSession->second.pendingTmsFragmentIndex++;
 +                            if (ackSession->second.pendingTmsFragmentIndex < ackSession->second.pendingTmsFragments.size()) {
 +                                ackSession->second.pendingTmsFragmentDelayMs = kMotorolaTmsP25FragmentGapMs;
@@ -5825,7 +5827,7 @@ index dd868c47..d8d470fa 100644
  }
  
  /* Process a data frame from the network. */
-@@ -464,128 +2901,827 @@ bool Data::processNetwork(uint8_t* data, uint32_t len, uint8_t currentBlock, uin
+@@ -464,128 +2903,830 @@ bool Data::processNetwork(uint8_t* data, uint32_t len, uint8_t currentBlock, uin
                                                      m_netAssembler->dataHeader.getLLId(), m_netAssembler->dataHeader.getResponseStatus());
                                                  break;
  
@@ -6331,6 +6333,7 @@ index dd868c47..d8d470fa 100644
 +    session->second.pendingTmsFragmentIndex = 0U;
 +    session->second.pendingTmsFragmentAck = false;
 +    session->second.pendingTmsFragmentNs = 0U;
++    session->second.pendingTmsFragmentAckMs = 0U;
 +    session->second.pendingTmsMessageId = messageId;
 +    session->second.pendingTmsFragmentDelayMs = 0U;
 +    session->second.pendingTmsApplicationAckMs = 0U;
@@ -6399,6 +6402,7 @@ index dd868c47..d8d470fa 100644
 +
 +    session->second.pendingTmsFragmentAck = true;
 +    session->second.pendingTmsFragmentNs = ns;
++    session->second.pendingTmsFragmentAckMs = kMotorolaTmsP25FragmentAckTimeoutMs;
 +    return true;
 +}
  
@@ -6410,6 +6414,7 @@ index dd868c47..d8d470fa 100644
 +    session.pendingTmsFragmentIndex = 0U;
 +    session.pendingTmsFragmentAck = false;
 +    session.pendingTmsFragmentNs = 0U;
++    session.pendingTmsFragmentAckMs = 0U;
 +    session.pendingTmsMessageId = 0U;
 +    session.pendingTmsFragmentDelayMs = 0U;
 +    session.pendingTmsApplicationAckMs = 0U;
@@ -6748,7 +6753,7 @@ index dd868c47..d8d470fa 100644
  }
  
  /* Helper to write user data as a P25 PDU packet. */
-@@ -688,11 +3824,267 @@ void Data::clock(uint32_t ms)
+@@ -688,11 +3829,299 @@ void Data::clock(uint32_t ms)
              }
          }
      }
@@ -6788,7 +6793,39 @@ index dd868c47..d8d470fa 100644
 +            }
 +        }
 +
-+        if (session.pendingTmsFragments.empty() || session.pendingTmsFragmentAck) {
++        if (session.pendingTmsFragments.empty()) {
++            continue;
++        }
++
++        if (session.pendingTmsFragmentAck) {
++            if (session.pendingTmsFragmentAckMs > ms) {
++                session.pendingTmsFragmentAckMs -= ms;
++            } else if (m_p25->m_rfState == RS_RF_LISTENING &&
++                m_retryPDUData != nullptr && m_retryPDUBitLength > 0U) {
++                if (m_retryCount < MAX_PDU_RETRY_CNT) {
++                    m_p25->writeRF_Preamble();
++                    writeRF_PDU(m_retryPDUData, m_retryPDUBitLength, false, true);
++                    m_retryCount++;
++                    session.pendingTmsFragmentAckMs = kMotorolaTmsP25FragmentAckTimeoutMs;
++                    LogWarning(LOG_RF, P25_PDU_STR ", Motorola TMS fragment acknowledgement timed out; retrying, llId = %u, messageId = %u, fragment = %u/%u, attempt = %u",
++                        entry.first, session.pendingTmsMessageId,
++                        static_cast<uint32_t>(session.pendingTmsFragmentIndex + 1U),
++                        static_cast<uint32_t>(session.pendingTmsFragments.size()),
++                        static_cast<uint32_t>(m_retryCount + 1U));
++                } else {
++                    delete[] m_retryPDUData;
++                    m_retryPDUData = nullptr;
++                    m_retryPDUBitLength = 0U;
++                    m_retryCount = 0U;
++                    LogWarning(LOG_RF, P25_PDU_STR ", Motorola TMS fragment acknowledgement timed out; aborting delivery, llId = %u, messageId = %u, fragment = %u/%u",
++                        entry.first, session.pendingTmsMessageId,
++                        static_cast<uint32_t>(session.pendingTmsFragmentIndex + 1U),
++                        static_cast<uint32_t>(session.pendingTmsFragments.size()));
++                    resetMotorolaTmsInboundDelivery(session);
++                }
++            } else {
++                session.pendingTmsFragmentAckMs = kMotorolaTmsP25OutboxPollMs;
++            }
 +            continue;
 +        }
 +
@@ -7250,7 +7287,7 @@ index 6c550270..c9d733c8 100644
              /**
               * @brief Helper to determine if the logical link ID has been SNDCP initialized.
               * @param llId Logical Link ID.
-@@ -151,12 +152,76 @@ namespace p25
+@@ -151,12 +152,77 @@ namespace p25
              uint8_t* m_netPduUserData;
              uint32_t m_netPduUserDataLength;
  
@@ -7304,6 +7341,7 @@ index 6c550270..c9d733c8 100644
 +                size_t pendingTmsFragmentIndex {0U};
 +                bool pendingTmsFragmentAck {false};
 +                uint8_t pendingTmsFragmentNs {0U};
++                uint32_t pendingTmsFragmentAckMs {0U};
 +                uint8_t pendingTmsMessageId {0U};
 +                uint32_t pendingTmsFragmentDelayMs {0U};
 +                uint32_t pendingTmsApplicationAckMs {0U};
