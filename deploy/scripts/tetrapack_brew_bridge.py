@@ -66,6 +66,7 @@ class BridgeConfig:
     error_dir: Path
     p25_outbox_dir: Path | None = None
     service_route_dir: Path | None = None
+    brew_audio_outbox_dir: Path | None = None
     poll_interval_seconds: float = 0.25
     service_route_max_age_seconds: int = 900
     local_loop_enabled: bool = False
@@ -220,6 +221,45 @@ class BrewClient:
         return frames
 
 
+class BrewAudioQueueClient:
+    """Queue SDS commands for the audio worker that owns the BREW session."""
+
+    def __init__(self, outbox_dir: Path) -> None:
+        self.outbox_dir = outbox_dir
+
+    def send_sms(self, source_rid: int, target_rid: int, text: str) -> dict[str, Any]:
+        created_at_ms = time.time_ns() // 1_000_000
+        command_id = f"{created_at_ms:013d}-{source_rid}-{target_rid}-{uuid.uuid4().hex}"
+        path = self.outbox_dir / f"{command_id}.json"
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(
+                {
+                    "commandId": command_id,
+                    "createdAtMs": created_at_ms,
+                    "sourceRid": source_rid,
+                    "targetRid": target_rid,
+                    "text": text,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(path)
+        return {
+            "status": "sent",
+            "delivery": "queued_on_active_brew_session",
+            "commandId": command_id,
+            "commandPath": str(path),
+            "sourceRid": source_rid,
+            "targetRid": target_rid,
+            "text": text,
+        }
+
+
 class BitWriter:
     def __init__(self) -> None:
         self._bits: list[int] = []
@@ -326,6 +366,11 @@ def load_config(path: Path) -> BridgeConfig:
         error_dir=Path(raw.get("errorDir", "/home/quantar/quantar-runtime/sms/error")),
         p25_outbox_dir=Path(raw.get("p25OutboxDir", outbox_dir.parent / "p25-outbox")),
         service_route_dir=Path(raw.get("serviceRouteDir", outbox_dir.parent / "service-routes")),
+        brew_audio_outbox_dir=(
+            Path(raw["brewAudioOutboxDir"])
+            if raw.get("brewAudioOutboxDir")
+            else None
+        ),
         poll_interval_seconds=float(raw.get("pollIntervalSeconds", 0.25)),
         service_route_max_age_seconds=max(60, int(raw.get("serviceRouteMaxAgeSeconds", 900))),
         local_loop_enabled=bool(raw.get("localLoopEnabled", False)),
@@ -387,6 +432,8 @@ def ensure_dirs(config: BridgeConfig) -> None:
     config.p25_outbox_dir.mkdir(parents=True, exist_ok=True)
     assert config.service_route_dir is not None
     config.service_route_dir.mkdir(parents=True, exist_ok=True)
+    if config.brew_audio_outbox_dir is not None:
+        config.brew_audio_outbox_dir.mkdir(parents=True, exist_ok=True)
 
 
 def write_outbox_message(
@@ -744,7 +791,11 @@ def main() -> int:
 
     config = load_config(args.config)
     ensure_dirs(config)
-    brew = BrewClient(config.brew)
+    brew = (
+        BrewAudioQueueClient(config.brew_audio_outbox_dir)
+        if config.brew_audio_outbox_dir is not None
+        else BrewClient(config.brew)
+    )
     pending_texts: dict[tuple[int, int], PendingText] = {}
 
     if args.once:

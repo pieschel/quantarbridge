@@ -3,6 +3,7 @@
   "outboxDir": "/home/quantar/quantar-runtime/sms/outbox",
   "p25OutboxDir": "/home/quantar/quantar-runtime/sms/p25-outbox",
   "serviceRouteDir": "/home/quantar/quantar-runtime/sms/service-routes",
+  "brewAudioOutboxDir": "/home/quantar/quantar-runtime/sms/brew-audio-outbox",
   "serviceRouteMaxAgeSeconds": 900,
   "processedDir": "/home/quantar/quantar-runtime/sms/processed",
   "errorDir": "/home/quantar/quantar-runtime/sms/error",

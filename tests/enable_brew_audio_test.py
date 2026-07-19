@@ -100,6 +100,15 @@ class EnableBrewAudioTest(unittest.TestCase):
             audio = json.loads((runtime / "tetrapack-brew-audio.json").read_text())
             self.assertEqual(2.0, audio["uplinkGain"])
             self.assertEqual(str(codec), audio["codecLibrary"])
+            self.assertEqual(
+                str(runtime / "sms" / "brew-audio-outbox"),
+                audio["smsCommandDir"],
+            )
+            brew = json.loads((runtime / "tetrapack-brew-bridge.json").read_text())
+            self.assertEqual(
+                str(runtime / "sms" / "brew-audio-outbox"),
+                brew["brewAudioOutboxDir"],
+            )
             dashboard = json.loads((legacy / "quantar-dashboard.json").read_text())
             self.assertIn("brew-audio", dashboard["restartTargets"])
             sms_config = runtime / "tetrapack-brew-bridge.json"

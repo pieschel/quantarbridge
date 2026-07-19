@@ -10,7 +10,7 @@
 | `dvmbridge-dmr-to-p25` | Compatibility unit name for the PCM-to-P25 encoder |
 | `tetrapack_brew_audio.py` | TETRA codec, BREW group calls, affiliations, mapping, and dynamic routes |
 | `quantarbridge` | Native BrandMeister session for packet data and management; group voice disabled |
-| `tetrapack_brew_bridge.py` | Optional TMS queue adapter and BREW transport |
+| `tetrapack_brew_bridge.py` | TMS queue adapter for local, BrandMeister packet-data, and BREW delivery |
 | `dashboard/app.py` | Read-only operations view plus authenticated administration |
 
 All internal network and UDP audio links use loopback by default. Only the
@@ -57,6 +57,11 @@ The native `quantarbridge` BrandMeister connection stays logged in for private
 packet data, TMS, LRRP/APRS, device metadata, and dashboard integration. Its
 `brandmeister.voiceEnabled` setting is `false`, preventing duplicate group
 audio and loops.
+
+TETRAPACK permits one Basestation session for the configured bridge ISSI. The
+audio worker owns that WebSocket. TMS requests for BREW services are written to
+`sms/brew-audio-outbox` and sent by the audio worker on the same session; the
+standalone TMS adapter must not open a competing BREW connection.
 
 `routing.talkgroupMappings` is bidirectional. Example:
 

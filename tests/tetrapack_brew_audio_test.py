@@ -1,7 +1,9 @@
 import importlib.util
+import json
 import struct
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -44,6 +46,63 @@ def make_config(root: Path):
 
 
 class TetrapackBrewAudioTest(unittest.TestCase):
+    def test_sms_command_is_sent_over_the_audio_transport(self):
+        class FakeBrewModule:
+            @staticmethod
+            def build_text_sds_type4_pdu(text, message_reference):
+                return text.encode("utf-8") + bytes((message_reference,))
+
+            @staticmethod
+            def build_brew_short_transfer(session_id, source, target):
+                return b"short"
+
+            @staticmethod
+            def build_brew_sds_transfer(session_id, payload):
+                return b"sds:" + payload
+
+            @staticmethod
+            def build_brew_call_release(session_id, cause=0):
+                return b"release"
+
+        class FakeTransport:
+            def __init__(self):
+                self.connected = threading.Event()
+                self.connected.set()
+                self.brew_module = FakeBrewModule
+                self.frames = []
+
+            def send_many(self, frames):
+                self.frames.append(frames)
+                return True
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = make_config(root)
+            config.sms_command_dir = root / "brew-audio-outbox"
+            config.sms_command_dir.mkdir()
+            command = config.sms_command_dir / "command.json"
+            command.write_text(
+                '{"sourceRid": 1000001, "targetRid": 262993, "text": "WX"}',
+                encoding="utf-8",
+            )
+            bridge = object.__new__(AUDIO.BrewAudioBridge)
+            bridge.config = config
+            bridge.transport = FakeTransport()
+            bridge.status = AUDIO.AtomicStatus(root / "status.json")
+            observed = []
+            bridge._ensure_local_issi = observed.append
+
+            self.assertTrue(bridge._process_sms_command(command))
+
+            self.assertEqual([1000001], observed)
+            self.assertEqual(b"short", bridge.transport.frames[0][0])
+            self.assertTrue(bridge.transport.frames[0][1].startswith(b"sds:WX"))
+            self.assertEqual(b"release", bridge.transport.frames[0][2])
+            self.assertFalse(command.exists())
+            results = list((root / "brew-audio-results").glob("*.json"))
+            self.assertEqual(1, len(results))
+            self.assertEqual("sent", json.loads(results[0].read_text())["status"])
+
     def test_pcm_scaling_uses_a_hard_symmetric_peak_limit(self):
         self.assertEqual(
             [-24000, -2000, 0, 2000, 24000],

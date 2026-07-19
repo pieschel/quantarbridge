@@ -329,6 +329,7 @@ class AudioConfig:
     disconnect_talkgroup: int
     pcm_input: PcmInputConfig
     pcm_output: PcmOutputConfig
+    sms_command_dir: Path | None = None
     jitter_frames: int = 4
     rebuffer_frames: int = 2
     uplink_initial_frames: int = 6
@@ -419,6 +420,11 @@ class AudioConfig:
             pcm_output=PcmOutputConfig(
                 str(raw["p25PcmOutput"].get("address", "127.0.0.1")),
                 int(raw["p25PcmOutput"]["port"]),
+            ),
+            sms_command_dir=(
+                resolve(str(raw["smsCommandDir"]))
+                if raw.get("smsCommandDir")
+                else None
             ),
             jitter_frames=max(2, int(raw.get("jitterFrames", 4))),
             rebuffer_frames=max(1, int(raw.get("rebufferFrames", 2))),
@@ -647,7 +653,7 @@ def discover_affiliation_anchor(log_dir: Path) -> int | None:
     return None
 
 
-def load_brew_dependencies(config: AudioConfig) -> tuple[Any, Any, Any, Any]:
+def load_brew_dependencies(config: AudioConfig) -> tuple[Any, Any, Any, Any, Any]:
     spec = importlib.util.spec_from_file_location("quantarbridge_brew_runtime", config.existing_brew_module)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load BREW module {config.existing_brew_module}")
@@ -660,7 +666,7 @@ def load_brew_dependencies(config: AudioConfig) -> tuple[Any, Any, Any, Any]:
         raise RuntimeError("BREW is disabled or its protected runtime credentials are unavailable")
     if module.requests is None or module.HTTPDigestAuth is None or module.websocket is None:
         raise RuntimeError("requests and websocket-client are required")
-    return brew, module.requests, module.HTTPDigestAuth, module.websocket
+    return brew, module, module.requests, module.HTTPDigestAuth, module.websocket
 
 
 class BrewTransport:
@@ -677,7 +683,13 @@ class BrewTransport:
         self.on_binary = on_binary
         self.on_connected = on_connected
         self.stop_event = stop_event
-        self.brew, self.requests, self.digest_auth, self.websocket = load_brew_dependencies(config)
+        (
+            self.brew,
+            self.brew_module,
+            self.requests,
+            self.digest_auth,
+            self.websocket,
+        ) = load_brew_dependencies(config)
         self.socket: Any | None = None
         self.send_lock = threading.Lock()
         self.thread = threading.Thread(target=self._run, name="brew-transport", daemon=True)
@@ -690,12 +702,16 @@ class BrewTransport:
         self.thread.join(timeout)
 
     def send(self, payload: bytes) -> bool:
+        return self.send_many([payload])
+
+    def send_many(self, payloads: list[bytes]) -> bool:
         with self.send_lock:
             ws = self.socket
             if ws is None or not self.connected.is_set():
                 return False
             try:
-                ws.send_binary(payload)
+                for payload in payloads:
+                    ws.send_binary(payload)
                 return True
             except Exception as exc:
                 logging.warning("BREW send failed: %s", type(exc).__name__)
@@ -906,6 +922,10 @@ class BrewAudioBridge:
             threading.Thread(target=self._routing_loop, name="talkgroup-routing", daemon=True),
             threading.Thread(target=self._status_loop, name="status-writer", daemon=True),
         ]
+        if self.config.sms_command_dir is not None:
+            self.threads.append(
+                threading.Thread(target=self._sms_command_loop, name="brew-sms-command", daemon=True)
+            )
 
     def start(self) -> None:
         logging.info(
@@ -1061,6 +1081,85 @@ class BrewAudioBridge:
             except OSError as exc:
                 logging.debug("ARS registration log follow failed: %s", exc)
 
+    def _process_sms_command(self, path: Path) -> bool:
+        if not self.transport.connected.is_set():
+            return False
+        command = json.loads(path.read_text(encoding="utf-8"))
+        source = int(command["sourceRid"])
+        target = int(command["targetRid"])
+        text = str(command["text"]).strip()
+        if not 1 <= source <= 0xFFFFFF or not 1 <= target <= 0xFFFFFF:
+            raise ValueError("SMS sourceRid and targetRid must fit in 24 bits")
+        if not text:
+            raise ValueError("SMS text must not be empty")
+
+        self._ensure_local_issi(source)
+        session_id = uuid.uuid4()
+        message_reference = int(time.time_ns() // 1_000_000) & 0xFF
+        payload = self.transport.brew_module.build_text_sds_type4_pdu(
+            text, message_reference
+        )
+        frames = [
+            self.transport.brew_module.build_brew_short_transfer(
+                session_id, source, target
+            ),
+            self.transport.brew_module.build_brew_sds_transfer(session_id, payload),
+        ]
+        release = self.transport.brew_module.build_brew_call_release(
+            session_id, cause=0
+        )
+        if release is not None:
+            frames.append(release)
+        if not self.transport.send_many(frames):
+            return False
+
+        assert self.config.sms_command_dir is not None
+        result_dir = self.config.sms_command_dir.parent / "brew-audio-results"
+        result_dir.mkdir(parents=True, exist_ok=True)
+        result_path = result_dir / path.name
+        temporary = result_path.with_suffix(result_path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(
+                {
+                    **command,
+                    "status": "sent",
+                    "sentAt": utc_now(),
+                    "sessionId": str(session_id),
+                    "messageReference": message_reference,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(result_path)
+        path.unlink(missing_ok=True)
+        self.status.increment("brewSmsCommandsSent")
+        logging.info("BREW SMS sent on shared session src=%u dst=%u", source, target)
+        return True
+
+    def _sms_command_loop(self) -> None:
+        assert self.config.sms_command_dir is not None
+        command_dir = self.config.sms_command_dir
+        error_dir = command_dir.parent / "brew-audio-errors"
+        command_dir.mkdir(parents=True, exist_ok=True)
+        error_dir.mkdir(parents=True, exist_ok=True)
+        while not self.stop_event.wait(0.1):
+            for path in sorted(command_dir.glob("*.json")):
+                try:
+                    if not self._process_sms_command(path):
+                        break
+                except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    destination = error_dir / path.name
+                    if path.exists():
+                        path.replace(destination)
+                    error_path = error_dir / f"{path.stem}.error.txt"
+                    error_path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+                    self.status.increment("invalidBrewSmsCommands")
+                    logging.warning("Rejected BREW SMS command %s: %s", path.name, exc)
+
     def _send_affiliation(self, message_type: int, groups: list[int]) -> None:
         if not groups or not self.transport.connected.is_set():
             return
@@ -1083,6 +1182,13 @@ class BrewAudioBridge:
             self.status.increment("brewServerErrors")
             self.status.set(lastError=f"brew_server_f3_type_{message_type}")
             logging.warning("BREW server returned F3 error type=%u length=%u", message_type, len(frame))
+            return
+        if (
+            message_class == BREW_CLASS_FRAME
+            and message_type
+            == getattr(self.transport.brew_module, "FRAME_TYPE_SDS_REPORT", -1)
+        ):
+            self.status.increment("brewSmsReportsReceived")
             return
         if len(frame) < 18:
             return

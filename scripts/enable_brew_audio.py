@@ -211,6 +211,7 @@ def migrate(args: argparse.Namespace) -> None:
         raise FileNotFoundError("missing runtime file(s): " + ", ".join(missing))
 
     brew = read_json(source_brew)
+    brew["brewAudioOutboxDir"] = str(runtime_dir / "sms" / "brew-audio-outbox")
     brew_settings = brew.get("brew", {})
     main = read_yaml(main_config)
     if not brew_settings.get("enabled") or not brew_settings.get("username"):
@@ -227,13 +228,13 @@ def migrate(args: argparse.Namespace) -> None:
     main.setdefault("brandmeister", {})["voiceEnabled"] = False
     write_yaml(main_config, main)
     update_audio_profiles(runtime_dir)
-    if source_brew != canonical_brew:
-        write_json(canonical_brew, brew)
+    write_json(canonical_brew, brew)
 
     audio_template = read_json(install_dir / "deploy" / "examples" / "tetrapack-brew-audio.json")
     audio = replace_paths(audio_template, runtime_dir, install_dir)
     audio["existingBrewConfig"] = str(canonical_brew)
     audio["codecLibrary"] = str(args.codec_library.resolve())
+    audio["smsCommandDir"] = str(runtime_dir / "sms" / "brew-audio-outbox")
     write_json(runtime_dir / "tetrapack-brew-audio.json", audio)
     if dashboard_path is not None:
         update_dashboard(dashboard_path, runtime_dir, install_dir)

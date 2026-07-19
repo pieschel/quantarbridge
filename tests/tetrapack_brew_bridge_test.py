@@ -46,6 +46,22 @@ class AuthenticationErrorBrewClient:
 
 
 class TetrapackBridgeTest(unittest.TestCase):
+    def test_audio_queue_client_uses_the_existing_brew_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outbox = Path(directory) / "brew-audio-outbox"
+            outbox.mkdir()
+            client = BRIDGE.BrewAudioQueueClient(outbox)
+
+            result = client.send_sms(1000001, 262993, "WX Grafing")
+
+            self.assertEqual("sent", result["status"])
+            commands = list(outbox.glob("*.json"))
+            self.assertEqual(1, len(commands))
+            command = json.loads(commands[0].read_text(encoding="utf-8"))
+            self.assertEqual(1000001, command["sourceRid"])
+            self.assertEqual(262993, command["targetRid"])
+            self.assertEqual("WX Grafing", command["text"])
+
     def test_endpoint_discovery_identifies_as_brew_basestation(self):
         response = mock.Mock(status_code=200, text="/brew/session")
         client = BRIDGE.BrewClient(

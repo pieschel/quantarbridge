@@ -9,6 +9,7 @@
   "dynamicStateFile": "/home/quantar/quantar-runtime/dynamic_routes.state",
   "observedIssisFile": "/home/quantar/quantar-runtime/brew-audio-observed-issis.json",
   "dvmhostLogDir": "/home/quantar/quantar-runtime/log",
+  "smsCommandDir": "/home/quantar/quantar-runtime/sms/brew-audio-outbox",
   "localIssis": [],
   "p25PcmInput": {
     "address": "127.0.0.1",
