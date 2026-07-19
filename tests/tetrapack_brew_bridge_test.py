@@ -57,6 +57,15 @@ class TetrapackBridgeTest(unittest.TestCase):
         self.assertEqual(session_id.bytes_le, report[2:18])
         self.assertEqual(b"\x08\x00\x00", report[18:])
 
+    def test_text_sds_type4_decodes_brandmeister_latin_9(self):
+        text = "Gr\u00fc\u00dfe \u20ac"
+        payload = bytes.fromhex("8200cf0d") + text.encode("iso8859_15")
+
+        self.assertEqual(
+            text,
+            BRIDGE.parse_text_sds_type4_pdu(payload, len(payload) * 8),
+        )
+
     def test_service_rids_prefer_service_only_config_key(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

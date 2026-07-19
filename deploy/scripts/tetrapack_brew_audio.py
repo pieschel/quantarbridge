@@ -1271,11 +1271,12 @@ class BrewAudioBridge:
         if not text:
             self.status.increment("unsupportedBrewSmsFrames")
             logging.warning(
-                "Unsupported BREW SDS payload uuid=%s src=%u dst=%u bits=%u",
+                "Unsupported BREW SDS payload uuid=%s src=%u dst=%u bits=%u data=%s",
                 uuid_text(call_uuid),
                 pending.source,
                 pending.destination,
                 length_bits,
+                payload.hex(),
             )
             return
 

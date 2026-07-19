@@ -50,6 +50,33 @@ DELIVERY_REPORT_RECEIVED = 0x1
 SERVICE_SELECTION_INDIVIDUAL = 0x0
 STORAGE_FORWARD_NONE = 0x0
 TEXT_CODING_UTF16BE = 0x1A
+TEXT_CODINGS_8BIT = {
+    0x01: "iso8859_1",
+    0x02: "iso8859_2",
+    0x03: "iso8859_3",
+    0x04: "iso8859_4",
+    0x05: "iso8859_5",
+    0x06: "iso8859_6",
+    0x07: "iso8859_7",
+    0x08: "iso8859_8",
+    0x09: "iso8859_9",
+    0x0A: "iso8859_10",
+    0x0B: "iso8859_13",
+    0x0C: "iso8859_14",
+    0x0D: "iso8859_15",
+    0x0E: "cp437",
+    0x0F: "cp737",
+    0x10: "cp850",
+    0x11: "cp852",
+    0x12: "cp855",
+    0x13: "cp857",
+    0x14: "cp860",
+    0x15: "cp861",
+    0x16: "cp863",
+    0x17: "cp865",
+    0x18: "cp866",
+    0x19: "cp869",
+}
 BREW_CLASS_CALL_CONTROL = 0xF1
 BREW_CLASS_FRAME_DATA = 0xF2
 CALL_STATE_SHORT_TRANSFER = 11
@@ -359,17 +386,23 @@ def parse_text_sds_type4_pdu(payload: bytes, length_bits: int | None = None) -> 
     coding = read_bits(offset, 7)
     offset += 7
     text_bits = length_bits - offset
-    if coding != TEXT_CODING_UTF16BE or text_bits < 16:
+    if text_bits < 8:
         return None
 
     text_bytes = bytearray()
     for byte_offset in range(offset, offset + (text_bits // 8) * 8, 8):
         text_bytes.append(read_bits(byte_offset, 8))
-    if len(text_bytes) % 2:
-        text_bytes.pop()
+
+    codec = TEXT_CODINGS_8BIT.get(coding)
+    if coding == TEXT_CODING_UTF16BE:
+        codec = "utf-16-be"
+        if len(text_bytes) % 2:
+            text_bytes.pop()
+    if codec is None or not text_bytes:
+        return None
     try:
-        return bytes(text_bytes).decode("utf-16-be").rstrip("\x00").strip()
-    except UnicodeDecodeError:
+        return bytes(text_bytes).decode(codec).rstrip("\x00").strip() or None
+    except (LookupError, UnicodeDecodeError):
         return None
 
 
