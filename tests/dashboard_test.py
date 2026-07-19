@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 from dashboard.app import (
     AuthStore,
+    BrandmeisterProfileMonitor,
     DashboardConfig,
     IdentityDirectory,
     LoginLimiter,
@@ -24,6 +25,18 @@ from dashboard.app import (
     SettingsManager,
     decode_motorola_lrrp_position,
 )
+
+
+class TwoCycleStop:
+    def __init__(self):
+        self.cycles = 0
+
+    def is_set(self):
+        return self.cycles >= 2
+
+    def wait(self, _timeout):
+        self.cycles += 1
+        return self.is_set()
 
 
 class RecordingRestarter:
@@ -216,6 +229,41 @@ def network_settings(
         "brandmeisterRxFrequency": rx_frequency,
         "brandmeisterTxFrequency": tx_frequency,
     }
+
+
+class BrandmeisterProfileMonitorTest(unittest.TestCase):
+    def test_transient_yaml_error_does_not_stop_profile_refresh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = RuntimeState()
+            monitor = BrandmeisterProfileMonitor(
+                make_config(Path(directory)), state
+            )
+            responses = iter(
+                [
+                    yaml.YAMLError("transient invalid YAML"),
+                    {
+                        "staticSubscriptions": [
+                            {"talkgroup": "262", "slot": "2"}
+                        ],
+                        "dynamicSubscriptions": [],
+                        "timedSubscriptions": [],
+                    },
+                ]
+            )
+
+            def fetch():
+                response = next(responses)
+                if isinstance(response, Exception):
+                    raise response
+                return response
+
+            monitor._fetch = fetch
+            monitor._stop = TwoCycleStop()
+            monitor._run()
+
+            talkgroups = state.snapshot({})["talkgroups"]
+            self.assertEqual("ok", talkgroups["status"])
+            self.assertEqual(262, talkgroups["static"][0]["talkgroup"])
 
 
 class AuthStoreTest(unittest.TestCase):

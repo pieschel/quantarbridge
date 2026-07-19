@@ -1659,6 +1659,8 @@ class BrandmeisterProfileMonitor:
         bridge = yaml.safe_load(
             self.config.quantarbridge_config.read_text(encoding="utf-8")
         )
+        if not isinstance(bridge, dict):
+            raise ValueError("Ung\u00fcltige QuantarBridge-Konfiguration")
         device_id = int(bridge.get("brandmeister", {}).get("repeaterId", 0))
         api_key = self.config.bm_api_key_file.read_text(encoding="utf-8").strip()
         if device_id <= 0 or not api_key:
@@ -1681,7 +1683,15 @@ class BrandmeisterProfileMonitor:
         while not self._stop.is_set():
             try:
                 self.state.set_brandmeister_profile(self._fetch())
-            except (OSError, ValueError, HTTPError, URLError, json.JSONDecodeError) as exc:
+            except (
+                OSError,
+                TypeError,
+                ValueError,
+                HTTPError,
+                URLError,
+                json.JSONDecodeError,
+                yaml.YAMLError,
+            ) as exc:
                 LOG.warning("BrandMeister profile refresh failed: %s", exc)
                 self.state.set_brandmeister_profile_error(
                     "BrandMeister-Profil ist vorübergehend nicht erreichbar."
