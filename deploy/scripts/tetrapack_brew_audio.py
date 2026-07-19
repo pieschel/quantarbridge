@@ -36,6 +36,7 @@ BREW_CLASS_SUBSCRIBER = 0xF0
 BREW_CLASS_CALL_CONTROL = 0xF1
 BREW_CLASS_FRAME = 0xF2
 BREW_CLASS_ERROR = 0xF3
+BREW_TYPE_RESTRICTED = 1
 
 SUBSCRIBER_DEREGISTER = 0
 SUBSCRIBER_REGISTER = 1
@@ -84,6 +85,20 @@ def uuid_text(wire: bytes) -> str:
         return str(uuid.UUID(bytes_le=wire))
     except Exception:
         return wire.hex()
+
+
+def brew_error_reason(frame: bytes) -> str:
+    raw = frame[2:].rstrip(b"\x00")
+    if len(raw) >= 2 and raw[0] in {
+        BREW_CLASS_SUBSCRIBER,
+        BREW_CLASS_CALL_CONTROL,
+        BREW_CLASS_FRAME,
+    }:
+        return f"rejected_class=0x{raw[0]:02x} rejected_type={raw[1]}"
+    return "".join(
+        character if character.isprintable() else "?"
+        for character in raw.decode("utf-8", errors="replace")
+    )[:160]
 
 
 def get_packed_bit(data: bytes, bit_index: int) -> int:
@@ -341,6 +356,7 @@ class AudioConfig:
     downlink_gain: float = 1.0
     uplink_peak_limit: int = 24000
     downlink_peak_limit: int = 24000
+    subscriber_refresh_seconds: float = 300.0
     user_agent: str = "quantarbridge-brew-audio/1"
 
     @classmethod
@@ -440,6 +456,9 @@ class AudioConfig:
             ),
             downlink_peak_limit=max(
                 1000, min(32767, int(raw.get("downlinkPeakLimit", peak_limit)))
+            ),
+            subscriber_refresh_seconds=max(
+                60.0, float(raw.get("subscriberRefreshSeconds", 300.0))
             ),
             user_agent=str(raw.get("userAgent", "quantarbridge-brew-audio/1")),
         )
@@ -923,6 +942,7 @@ class BrewAudioBridge:
         self.rtp_timestamp = random.getrandbits(32)
         self.rtp_ssrc = 0x42524557
         self.last_disconnect_at = 0.0
+        self.last_subscriber_refresh = time.monotonic()
         try:
             self.routing_config_mtime_ns = config.quantarbridge_config.stat().st_mtime_ns
         except OSError:
@@ -933,6 +953,11 @@ class BrewAudioBridge:
             threading.Thread(target=self._uplink_loop, name="p25-to-brew", daemon=True),
             threading.Thread(target=self._downlink_loop, name="brew-to-p25", daemon=True),
             threading.Thread(target=self._registration_loop, name="ars-registration-monitor", daemon=True),
+            threading.Thread(
+                target=self._subscriber_refresh_loop,
+                name="brew-subscriber-refresh",
+                daemon=True,
+            ),
             threading.Thread(target=self._routing_loop, name="talkgroup-routing", daemon=True),
             threading.Thread(target=self._status_loop, name="status-writer", daemon=True),
         ]
@@ -1015,16 +1040,74 @@ class BrewAudioBridge:
             affiliate_ok &= self.transport.send(build_subscriber_message(SUBSCRIBER_AFFILIATE, issi, groups))
         self.status.set(registered=bool(register_ok), affiliated=bool(affiliate_ok))
         if register_ok and affiliate_ok:
+            self.last_subscriber_refresh = time.monotonic()
             logging.info("Registered %u local ISSI(s) and affiliated %u BREW group(s)", len(local_issis), len(groups))
 
-    def _ensure_local_issi(self, issi: int) -> None:
+    def _refresh_brew_subscribers(
+        self,
+        requested_issis: set[int] | None = None,
+        trigger: str = "periodic",
+    ) -> bool:
+        if not self.transport.connected.is_set():
+            return False
+        with self.local_issis_lock:
+            local_issis = set(self.local_issis)
+        if requested_issis is not None:
+            local_issis &= requested_issis
+        if not local_issis:
+            self.last_subscriber_refresh = time.monotonic()
+            return False
+        with self.router_lock:
+            groups = self.router.groups()
+        refresh_ok = True
+        affiliate_ok = True
+        for local_issi in sorted(local_issis):
+            refresh_ok &= self.transport.send(
+                build_subscriber_message(SUBSCRIBER_REREGISTER, local_issi)
+            )
+        if groups:
+            for local_issi in sorted(local_issis):
+                affiliate_ok &= self.transport.send(
+                    build_subscriber_message(SUBSCRIBER_AFFILIATE, local_issi, groups)
+                )
+        if refresh_ok and affiliate_ok:
+            self.last_subscriber_refresh = time.monotonic()
+            self.status.increment("brewSubscriberRefreshes")
+            self.status.set(
+                registered=True,
+                affiliated=True,
+                lastSubscriberRefreshAt=utc_now(),
+            )
+            logging.info(
+                "Refreshed %u BREW subscriber registration(s), trigger=%s groups=%u",
+                len(local_issis),
+                trigger,
+                len(groups),
+            )
+            return True
+        return False
+
+    def _subscriber_refresh_loop(self) -> None:
+        while not self.stop_event.wait(1.0):
+            if (
+                time.monotonic() - self.last_subscriber_refresh
+                < self.config.subscriber_refresh_seconds
+            ):
+                continue
+            self._refresh_brew_subscribers()
+
+    def _ensure_local_issi(self, issi: int, refresh_existing: bool = False) -> None:
         if not 1 <= issi <= 0xFFFFFF:
             return
         with self.local_issis_lock:
-            if issi in self.local_issis:
-                return
-            self.local_issis.add(issi)
+            existing = issi in self.local_issis
+            if not existing:
+                self.local_issis.add(issi)
             local_issis = set(self.local_issis)
+        if existing:
+            if refresh_existing:
+                self._refresh_brew_subscribers({issi}, trigger="ars")
+            return
         save_observed_issis(self.config.observed_issis_file, local_issis)
         self.status.set(localIssis=sorted(local_issis))
         logging.info("Learned local P25 ISSI %u from RF uplink", issi)
@@ -1063,7 +1146,7 @@ class BrewAudioBridge:
         scratch: set[int] = set()
         action, issi = apply_ars_log_line(scratch, line)
         if action == "register" and issi is not None:
-            self._ensure_local_issi(issi)
+            self._ensure_local_issi(issi, refresh_existing=True)
         elif action == "deregister" and issi is not None:
             self._remove_local_issi(issi)
         elif action == "reset":
@@ -1193,9 +1276,22 @@ class BrewAudioBridge:
                 self.status.increment("localSubscriberEvents")
             return
         if message_class == BREW_CLASS_ERROR:
+            reason = brew_error_reason(frame)
             self.status.increment("brewServerErrors")
-            self.status.set(lastError=f"brew_server_f3_type_{message_type}")
-            logging.warning("BREW server returned F3 error type=%u length=%u", message_type, len(frame))
+            self.status.set(
+                lastError=f"brew_server_f3_type_{message_type}",
+                brewServerErrorReason=reason or None,
+            )
+            logging.warning(
+                "BREW server returned F3 error type=%u length=%u reason=%r",
+                message_type,
+                len(frame),
+                reason,
+            )
+            if message_type == BREW_TYPE_RESTRICTED:
+                self.status.increment("brewRestrictedReconnects")
+                logging.warning("Resetting BREW session after restricted server response")
+                self.transport.close_socket()
             return
         if message_class == BREW_CLASS_FRAME and message_type == FRAME_TYPE_SDS_REPORT:
             self.status.increment("brewSmsReportsReceived")

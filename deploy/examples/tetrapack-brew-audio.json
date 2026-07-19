@@ -27,5 +27,6 @@
   "downlinkGain": 1.0,
   "uplinkPeakLimit": 24000,
   "downlinkPeakLimit": 24000,
+  "subscriberRefreshSeconds": 300,
   "userAgent": "quantarbridge-brew-audio/1"
 }

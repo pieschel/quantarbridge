@@ -212,6 +212,87 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             AUDIO.scale_pcm([-20000, -1000, 0, 1000, 20000], 2.0, 24000),
         )
 
+    def test_brew_error_reason_is_bounded_and_safe_for_logs(self):
+        frame = bytes((AUDIO.BREW_CLASS_ERROR, 1)) + b"restricted\x00ignored\x01"
+        self.assertEqual("restricted?ignored?", AUDIO.brew_error_reason(frame))
+        rejected = bytes(
+            (AUDIO.BREW_CLASS_ERROR, 1, AUDIO.BREW_CLASS_CALL_CONTROL, 3)
+        ) + bytes(17)
+        self.assertEqual(
+            "rejected_class=0xf1 rejected_type=3",
+            AUDIO.brew_error_reason(rejected),
+        )
+
+    def test_subscriber_refresh_reregisters_and_reaffiliates_known_radios(self):
+        class FakeTransport:
+            def __init__(self):
+                self.connected = threading.Event()
+                self.connected.set()
+                self.frames = []
+
+            def send(self, frame):
+                self.frames.append(frame)
+                return True
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bridge = object.__new__(AUDIO.BrewAudioBridge)
+            bridge.config = make_config(root)
+            bridge.router = AUDIO.TalkgroupRouter(bridge.config)
+            bridge.router_lock = threading.Lock()
+            bridge.local_issis = {1000001}
+            bridge.local_issis_lock = threading.Lock()
+            bridge.transport = FakeTransport()
+            bridge.status = AUDIO.AtomicStatus(root / "status.json")
+            bridge.last_subscriber_refresh = 0.0
+
+            self.assertTrue(
+                bridge._refresh_brew_subscribers({1000001}, trigger="test")
+            )
+
+            self.assertEqual(2, len(bridge.transport.frames))
+            self.assertEqual(
+                (AUDIO.BREW_CLASS_SUBSCRIBER, AUDIO.SUBSCRIBER_REREGISTER),
+                tuple(bridge.transport.frames[0][:2]),
+            )
+            self.assertEqual(
+                (AUDIO.BREW_CLASS_SUBSCRIBER, AUDIO.SUBSCRIBER_AFFILIATE),
+                tuple(bridge.transport.frames[1][:2]),
+            )
+            self.assertEqual(
+                1,
+                bridge.status.data["counters"]["brewSubscriberRefreshes"],
+            )
+
+    def test_restricted_brew_response_resets_the_transport(self):
+        class FakeTransport:
+            def __init__(self):
+                self.closed = False
+
+            def close_socket(self):
+                self.closed = True
+
+        with tempfile.TemporaryDirectory() as directory:
+            bridge = object.__new__(AUDIO.BrewAudioBridge)
+            bridge.transport = FakeTransport()
+            bridge.status = AUDIO.AtomicStatus(Path(directory) / "status.json")
+            frame = bytes(
+                (
+                    AUDIO.BREW_CLASS_ERROR,
+                    AUDIO.BREW_TYPE_RESTRICTED,
+                    AUDIO.BREW_CLASS_CALL_CONTROL,
+                    AUDIO.CALL_STATE_GROUP_IDLE,
+                )
+            ) + bytes(17)
+
+            bridge._on_brew_binary(frame)
+
+            self.assertTrue(bridge.transport.closed)
+            self.assertEqual(
+                1,
+                bridge.status.data["counters"]["brewRestrictedReconnects"],
+            )
+
     def test_dvm_rtp_round_trip_keeps_radio_and_talkgroup_metadata(self):
         pcm = struct.pack("<160h", *range(160))
         packet = AUDIO.build_dvm_rtp(
