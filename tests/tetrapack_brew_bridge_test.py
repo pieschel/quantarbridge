@@ -46,6 +46,17 @@ class AuthenticationErrorBrewClient:
 
 
 class TetrapackBridgeTest(unittest.TestCase):
+    def test_text_sds_type4_round_trip_and_report_frame(self):
+        session_id = BRIDGE.uuid.UUID("8db7a58a-5360-4ff0-929d-cf20b578cdce")
+        payload = BRIDGE.build_text_sds_type4_pdu("Test 123", 42)
+
+        self.assertEqual("Test 123", BRIDGE.parse_text_sds_type4_pdu(payload, len(payload) * 8))
+        report = BRIDGE.build_brew_sds_report(session_id)
+        self.assertEqual(BRIDGE.BREW_CLASS_FRAME_DATA, report[0])
+        self.assertEqual(BRIDGE.FRAME_TYPE_SDS_REPORT, report[1])
+        self.assertEqual(session_id.bytes_le, report[2:18])
+        self.assertEqual(b"\x08\x00\x00", report[18:])
+
     def test_service_rids_prefer_service_only_config_key(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

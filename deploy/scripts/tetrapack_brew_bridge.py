@@ -321,6 +321,58 @@ def build_brew_sds_transfer(session_id: uuid.UUID, payload: bytes) -> bytes:
     )
 
 
+def build_brew_sds_report(session_id: uuid.UUID, status: int = 0) -> bytes:
+    return (
+        bytes((BREW_CLASS_FRAME_DATA, FRAME_TYPE_SDS_REPORT))
+        + session_id.bytes_le
+        + (8).to_bytes(2, "little", signed=False)
+        + bytes((status & 0xFF,))
+    )
+
+
+def parse_text_sds_type4_pdu(payload: bytes, length_bits: int | None = None) -> str | None:
+    available_bits = len(payload) * 8
+    if length_bits is None:
+        length_bits = available_bits
+    length_bits = min(max(0, int(length_bits)), available_bits)
+    if length_bits < 32:
+        return None
+
+    def read_bits(offset: int, count: int) -> int:
+        value = 0
+        for bit_index in range(offset, offset + count):
+            value = (value << 1) | ((payload[bit_index // 8] >> (7 - bit_index % 8)) & 1)
+        return value
+
+    if read_bits(0, 8) != PID_TEXT_MESSAGING:
+        return None
+    if read_bits(8, 4) != MESSAGE_TYPE_SDS_TRANSFER:
+        return None
+
+    timestamp_used = read_bits(24, 1)
+    offset = 25
+    if timestamp_used:
+        # SDS-TL timestamps occupy 24 bits before the text coding field.
+        if length_bits < offset + 24 + 7:
+            return None
+        offset += 24
+    coding = read_bits(offset, 7)
+    offset += 7
+    text_bits = length_bits - offset
+    if coding != TEXT_CODING_UTF16BE or text_bits < 16:
+        return None
+
+    text_bytes = bytearray()
+    for byte_offset in range(offset, offset + (text_bits // 8) * 8, 8):
+        text_bytes.append(read_bits(byte_offset, 8))
+    if len(text_bytes) % 2:
+        text_bytes.pop()
+    try:
+        return bytes(text_bytes).decode("utf-16-be").rstrip("\x00").strip()
+    except UnicodeDecodeError:
+        return None
+
+
 def build_brew_call_release(session_id: uuid.UUID, cause: int) -> bytes:
     return (
         bytes((BREW_CLASS_CALL_CONTROL, CALL_STATE_CALL_RELEASE))

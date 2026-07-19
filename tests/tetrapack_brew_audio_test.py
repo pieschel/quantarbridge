@@ -46,6 +46,71 @@ def make_config(root: Path):
 
 
 class TetrapackBrewAudioTest(unittest.TestCase):
+    def test_inbound_brew_sds_is_queued_for_registered_p25_radio(self):
+        test_case = self
+
+        class FakeBrewModule:
+            @staticmethod
+            def parse_text_sds_type4_pdu(payload, length_bits):
+                test_case.assertEqual(len(payload) * 8, length_bits)
+                return payload.decode("utf-8")
+
+            @staticmethod
+            def build_brew_sds_report(session_id, status=0):
+                return b"report:" + session_id.bytes_le + bytes((status,))
+
+        class FakeTransport:
+            brew_module = FakeBrewModule
+
+            def __init__(self):
+                self.frames = []
+
+            def send(self, frame):
+                self.frames.append(frame)
+                return True
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = make_config(root)
+            config.sms_command_dir = root / "sms" / "brew-audio-outbox"
+            bridge = object.__new__(AUDIO.BrewAudioBridge)
+            bridge.config = config
+            bridge.transport = FakeTransport()
+            bridge.status = AUDIO.AtomicStatus(root / "status.json")
+            bridge.local_issis_lock = threading.Lock()
+            bridge.local_issis = {2621501}
+            bridge.pending_sds = {}
+            bridge.owned_uuids = {}
+
+            call_uuid = bytes.fromhex("8aa5b78d6053f04f929dcf20b578cdce")
+            source = 2635101
+            target = 2621501
+            header = (
+                bytes((AUDIO.BREW_CLASS_CALL_CONTROL, AUDIO.CALL_STATE_SHORT_TRANSFER))
+                + call_uuid
+                + struct.pack("<II", source, target)
+                + bytes(32)
+            )
+            payload = b"Private test"
+            transfer = (
+                bytes((AUDIO.BREW_CLASS_FRAME, AUDIO.FRAME_TYPE_SDS_TRANSFER))
+                + call_uuid
+                + struct.pack("<H", len(payload) * 8)
+                + payload
+            )
+
+            bridge._on_brew_binary(header)
+            bridge._on_brew_binary(transfer)
+
+            queued = list((root / "sms" / "p25-outbox").glob("*.yaml"))
+            self.assertEqual(1, len(queued))
+            body = queued[0].read_text(encoding="utf-8")
+            self.assertIn("sourceRid: 2635101", body)
+            self.assertIn("targetRid: 2621501", body)
+            self.assertIn(payload.hex(), body)
+            self.assertEqual(1, len(bridge.transport.frames))
+            self.assertTrue(bridge.transport.frames[0].startswith(b"report:"))
+
     def test_sms_command_is_sent_over_the_audio_transport(self):
         class FakeBrewModule:
             @staticmethod

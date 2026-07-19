@@ -45,7 +45,10 @@ SUBSCRIBER_DEAFFILIATE = 9
 
 CALL_STATE_GROUP_TX = 2
 CALL_STATE_GROUP_IDLE = 3
+CALL_STATE_SHORT_TRANSFER = 11
 FRAME_TYPE_TRAFFIC_CHANNEL = 0
+FRAME_TYPE_SDS_TRANSFER = 1
+FRAME_TYPE_SDS_REPORT = 2
 
 RTP_HEADER_BYTES = 12
 PCM_SAMPLES_20MS = 160
@@ -848,6 +851,13 @@ class DownlinkCall:
     underruns: int = 0
 
 
+@dataclass
+class PendingSds:
+    source: int
+    destination: int
+    received_at: float = field(default_factory=time.monotonic)
+
+
 class BrewAudioBridge:
     def __init__(self, config: AudioConfig) -> None:
         self.config = config
@@ -902,6 +912,7 @@ class BrewAudioBridge:
         self.downlink_calls: dict[bytes, DownlinkCall] = {}
         self.ignored_downlink_uuids: set[bytes] = set()
         self.active_downlink_uuid: bytes | None = None
+        self.pending_sds: dict[bytes, PendingSds] = {}
 
         self.input_socket: socket.socket | None = None
         self.output_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1183,16 +1194,38 @@ class BrewAudioBridge:
             self.status.set(lastError=f"brew_server_f3_type_{message_type}")
             logging.warning("BREW server returned F3 error type=%u length=%u", message_type, len(frame))
             return
-        if (
-            message_class == BREW_CLASS_FRAME
-            and message_type
-            == getattr(self.transport.brew_module, "FRAME_TYPE_SDS_REPORT", -1)
-        ):
+        if message_class == BREW_CLASS_FRAME and message_type == FRAME_TYPE_SDS_REPORT:
             self.status.increment("brewSmsReportsReceived")
             return
         if len(frame) < 18:
             return
         call_uuid = frame[2:18]
+
+        now = time.monotonic()
+        self.pending_sds = {
+            key: pending
+            for key, pending in self.pending_sds.items()
+            if now - pending.received_at < 30.0
+        }
+
+        if message_class == BREW_CLASS_CALL_CONTROL and message_type == CALL_STATE_SHORT_TRANSFER:
+            if len(frame) < 26:
+                self.status.increment("invalidBrewSmsHeaders")
+                return
+            source, destination = struct.unpack_from("<II", frame, 18)
+            self.pending_sds[call_uuid] = PendingSds(source, destination, now)
+            self.status.increment("brewSmsHeadersReceived")
+            logging.info(
+                "BREW SDS header received uuid=%s src=%u dst=%u",
+                uuid_text(call_uuid),
+                source,
+                destination,
+            )
+            return
+
+        if message_class == BREW_CLASS_FRAME and message_type == FRAME_TYPE_SDS_TRANSFER:
+            self._handle_inbound_sds(call_uuid, frame)
+            return
 
         self._expire_owned_uuids()
         if message_class == BREW_CLASS_CALL_CONTROL:
@@ -1209,6 +1242,72 @@ class BrewAudioBridge:
             length_bits = struct.unpack_from("<H", frame, 18)[0]
             payload = frame[20:]
             self._queue_downlink_voice(call_uuid, length_bits, payload)
+
+    def _handle_inbound_sds(self, call_uuid: bytes, frame: bytes) -> None:
+        if len(frame) < 20:
+            self.status.increment("invalidBrewSmsFrames")
+            return
+        pending = self.pending_sds.pop(call_uuid, None)
+        if pending is None:
+            self.status.increment("orphanBrewSmsFrames")
+            logging.warning("BREW SDS payload without header uuid=%s", uuid_text(call_uuid))
+            return
+
+        with self.local_issis_lock:
+            is_local = pending.destination in self.local_issis
+        if not is_local:
+            self.status.increment("nonLocalBrewSmsFrames")
+            logging.info(
+                "Ignoring BREW SDS for non-local ISSI uuid=%s src=%u dst=%u",
+                uuid_text(call_uuid),
+                pending.source,
+                pending.destination,
+            )
+            return
+
+        length_bits = struct.unpack_from("<H", frame, 18)[0]
+        payload = frame[20 : 20 + (length_bits + 7) // 8]
+        text = self.transport.brew_module.parse_text_sds_type4_pdu(payload, length_bits)
+        if not text:
+            self.status.increment("unsupportedBrewSmsFrames")
+            logging.warning(
+                "Unsupported BREW SDS payload uuid=%s src=%u dst=%u bits=%u",
+                uuid_text(call_uuid),
+                pending.source,
+                pending.destination,
+                length_bits,
+            )
+            return
+
+        if self.config.sms_command_dir is None:
+            self.status.increment("undeliverableBrewSmsFrames")
+            logging.warning("BREW SDS cannot be delivered because smsCommandDir is disabled")
+            return
+        outbox = self.config.sms_command_dir.parent / "p25-outbox"
+        outbox.mkdir(parents=True, exist_ok=True)
+        event_id = f"brew-sds-{int(time.time_ns() // 1_000_000)}-{uuid_text(call_uuid)}"
+        path = outbox / f"{event_id}.yaml"
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(
+            f"sourceRid: {pending.source}\n"
+            f"targetRid: {pending.destination}\n"
+            f'textHex: "{text.encode("utf-8").hex()}"\n',
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(path)
+
+        session_id = uuid.UUID(bytes_le=call_uuid)
+        report = self.transport.brew_module.build_brew_sds_report(session_id, status=0)
+        self.transport.send(report)
+        self.status.increment("brewSmsMessagesDelivered")
+        logging.info(
+            "BREW SDS queued for P25 uuid=%s src=%u dst=%u chars=%u",
+            uuid_text(call_uuid),
+            pending.source,
+            pending.destination,
+            len(text),
+        )
 
     def _start_or_update_downlink(self, call_uuid: bytes, source: int, destination: int) -> None:
         with self.router_lock:
