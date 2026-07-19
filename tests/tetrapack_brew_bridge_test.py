@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT_PATH = (
@@ -45,6 +46,34 @@ class AuthenticationErrorBrewClient:
 
 
 class TetrapackBridgeTest(unittest.TestCase):
+    def test_endpoint_discovery_identifies_as_brew_basestation(self):
+        response = mock.Mock(status_code=200, text="/brew/session")
+        client = BRIDGE.BrewClient(
+            BRIDGE.BrewConfig(
+                enabled=True,
+                username="123456",
+                password="secret",
+            )
+        )
+
+        requests = mock.Mock()
+        requests.get.return_value = response
+        with (
+            mock.patch.object(BRIDGE, "requests", requests),
+            mock.patch.object(BRIDGE, "HTTPDigestAuth", return_value="digest-auth"),
+        ):
+            endpoint = client._get_endpoint()
+
+        self.assertEqual("wss://core.tetrapack.online/brew/session", endpoint)
+        self.assertEqual(
+            {
+                "User-Agent": "quantarbridge-sms/20260406",
+                "X-Brew-Mode": "Basestation",
+                "X-Brew-Version": "1",
+            },
+            requests.get.call_args.kwargs["headers"],
+        )
+
     def test_local_p25_message_keeps_sender_and_target_direction(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

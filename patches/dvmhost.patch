@@ -558,7 +558,7 @@ index 93c5d083..f6877924 100644
 +    const bool dmrToP25Bridge = m_identity.find("DMR-P25") != std::string::npos;
 +    const bool p25PcmOnlyBridge = m_identity.find("P25-PCM-ONLY") != std::string::npos;
 +
-+    if (!p25ToDmrBridge && m_txMode != TX_MODE_P25) {
++    if (!p25ToDmrBridge && !p25PcmOnlyBridge && m_txMode != TX_MODE_P25) {
 +        m_network->resetP25();
 +        return;
 +    }
@@ -582,7 +582,7 @@ index 93c5d083..f6877924 100644
  
 +    // Bridge-generated P25 carries SWITCH_OVER. The P25->DMR uplink bridge must ignore
 +    // the whole bridged stream so BM downlink audio does not feed straight back into BM.
-+    if (p25ToDmrBridge && switchOver) {
++    if ((p25ToDmrBridge || p25PcmOnlyBridge) && switchOver) {
 +        m_ignoreCall = true;
 +        m_rxStreamId = currentStreamId;
 +        m_network->resetP25();
@@ -1367,13 +1367,13 @@ index 3aa4556a..6dd9e35a 100644
              bool netReadRet = false;
 -            // is the bridge in DMR mode?
 -            if (bridge->m_txMode == TX_MODE_DMR) {
-+            const bool p25ToDmrBridge = bridge->m_identity.find("P25-DMR") != std::string::npos;
++            const bool p25InboundBridge = bridge->m_identity.find("P25-DMR") != std::string::npos || bridge->m_identity.find("P25-PCM-ONLY") != std::string::npos;
 +            const bool dmrToP25Bridge = bridge->m_identity.find("DMR-P25") != std::string::npos;
 +
 +            // The P25->DMR bridge must consume inbound P25 network traffic, while the
 +            // DMR->P25 bridge must consume inbound DMR network traffic. Relying only on
 +            // txMode here breaks transcoding because txMode reflects the outbound side.
-+            if ((bridge->m_txMode == TX_MODE_DMR && !p25ToDmrBridge) || dmrToP25Bridge) {
++            if ((bridge->m_txMode == TX_MODE_DMR && !p25InboundBridge) || dmrToP25Bridge) {
                  UInt8Array dmrBuffer = nullptr;
  
 -                // scope is intentional to limit lock duration
@@ -1386,7 +1386,7 @@ index 3aa4556a..6dd9e35a 100644
  
 -            // is the bridge in P25 mode?
 -            if (bridge->m_txMode == TX_MODE_P25) {
-+            if ((bridge->m_txMode == TX_MODE_P25 && !dmrToP25Bridge) || p25ToDmrBridge) {
++            if ((bridge->m_txMode == TX_MODE_P25 && !dmrToP25Bridge) || p25InboundBridge) {
                  UInt8Array p25Buffer = nullptr;
  
 -                // scope is intentional to limit lock duration

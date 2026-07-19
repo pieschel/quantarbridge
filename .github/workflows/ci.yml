@@ -38,6 +38,7 @@ jobs:
             --bm-id 123456 \
             --bm-callsign N0CALL \
             --bm-master 2622.master.brandmeister.network \
+            --brew-username 123456 \
             --rx-frequency 430800000 \
             --tx-frequency 438800000 \
             --bm-password-stdin

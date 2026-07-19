@@ -143,7 +143,12 @@ class BrewClient:
         ws = websocket.create_connection(
             endpoint,
             timeout=self.config.request_timeout_seconds,
-            header=[f"User-Agent: {self.config.user_agent}"],
+            subprotocols=["brew"],
+            header=[
+                f"User-Agent: {self.config.user_agent}",
+                "X-Brew-Mode: Basestation",
+                "X-Brew-Version: 1",
+            ],
         )
         try:
             ws.send_binary(build_brew_short_transfer(session_id, source_rid, target_rid))
@@ -177,7 +182,11 @@ class BrewClient:
         base = self.config.base_url.rstrip("/")
         response = requests.get(
             f"{base}/brew/",
-            headers={"User-Agent": self.config.user_agent},
+            headers={
+                "User-Agent": self.config.user_agent,
+                "X-Brew-Mode": "Basestation",
+                "X-Brew-Version": "1",
+            },
             auth=HTTPDigestAuth(self.config.username, self.config.password),
             timeout=self.config.request_timeout_seconds,
         )

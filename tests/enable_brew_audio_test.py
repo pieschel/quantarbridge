@@ -56,7 +56,23 @@ class EnableBrewAudioTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (legacy / "quantar-dashboard.json").write_text(
-                json.dumps({"serviceUnits": [], "restartTargets": {}}),
+                json.dumps(
+                    {
+                        "serviceUnits": [
+                            {
+                                "id": "sms-bridge",
+                                "processMatch": "legacy-command",
+                            }
+                        ],
+                        "restartTargets": {
+                            "sms-bridge": {
+                                "type": "process",
+                                "match": "legacy-command",
+                                "command": ["legacy-command"],
+                            }
+                        },
+                    }
+                ),
                 encoding="utf-8",
             )
             codec = root / "libtetra-codec.so"
@@ -86,6 +102,15 @@ class EnableBrewAudioTest(unittest.TestCase):
             self.assertEqual(str(codec), audio["codecLibrary"])
             dashboard = json.loads((legacy / "quantar-dashboard.json").read_text())
             self.assertIn("brew-audio", dashboard["restartTargets"])
+            sms_config = runtime / "tetrapack-brew-bridge.json"
+            sms_service = next(
+                service for service in dashboard["serviceUnits"] if service["id"] == "sms-bridge"
+            )
+            self.assertIn(str(sms_config), sms_service["processMatch"])
+            self.assertEqual(
+                str(sms_config),
+                dashboard["restartTargets"]["sms-bridge"]["command"][-1],
+            )
             self.assertTrue(list(runtime.glob("quantarbridge.yml.pre-brew-audio-*")))
 
 

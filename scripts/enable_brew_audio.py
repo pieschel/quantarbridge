@@ -147,6 +147,7 @@ def update_audio_profiles(runtime_dir: Path) -> None:
 def update_dashboard(path: Path, runtime_dir: Path, install_dir: Path) -> None:
     dashboard = read_json(path)
     audio_config = runtime_dir / "tetrapack-brew-audio.json"
+    sms_config = runtime_dir / "tetrapack-brew-bridge.json"
     status_file = runtime_dir / "brew-audio-status.json"
     dashboard["brewAudioConfig"] = str(audio_config)
     dashboard["brewAudioStatusFile"] = str(status_file)
@@ -160,6 +161,8 @@ def update_dashboard(path: Path, runtime_dir: Path, install_dir: Path) -> None:
     for service in services:
         if isinstance(service, dict) and service.get("id") in labels:
             service["label"] = labels[str(service["id"])]
+        if isinstance(service, dict) and service.get("id") == "sms-bridge":
+            service["processMatch"] = f"{install_dir}/deploy/scripts/tetrapack_brew_bridge.py --config {sms_config}"
     services[:] = [service for service in services if not isinstance(service, dict) or service.get("id") != "brew-audio"]
     services.append(
         {
@@ -175,6 +178,15 @@ def update_dashboard(path: Path, runtime_dir: Path, install_dir: Path) -> None:
         "type": "systemd-user",
         "unit": "tetrapack-brew-audio.service",
     }
+    sms_restart = dashboard.setdefault("restartTargets", {}).get("sms-bridge")
+    if isinstance(sms_restart, dict) and sms_restart.get("type") == "process":
+        sms_restart["match"] = f"{install_dir}/deploy/scripts/tetrapack_brew_bridge.py --config {sms_config}"
+        sms_restart["command"] = [
+            "/usr/bin/python3",
+            f"{install_dir}/deploy/scripts/tetrapack_brew_bridge.py",
+            "--config",
+            str(sms_config),
+        ]
     write_json(path, dashboard)
 
 
