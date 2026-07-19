@@ -9,7 +9,7 @@
   "errorDir": "/home/quantar/quantar-runtime/sms/error",
   "pollIntervalSeconds": 0.25,
   "localLoopEnabled": true,
-  "brewTargetRids": [262993],
+  "brewServiceRids": [262993],
   "brew": {
     "enabled": false,
     "baseUrl": "https://core.tetrapack.online",

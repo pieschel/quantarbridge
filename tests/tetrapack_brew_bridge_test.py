@@ -46,6 +46,49 @@ class AuthenticationErrorBrewClient:
 
 
 class TetrapackBridgeTest(unittest.TestCase):
+    def test_service_rids_prefer_service_only_config_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "bridge.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "inboxDir": str(root / "inbox"),
+                        "outboxDir": str(root / "outbox"),
+                        "processedDir": str(root / "processed"),
+                        "errorDir": str(root / "error"),
+                        "brewServiceRids": [262993],
+                        "brewTargetRids": [262993, 1000001],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = BRIDGE.load_config(config_path)
+
+            self.assertEqual({262993}, config.brew_service_rids)
+
+    def test_legacy_brew_target_rids_remain_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "bridge.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "inboxDir": str(root / "inbox"),
+                        "outboxDir": str(root / "outbox"),
+                        "processedDir": str(root / "processed"),
+                        "errorDir": str(root / "error"),
+                        "brewTargetRids": [262993],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = BRIDGE.load_config(config_path)
+
+            self.assertEqual({262993}, config.brew_service_rids)
+
     def test_audio_queue_client_uses_the_existing_brew_session(self):
         with tempfile.TemporaryDirectory() as directory:
             outbox = Path(directory) / "brew-audio-outbox"
@@ -166,7 +209,7 @@ class TetrapackBridgeTest(unittest.TestCase):
             self.assertEqual(raw_packet, body["rawIpPacketHex"])
             self.assertTrue((config.processed_dir / event_path.name).exists())
 
-    def test_configured_direct_message_uses_brew_transport(self):
+    def test_configured_service_message_uses_brew_transport(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = BRIDGE.BridgeConfig(
@@ -174,14 +217,14 @@ class TetrapackBridgeTest(unittest.TestCase):
                 outbox_dir=root / "outbox",
                 processed_dir=root / "processed",
                 error_dir=root / "error",
-                brew_target_rids={262993, 1000001},
+                brew_service_rids={262993, 262994},
             )
             config.brew.enabled = True
             BRIDGE.ensure_dirs(config)
             now = time.monotonic()
             pending = BRIDGE.PendingText(
                 source_rid=1000002,
-                target_rid=1000001,
+                target_rid=262994,
                 local_candidate=False,
                 first_seen=now,
                 updated_at=now,
@@ -194,7 +237,7 @@ class TetrapackBridgeTest(unittest.TestCase):
 
             self.assertEqual("sent", result["status"])
             self.assertEqual("tetrapack_brew", result["transport"])
-            self.assertEqual([(1000002, 1000001, "Direkttest4")], brew.calls)
+            self.assertEqual([(1000002, 262994, "Direkttest4")], brew.calls)
             self.assertEqual([], list(config.outbox_dir.glob("*.json")))
 
     def test_unlisted_external_message_uses_packet_data_fallback(self):
@@ -205,7 +248,7 @@ class TetrapackBridgeTest(unittest.TestCase):
                 outbox_dir=root / "outbox",
                 processed_dir=root / "processed",
                 error_dir=root / "error",
-                brew_target_rids={262993, 1000001},
+                brew_service_rids={262993, 262994},
             )
             BRIDGE.ensure_dirs(config)
             now = time.monotonic()

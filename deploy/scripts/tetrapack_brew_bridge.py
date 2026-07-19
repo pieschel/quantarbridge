@@ -70,7 +70,7 @@ class BridgeConfig:
     poll_interval_seconds: float = 0.25
     service_route_max_age_seconds: int = 900
     local_loop_enabled: bool = False
-    brew_target_rids: set[int] = field(default_factory=lambda: {262993})
+    brew_service_rids: set[int] = field(default_factory=lambda: {262993})
     brew: BrewConfig = field(default_factory=BrewConfig)
 
     def __post_init__(self) -> None:
@@ -357,6 +357,11 @@ def parse_brew_frame(frame: bytes) -> dict[str, Any]:
 def load_config(path: Path) -> BridgeConfig:
     raw = json.loads(path.read_text(encoding="utf-8"))
     brew_raw = raw.get("brew", {}) or {}
+    brew_service_rids = raw.get("brewServiceRids")
+    if brew_service_rids is None:
+        # Backward compatibility for runtime files created before the key made
+        # its service-only purpose explicit.
+        brew_service_rids = raw.get("brewTargetRids", [262993])
     fallback_runtime = load_runtime_bm_defaults(path)
     outbox_dir = Path(raw.get("outboxDir", "/home/quantar/quantar-runtime/sms/outbox"))
     return BridgeConfig(
@@ -374,7 +379,7 @@ def load_config(path: Path) -> BridgeConfig:
         poll_interval_seconds=float(raw.get("pollIntervalSeconds", 0.25)),
         service_route_max_age_seconds=max(60, int(raw.get("serviceRouteMaxAgeSeconds", 900))),
         local_loop_enabled=bool(raw.get("localLoopEnabled", False)),
-        brew_target_rids={int(value) for value in raw.get("brewTargetRids", [262993])},
+        brew_service_rids={int(value) for value in brew_service_rids},
         brew=BrewConfig(
             enabled=bool(brew_raw.get("enabled", False)),
             base_url=str(brew_raw.get("baseUrl", "https://core.tetrapack.online")),
@@ -567,7 +572,7 @@ def flush_pending_text(config: BridgeConfig, brew: BrewClient, pending: PendingT
             "fragments": pending.fragments,
         }
 
-    if pending.target_rid in config.brew_target_rids:
+    if pending.target_rid in config.brew_service_rids:
         if not config.brew.enabled:
             return {
                 "status": "held",

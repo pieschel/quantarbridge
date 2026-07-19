@@ -139,6 +139,13 @@ trying to open the same session can receive HTTP `403` even when the password is
 correct. Check `sms/brew-audio-outbox`, `sms/brew-audio-results`, and the
 `brewSmsCommandsSent` status counter before changing credentials.
 
+`brewServiceRids` is an allowlist for BREW-hosted messaging services, not for
+private subscribers. Keep ordinary DMR or P25 radio IDs out of it; all unlisted
+external destinations use native BrandMeister packet data. If a private message
+appears in `sms/brew-audio-results`, remove that subscriber from the service
+list, archive any matching stale file in `sms/service-routes`, and restart only
+the TMS queue adapter.
+
 ## LRRP and APRS
 
 After TMS becomes available, DVMHost sends the first LRRP request after

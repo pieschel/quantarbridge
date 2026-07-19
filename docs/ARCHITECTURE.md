@@ -117,6 +117,12 @@ exactly one matching route when the service reply arrives and delivers it to
 the original requester while keeping the BrandMeister acknowledgement addressed
 to the bridge subscriber.
 
+Only service destinations listed in `brewServiceRids`, such as the weather
+service, use the shared BREW session. Ordinary private subscriber IDs must not
+be added to this list: they are sent through native BrandMeister packet data so
+the network can route them to the addressed radio. The legacy JSON key
+`brewTargetRids` remains accepted for existing runtime files.
+
 LRRP requests are sent only after a TMS-capable session is ready. Valid reports
 are forwarded as BrandMeister location packet data. A no-fix response uses the
 shorter retry interval from `motorolaLocation.noFixRetrySeconds`.
