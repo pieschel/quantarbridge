@@ -78,13 +78,13 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             bridge.transport = FakeTransport()
             bridge.status = AUDIO.AtomicStatus(root / "status.json")
             bridge.local_issis_lock = threading.Lock()
-            bridge.local_issis = {2621501}
+            bridge.local_issis = {1000002}
             bridge.pending_sds = {}
             bridge.owned_uuids = {}
 
             call_uuid = bytes.fromhex("8aa5b78d6053f04f929dcf20b578cdce")
-            source = 2635101
-            target = 2621501
+            source = 1000001
+            target = 1000002
             header = (
                 bytes((AUDIO.BREW_CLASS_CALL_CONTROL, AUDIO.CALL_STATE_SHORT_TRANSFER))
                 + call_uuid
@@ -105,8 +105,8 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             queued = list((root / "sms" / "p25-outbox").glob("*.yaml"))
             self.assertEqual(1, len(queued))
             body = queued[0].read_text(encoding="utf-8")
-            self.assertIn("sourceRid: 2635101", body)
-            self.assertIn("targetRid: 2621501", body)
+            self.assertIn("sourceRid: 1000001", body)
+            self.assertIn("targetRid: 1000002", body)
             self.assertIn(payload.hex(), body)
             self.assertEqual(1, len(bridge.transport.frames))
             self.assertTrue(bridge.transport.frames[0].startswith(b"report:"))
