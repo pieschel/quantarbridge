@@ -4,6 +4,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "deploy" / "scripts" / "dmr_to_p25_recover.py"
@@ -29,6 +30,20 @@ class RecoveryReasonTest(unittest.TestCase):
 
     def test_short_bridge_watchdog_does_not_restart_host(self):
         self.assertEqual(MODULE.recovery_reason(119, 120), "")
+
+    def test_inactive_host_is_started_even_when_voice_uses_brew(self):
+        with mock.patch.object(MODULE, "service_main_pid", return_value=""), \
+                mock.patch.object(MODULE.subprocess, "run") as run:
+            self.assertTrue(MODULE.start_host_if_inactive("dvmhost.service"))
+        run.assert_called_once_with(
+            ["systemctl", "start", "dvmhost.service"], check=True
+        )
+
+    def test_active_host_is_left_running(self):
+        with mock.patch.object(MODULE, "service_main_pid", return_value="1234"), \
+                mock.patch.object(MODULE.subprocess, "run") as run:
+            self.assertFalse(MODULE.start_host_if_inactive("dvmhost.service"))
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

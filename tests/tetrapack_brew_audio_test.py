@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import math
 import struct
 import sys
 import tempfile
@@ -212,6 +213,65 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             [-24000, -2000, 0, 2000, 24000],
             AUDIO.scale_pcm([-20000, -1000, 0, 1000, 20000], 2.0, 24000),
         )
+
+    def test_uplink_processor_removes_dc_and_preserves_peak_shape(self):
+        processor = AUDIO.UplinkAudioProcessor(
+            high_pass_hz=180.0,
+            presence_gain=0.15,
+            high_cut_hz=3400.0,
+        )
+        output = processor.process([4000] * 480, 1.0, 24000)
+
+        self.assertLess(abs(output[-1]), 10)
+        self.assertLessEqual(max(abs(value) for value in output), 24000)
+
+    def test_uplink_processor_presence_boosts_fast_changes(self):
+        processor = AUDIO.UplinkAudioProcessor(presence_gain=0.2)
+
+        output = processor.process([0, 1000, -1000, 1000], 1.0, 24000)
+
+        self.assertEqual([0, 1200, -1400, 1400], output)
+
+    def test_uplink_processor_limits_the_whole_block_without_flat_clipping(self):
+        processor = AUDIO.UplinkAudioProcessor()
+
+        output = processor.process([-20000, -10000, 0, 10000, 20000], 2.0, 24000)
+
+        self.assertEqual([-24000, -12000, 0, 12000, 24000], output)
+
+    def test_uplink_de_esser_targets_high_band_without_lowering_voice_body(self):
+        sample_count = 800
+        low_tone = [
+            int(round(4000 * math.sin(2.0 * math.pi * 500 * index / 8000)))
+            for index in range(sample_count)
+        ]
+        high_tone = [
+            int(round(4000 * math.sin(2.0 * math.pi * 3000 * index / 8000)))
+            for index in range(sample_count)
+        ]
+
+        low_output = AUDIO.UplinkAudioProcessor(
+            de_esser_crossover_hz=2200.0,
+            de_esser_threshold=250.0,
+            de_esser_strength=0.55,
+        ).process(low_tone, 1.0, 24000)
+        high_processor = AUDIO.UplinkAudioProcessor(
+            de_esser_crossover_hz=2200.0,
+            de_esser_threshold=250.0,
+            de_esser_strength=0.55,
+        )
+        high_output = high_processor.process(high_tone, 1.0, 24000)
+
+        low_ratio = sum(abs(value) for value in low_output[160:]) / sum(
+            abs(value) for value in low_tone[160:]
+        )
+        high_ratio = sum(abs(value) for value in high_output[160:]) / sum(
+            abs(value) for value in high_tone[160:]
+        )
+        self.assertGreater(low_ratio, 0.9)
+        self.assertLess(high_ratio, 0.8)
+        self.assertGreater(high_processor.de_esser_reduced_samples, 0)
+        self.assertGreater(high_processor.de_esser_max_reduction_db, 1.0)
 
     def test_brew_error_reason_is_bounded_and_safe_for_logs(self):
         frame = bytes((AUDIO.BREW_CLASS_ERROR, 1)) + b"restricted\x00ignored\x01"

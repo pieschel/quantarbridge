@@ -80,6 +80,10 @@ They do not restart DVMFNE or DVMHost, so APX registrations remain intact.
 | `p25EncodePresenceGain` | BREW-to-P25 high-frequency emphasis; excessive values can sound scratchy |
 | `p25EncodeHighCutHz` | Optional BREW-to-P25 low-pass before IMBE; `0` disables it |
 | `p25EncodeAgcPeakLimit` | Absolute BREW-to-P25 PCM ceiling after final gain, with or without AGC |
+| `uplinkHighPassHz` | P25-to-BREW low-frequency cutoff before the TETRA encoder |
+| `uplinkPresenceGain` | P25-to-BREW high-frequency emphasis; raise in small steps |
+| `uplinkHighCutHz` | P25-to-BREW upper speech-band limit before TETRA encoding |
+| `uplinkDeEsserStrength` | Optional sibilance reduction; `0` disables it |
 | `dropTimeMs` | Tail time before a call is released |
 
 Raise one gain at a time. If peaks become scratchy while average loudness is
@@ -96,10 +100,13 @@ P25 AGC off, and a final peak limit of `24000`. Keep these values together when
 restoring the baseline; changing one stage can move clipping into the next codec.
 
 The shipped P25-to-BREW baseline is likewise tuned on the reference installation:
-`rxAudioGain: 1.0`, `vocoderDecoderAudioGain: 0.4`, decoder AGC off,
-`vocoderDecoderUvQuality: 3`, and worker `uplinkGain: 2.0` with a PCM ceiling of
-`24000`. The lower decoder gain provides headroom before the TETRA encoder; the
-worker gain restores the required network level after P25 decoding.
+`rxAudioGain: 1.0`, `vocoderDecoderAudioGain: 1.0`, decoder AGC off,
+`vocoderDecoderUvQuality: 12`, and worker `uplinkGain: 2.0` with a PCM ceiling of
+`24000`. The worker applies an `80 Hz` high-pass, `0.12` presence emphasis, and a
+`3200 Hz` high-cut. The optional de-esser remains disabled because improving the
+IMBE unvoiced synthesis produced the cleaner result without lowering intelligibility.
+Some residual artifacts are expected when speech passes through both IMBE and
+TETRA ACELP coding.
 
 ## TMS Test Sequence
 

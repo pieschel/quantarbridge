@@ -162,6 +162,158 @@ def scale_pcm(samples: list[int], gain: float, peak_limit: int) -> list[int]:
     return output
 
 
+class UplinkAudioProcessor:
+    """Stateful speech-band shaping before the TETRA encoder."""
+
+    SAMPLE_RATE = 8000.0
+
+    def __init__(
+        self,
+        high_pass_hz: float = 0.0,
+        presence_gain: float = 0.0,
+        high_cut_hz: float = 0.0,
+        de_esser_crossover_hz: float = 2200.0,
+        de_esser_threshold: float = 0.0,
+        de_esser_strength: float = 0.0,
+    ) -> None:
+        self.high_pass_hz = high_pass_hz
+        self.presence_gain = presence_gain
+        self.high_cut_hz = high_cut_hz
+        self.de_esser_crossover_hz = de_esser_crossover_hz
+        self.de_esser_threshold = de_esser_threshold
+        self.de_esser_strength = de_esser_strength
+
+        self.high_pass_alpha = 0.0
+        if high_pass_hz > 0.0:
+            rc = 1.0 / (2.0 * math.pi * high_pass_hz)
+            sample_period = 1.0 / self.SAMPLE_RATE
+            self.high_pass_alpha = rc / (rc + sample_period)
+        self.high_pass_ready = False
+        self.high_pass_previous_input = 0.0
+        self.high_pass_previous_output = 0.0
+
+        self.presence_ready = False
+        self.presence_previous_input = 0.0
+
+        self.de_esser_enabled = (
+            de_esser_crossover_hz > 0.0
+            and de_esser_threshold > 0.0
+            and de_esser_strength > 0.0
+        )
+        self.de_esser_split_alpha = math.exp(
+            -2.0 * math.pi * de_esser_crossover_hz / self.SAMPLE_RATE
+        ) if self.de_esser_enabled else 0.0
+        self.de_esser_attack_alpha = math.exp(-1.0 / (0.003 * self.SAMPLE_RATE))
+        self.de_esser_release_alpha = math.exp(-1.0 / (0.060 * self.SAMPLE_RATE))
+        self.de_esser_low_state = 0.0
+        self.de_esser_envelope = 0.0
+        self.de_esser_reduced_samples = 0
+        self.de_esser_min_gain = 1.0
+
+        self.low_pass_b0 = 1.0
+        self.low_pass_b1 = 0.0
+        self.low_pass_b2 = 0.0
+        self.low_pass_a1 = 0.0
+        self.low_pass_a2 = 0.0
+        self.low_pass_state1 = 0.0
+        self.low_pass_state2 = 0.0
+        if high_cut_hz > 0.0:
+            butterworth_q = 0.70710678
+            omega = 2.0 * math.pi * high_cut_hz / self.SAMPLE_RATE
+            cosine = math.cos(omega)
+            alpha = math.sin(omega) / (2.0 * butterworth_q)
+            a0 = 1.0 + alpha
+            self.low_pass_b0 = ((1.0 - cosine) * 0.5) / a0
+            self.low_pass_b1 = (1.0 - cosine) / a0
+            self.low_pass_b2 = self.low_pass_b0
+            self.low_pass_a1 = (-2.0 * cosine) / a0
+            self.low_pass_a2 = (1.0 - alpha) / a0
+
+    def process(self, samples: list[int], gain: float, peak_limit: int) -> list[int]:
+        shaped: list[float] = []
+        for sample in samples:
+            value = float(sample)
+
+            if self.high_pass_hz > 0.0:
+                if not self.high_pass_ready:
+                    self.high_pass_previous_input = value
+                    self.high_pass_ready = True
+                    value = 0.0
+                else:
+                    output = self.high_pass_alpha * (
+                        self.high_pass_previous_output
+                        + value
+                        - self.high_pass_previous_input
+                    )
+                    self.high_pass_previous_input = value
+                    self.high_pass_previous_output = output
+                    value = output
+
+            if self.presence_gain > 0.0:
+                if not self.presence_ready:
+                    self.presence_previous_input = value
+                    self.presence_ready = True
+                else:
+                    current = value
+                    value += self.presence_gain * (
+                        current - self.presence_previous_input
+                    )
+                    self.presence_previous_input = current
+
+            if self.de_esser_enabled:
+                low = (
+                    self.de_esser_split_alpha * self.de_esser_low_state
+                    + (1.0 - self.de_esser_split_alpha) * value
+                )
+                self.de_esser_low_state = low
+                high = value - low
+                detector = abs(high)
+                envelope_alpha = (
+                    self.de_esser_attack_alpha
+                    if detector > self.de_esser_envelope
+                    else self.de_esser_release_alpha
+                )
+                self.de_esser_envelope = (
+                    envelope_alpha * self.de_esser_envelope
+                    + (1.0 - envelope_alpha) * detector
+                )
+                if self.de_esser_envelope > self.de_esser_threshold:
+                    excess_ratio = (
+                        self.de_esser_envelope - self.de_esser_threshold
+                    ) / (self.de_esser_envelope + self.de_esser_threshold)
+                    high_gain = 1.0 - self.de_esser_strength * excess_ratio
+                    value *= high_gain
+                    self.de_esser_reduced_samples += 1
+                    self.de_esser_min_gain = min(self.de_esser_min_gain, high_gain)
+
+            if self.high_cut_hz > 0.0:
+                output = self.low_pass_b0 * value + self.low_pass_state1
+                self.low_pass_state1 = (
+                    self.low_pass_b1 * value
+                    - self.low_pass_a1 * output
+                    + self.low_pass_state2
+                )
+                self.low_pass_state2 = (
+                    self.low_pass_b2 * value - self.low_pass_a2 * output
+                )
+                value = output
+
+            shaped.append(value * gain)
+
+        peak = max((abs(value) for value in shaped), default=0.0)
+        limiter_scale = min(1.0, peak_limit / peak) if peak > 0.0 else 1.0
+        return [
+            max(-peak_limit, min(peak_limit, int(round(value * limiter_scale))))
+            for value in shaped
+        ]
+
+    @property
+    def de_esser_max_reduction_db(self) -> float:
+        if self.de_esser_min_gain >= 1.0:
+            return 0.0
+        return -20.0 * math.log10(max(1e-9, self.de_esser_min_gain))
+
+
 class CodecLibrary:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -371,6 +523,12 @@ class AudioConfig:
     downlink_gain: float = 1.0
     uplink_peak_limit: int = 24000
     downlink_peak_limit: int = 24000
+    uplink_high_pass_hz: float = 0.0
+    uplink_presence_gain: float = 0.0
+    uplink_high_cut_hz: float = 0.0
+    uplink_de_esser_crossover_hz: float = 2200.0
+    uplink_de_esser_threshold: float = 0.0
+    uplink_de_esser_strength: float = 0.0
     subscriber_refresh_seconds: float = 300.0
     user_agent: str = "quantarbridge-brew-audio/1"
 
@@ -471,6 +629,25 @@ class AudioConfig:
             ),
             downlink_peak_limit=max(
                 1000, min(32767, int(raw.get("downlinkPeakLimit", peak_limit)))
+            ),
+            uplink_high_pass_hz=max(
+                0.0, min(600.0, float(raw.get("uplinkHighPassHz", 0.0)))
+            ),
+            uplink_presence_gain=max(
+                0.0, min(0.8, float(raw.get("uplinkPresenceGain", 0.0)))
+            ),
+            uplink_high_cut_hz=max(
+                0.0, min(3500.0, float(raw.get("uplinkHighCutHz", 0.0)))
+            ),
+            uplink_de_esser_crossover_hz=max(
+                1000.0,
+                min(3500.0, float(raw.get("uplinkDeEsserCrossoverHz", 2200.0))),
+            ),
+            uplink_de_esser_threshold=max(
+                0.0, min(32767.0, float(raw.get("uplinkDeEsserThreshold", 0.0)))
+            ),
+            uplink_de_esser_strength=max(
+                0.0, min(0.9, float(raw.get("uplinkDeEsserStrength", 0.0)))
             ),
             subscriber_refresh_seconds=max(
                 60.0, float(raw.get("subscriberRefreshSeconds", 300.0))
@@ -869,6 +1046,7 @@ class UplinkCall:
     brew_destination: int
     call_uuid: bytes
     encoder: CodecHandle
+    processor: UplinkAudioProcessor
     pcm_samples: list[int] = field(default_factory=list)
     voice_frames: int = 0
     pcm_peak: int = 0
@@ -1634,6 +1812,14 @@ class BrewAudioBridge:
             brew_destination=brew_destination,
             call_uuid=call_uuid,
             encoder=self.codec.encoder(),
+            processor=UplinkAudioProcessor(
+                high_pass_hz=self.config.uplink_high_pass_hz,
+                presence_gain=self.config.uplink_presence_gain,
+                high_cut_hz=self.config.uplink_high_cut_hz,
+                de_esser_crossover_hz=self.config.uplink_de_esser_crossover_hz,
+                de_esser_threshold=self.config.uplink_de_esser_threshold,
+                de_esser_strength=self.config.uplink_de_esser_strength,
+            ),
         )
         self.owned_uuids[call_uuid] = time.monotonic() + 30.0
         if not self.transport.send(build_group_tx(call_uuid, source, brew_destination)):
@@ -1659,7 +1845,9 @@ class BrewAudioBridge:
         return call
 
     def _send_uplink_voice(self, call: UplinkCall, samples: list[int]) -> None:
-        samples = scale_pcm(samples, self.config.uplink_gain, self.config.uplink_peak_limit)
+        samples = call.processor.process(
+            samples, self.config.uplink_gain, self.config.uplink_peak_limit
+        )
         coded_a = call.encoder.encode(samples[:TETRA_SAMPLES_30MS])
         coded_b = call.encoder.encode(samples[TETRA_SAMPLES_30MS:])
         ste = join_tmd_block(coded_a, coded_b)
@@ -1679,11 +1867,14 @@ class BrewAudioBridge:
         call.encoder.close()
         rms = pcm_rms(call.pcm_sum_squares, call.pcm_sample_count)
         logging.info(
-            "P25 uplink call idle uuid=%s frames=%u pcm_peak=%u pcm_rms=%.1f",
+            "P25 uplink call idle uuid=%s frames=%u pcm_peak=%u pcm_rms=%.1f "
+            "deesser_samples=%u deesser_max_reduction_db=%.1f",
             uuid_text(call.call_uuid),
             call.voice_frames,
             call.pcm_peak,
             rms,
+            call.processor.de_esser_reduced_samples,
+            call.processor.de_esser_max_reduction_db,
         )
         self.status.set(
             activeUplink=None,
@@ -1694,6 +1885,10 @@ class BrewAudioBridge:
                 "voiceFrames": call.voice_frames,
                 "pcmPeak": call.pcm_peak,
                 "pcmRms": round(rms, 1),
+                "deEsserReducedSamples": call.processor.de_esser_reduced_samples,
+                "deEsserMaxReductionDb": round(
+                    call.processor.de_esser_max_reduction_db, 1
+                ),
                 "endedAt": utc_now(),
             },
         )

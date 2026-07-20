@@ -50,6 +50,13 @@ def service_age_seconds(service):
     return int(age_text or "0")
 
 
+def start_host_if_inactive(service):
+    if service_main_pid(service):
+        return False
+    subprocess.run(["systemctl", "start", service], check=True)
+    return True
+
+
 def throttle_active(stamp_path, min_interval_seconds):
     if min_interval_seconds <= 0:
         return False
@@ -88,6 +95,10 @@ def main():
     parser.add_argument("--min-interval", type=float, default=180.0)
     parser.add_argument("--config", type=Path, default=Path("/home/quantar/quantar-runtime/quantarbridge.yml"))
     args = parser.parse_args()
+
+    if start_host_if_inactive(args.host_service):
+        print(f"started={args.host_service} reason=inactive")
+        return 0
 
     if brew_audio_owns_voice(args.config):
         print("skip=tetrapack-brew-audio-owns-voice")
@@ -158,11 +169,6 @@ def main():
         f"host_watchdog_count={host_watchdog_count} "
         f"recent_voice={recent_voice}"
     )
-
-    if not host_pid:
-        subprocess.run(["systemctl", "start", args.host_service], check=True)
-        print(f"started={args.host_service} reason=inactive")
-        return 0
 
     if min(bridge_age, host_age) < args.cooldown_seconds:
         return 0

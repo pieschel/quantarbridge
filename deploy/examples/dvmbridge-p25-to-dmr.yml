@@ -32,9 +32,9 @@ system:
   grantDemand: false
   txMode: 1
   rxAudioGain: 1.0
-  vocoderDecoderAudioGain: 0.4
+  vocoderDecoderAudioGain: 1.0
   vocoderDecoderAutoGain: false
-  vocoderDecoderUvQuality: 3
+  vocoderDecoderUvQuality: 12
   txAudioGain: 2.0
   vocoderEncoderAudioGain: 0.0
   dmrEncodeHighCutHz: 2500

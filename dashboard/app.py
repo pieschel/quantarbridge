@@ -1985,7 +1985,7 @@ class SettingsManager:
     }
     _DMR_AUDIO_DEFAULTS: dict[str, Any] = {
         "rxAudioGain": 1.0,
-        "vocoderDecoderAudioGain": 0.4,
+        "vocoderDecoderAudioGain": 1.0,
         "vocoderDecoderAutoGain": False,
         "txAudioGain": 2.0,
         "vocoderEncoderAudioGain": 0.0,

@@ -171,7 +171,7 @@ Password=old-password
         """system:
   identity: BRIDGE-P25-DMR
   rxAudioGain: 1.0
-  vocoderDecoderAudioGain: 0.4
+  vocoderDecoderAudioGain: 1.0
   vocoderDecoderAutoGain: false
   txAudioGain: 2.0
   vocoderEncoderAudioGain: 0.0
@@ -206,7 +206,7 @@ def audio_settings() -> dict:
         },
         "p25ToDmr": {
             "rxAudioGain": 1.0,
-            "vocoderDecoderAudioGain": 0.4,
+            "vocoderDecoderAudioGain": 1.0,
             "vocoderDecoderAutoGain": False,
             "txAudioGain": 2.0,
             "vocoderEncoderAudioGain": 0.0,

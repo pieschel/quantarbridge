@@ -94,11 +94,17 @@ class EnableBrewAudioTest(unittest.TestCase):
             self.assertEqual("local-secret", uplink["network"]["password"])
             self.assertEqual("BRIDGE-P25-PCM-ONLY", uplink["system"]["identity"])
             self.assertEqual(31120, uplink["system"]["udpSendPort"])
+            self.assertEqual(1.0, uplink["system"]["vocoderDecoderAudioGain"])
+            self.assertEqual(12, uplink["system"]["vocoderDecoderUvQuality"])
             self.assertEqual("BRIDGE-PCM-P25-ONLY", downlink["system"]["identity"])
             self.assertEqual(1.1, downlink["system"]["txAudioGain"])
             self.assertEqual(31121, downlink["system"]["udpReceivePort"])
             audio = json.loads((runtime / "tetrapack-brew-audio.json").read_text())
             self.assertEqual(2.0, audio["uplinkGain"])
+            self.assertEqual(80, audio["uplinkHighPassHz"])
+            self.assertEqual(0.12, audio["uplinkPresenceGain"])
+            self.assertEqual(3200, audio["uplinkHighCutHz"])
+            self.assertEqual(0.0, audio["uplinkDeEsserStrength"])
             self.assertEqual(str(codec), audio["codecLibrary"])
             self.assertEqual(
                 str(runtime / "sms" / "brew-audio-outbox"),

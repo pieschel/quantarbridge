@@ -373,7 +373,7 @@ index 910bfeda..c1d22921 100644
  
      // encode PCM samples into AMBE codewords
 diff --git a/src/bridge/HostBridge.P25.cpp b/src/bridge/HostBridge.P25.cpp
-index 93c5d083..f6877924 100644
+index 93c5d083..11af4ee0 100644
 --- a/src/bridge/HostBridge.P25.cpp
 +++ b/src/bridge/HostBridge.P25.cpp
 @@ -33,8 +33,169 @@ using namespace network::udp;
@@ -620,7 +620,7 @@ index 93c5d083..f6877924 100644
              m_callInProgress = true;
              m_callAlgoId = ALGO_UNENCRYPT;
  
-@@ -204,7 +386,6 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -204,7 +394,6 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
                  uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                  uint64_t diff = now - m_rxStartTime;
  
@@ -628,7 +628,7 @@ index 93c5d083..f6877924 100644
                  if (m_udpUsrp) {
                      sendUsrpEot();
                  }
-@@ -212,6 +393,10 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -212,6 +401,10 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
                  LogInfoEx(LOG_HOST, "P25, call end, srcId = %u, dstId = %u, dur = %us", srcId, dstId, diff / 1000U);
              }
  
@@ -639,7 +639,7 @@ index 93c5d083..f6877924 100644
              m_rxP25LC = lc::LC();
              m_rxStartTime = 0U;
              m_rxStreamId = 0U;
-@@ -225,9 +410,9 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -225,9 +418,9 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
              return;
          }
  
@@ -651,7 +651,7 @@ index 93c5d083..f6877924 100644
              m_ignoreCall = false;
  
          if (duid == DUID::LDU2 && !m_ignoreCall) {
-@@ -396,7 +581,7 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+@@ -396,7 +589,7 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
              break;
          }
  
@@ -660,15 +660,16 @@ index 93c5d083..f6877924 100644
      }
  }
  
-@@ -407,6 +592,7 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
+@@ -407,6 +600,7 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
      assert(ldu != nullptr);
      using namespace p25;
      using namespace p25::defines;
 +    const bool p25PcmOnlyBridge = m_identity.find("P25-PCM-ONLY") != std::string::npos;
-
+-
++
      if (m_debug) {
          uint8_t mi[MI_LENGTH_BYTES];
-@@ -496,25 +682,39 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
+@@ -496,25 +690,39 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
              assertRtsPtt();
          }
  
@@ -723,7 +724,7 @@ index 93c5d083..f6877924 100644
                  writeUDPAudio(srcId, dstId, pcm, AUDIO_SAMPLES_LENGTH_BYTES);
              }
          }
-@@ -544,8 +744,14 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+@@ -544,8 +752,14 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
          smpIdx++;
      }
  
@@ -740,7 +741,7 @@ index 93c5d083..f6877924 100644
  
      // encode PCM samples into IMBE codewords
      uint8_t imbe[RAW_IMBE_LENGTH_BYTES];
-@@ -696,12 +902,14 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+@@ -696,12 +910,14 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
          LogInfoEx(LOG_HOST, P25_LDU1_STR " audio, srcId = %u, dstId = %u", srcId, dstId);
          m_network->writeP25LDU1(lc, lsd, m_netLDU1, FrameType::HDU_VALID, controlByte);
          m_txStreamId = m_network->getP25StreamId();
@@ -756,7 +757,7 @@ index 93c5d083..f6877924 100644
  
      m_p25SeqNo++;
 diff --git a/src/bridge/HostBridge.cpp b/src/bridge/HostBridge.cpp
-index 3aa4556a..6dd9e35a 100644
+index 3aa4556a..77f46801 100644
 --- a/src/bridge/HostBridge.cpp
 +++ b/src/bridge/HostBridge.cpp
 @@ -120,7 +120,6 @@ void audioCallback(ma_device* device, void* output, const void* input, ma_uint32
@@ -3096,7 +3097,7 @@ index b9f39f06..a94d37a6 100644
                      end.setOpcode(m_rtrt ? MotStartStreamOpcode::TRANSMIT : MotStartStreamOpcode::RECEIVE);
                      end.setParam1(DFSI_MOT_ICW_PARM_STOP);
 diff --git a/src/host/p25/Control.cpp b/src/host/p25/Control.cpp
-index 96e86cdc..fc81e061 100644
+index 96e86cdc..012f646f 100644
 --- a/src/host/p25/Control.cpp
 +++ b/src/host/p25/Control.cpp
 @@ -113,7 +113,7 @@ Control::Control(bool authoritative, uint32_t nac, uint32_t callHang, uint32_t q
@@ -3165,58 +3166,55 @@ index 96e86cdc..fc81e061 100644
          LogInfo("    Silence Threshold: %u (%.1f%%)", m_voice->m_silenceThreshold, float(m_voice->m_silenceThreshold) / 12.33F);
          LogInfo("    Frame Loss Threshold: %u", m_frameLossThreshold);
  
-@@ -1036,29 +1079,37 @@ void Control::clock()
+@@ -1035,29 +1078,39 @@ void Control::clock()
+         m_networkWatchdog.clock(ms);
  
          if (m_networkWatchdog.isRunning() && m_networkWatchdog.hasExpired()) {
++            const uint32_t netDstId = m_voice->m_netLC.getDstId();
++
              if (m_netState == RS_NET_AUDIO) {
 -                if (m_voice->m_netFrames > 0.0F) {
--                    ::ActivityLog("P25", false, "network watchdog has expired, %.1f seconds, %u%% packet loss",
--                        float(m_voice->m_netFrames) / 50.0F, (m_voice->m_netLost * 100U) / m_voice->m_netFrames);
-+                ::ActivityLog("P25", false, "network watchdog has expired, %.1f seconds, %u%% packet loss",
-+                    float(m_voice->m_netFrames) / 50.0F, (m_voice->m_netLost * 100U) / m_voice->m_netFrames);
-+
-+                m_networkWatchdog.stop();
-+                m_affiliations->releaseGrant(m_voice->m_netLC.getDstId(), false);
-+
-+                if (m_dedicatedControl) {
-+                    if (m_network != nullptr)
-+                        m_network->resetP25();
++                if (m_voice->m_netFrames > 0U) {
+                     ::ActivityLog("P25", false, "network watchdog has expired, %.1f seconds, %u%% packet loss",
+                         float(m_voice->m_netFrames) / 50.0F, (m_voice->m_netLost * 100U) / m_voice->m_netFrames);
                  }
++                else {
++                    ::ActivityLog("P25", false, "network watchdog has expired, 0 frames");
++                }
 +
 +                m_voice->writeRF_EndOfVoice();
++                m_voice->m_hadVoice = false;
++                m_tailOnIdle = false;
              }
              else {
                  ::ActivityLog("P25", false, "network watchdog has expired");
--            }
++                m_tailOnIdle = true;
+             }
  
--            m_networkWatchdog.stop();
+             m_networkWatchdog.stop();
 -            m_affiliations->releaseGrant(m_voice->m_netLC.getDstId(), false);
-+                m_networkWatchdog.stop();
-+                m_affiliations->releaseGrant(m_voice->m_netLC.getDstId(), false);
++            m_affiliations->releaseGrant(netDstId, false);
  
 -            if (m_dedicatedControl) {
 -                if (m_network != nullptr)
 -                    m_network->resetP25();
 -            }
-+                if (m_dedicatedControl) {
-+                    if (m_network != nullptr)
-+                        m_network->resetP25();
-+                }
++            // A watchdog means the end-of-call packet may never arrive. Release
++            // the network stream lock so a later stream is not dropped forever.
++            if (m_network != nullptr)
++                m_network->resetP25();
  
--            m_netState = RS_NET_IDLE;
+             m_netState = RS_NET_IDLE;
 -            m_tailOnIdle = true;
-+                m_netState = RS_NET_IDLE;
-+                m_tailOnIdle = true;
- 
--            m_voice->resetNet();
-+                m_voice->resetNet();
- 
--            m_netTimeout.stop();
-+                m_netTimeout.stop();
-+            }
+-
++            m_netTGHang.stop();
++            m_netLastDstId = 0U;
++            m_netLastSrcId = 0U;
+             m_voice->resetNet();
+-
+             m_netTimeout.stop();
          }
      }
- 
 diff --git a/src/host/p25/packet/ControlSignaling.cpp b/src/host/p25/packet/ControlSignaling.cpp
 index e95a3568..84294966 100644
 --- a/src/host/p25/packet/ControlSignaling.cpp
@@ -3230,7 +3228,7 @@ index e95a3568..84294966 100644
      writeRF_TDULC(lc.get(), true);
  
 diff --git a/src/host/p25/packet/Data.cpp b/src/host/p25/packet/Data.cpp
-index dd868c47..d8d470fa 100644
+index dd868c47..309b701c 100644
 --- a/src/host/p25/packet/Data.cpp
 +++ b/src/host/p25/packet/Data.cpp
 @@ -13,13 +13,17 @@
@@ -3251,7 +3249,7 @@ index dd868c47..d8d470fa 100644
  
  using namespace p25;
  using namespace p25::defines;
-@@ -27,8 +31,1373 @@ using namespace p25::data;
+@@ -27,8 +31,1374 @@ using namespace p25::data;
  using namespace p25::sndcp;
  using namespace p25::packet;
  
@@ -3298,6 +3296,7 @@ index dd868c47..d8d470fa 100644
 +constexpr size_t kMotorolaTmsP25FragmentBytes = 76U;
 +constexpr uint32_t kMotorolaTmsP25FragmentGapMs = 300U;
 +constexpr uint32_t kMotorolaTmsP25FragmentAckTimeoutMs = 5000U;
++constexpr uint32_t kMotorolaTmsP25FragmentRestartDelayMs = 1000U;
 +constexpr uint32_t kMotorolaTmsApplicationAckTimeoutMs = 15000U;
 +constexpr uint32_t kMotorolaTmsServiceFallbackDelayMs = 2800U;
 +constexpr uint32_t kMotorolaTmsServiceRetryDelayMs = 5000U;
@@ -4625,7 +4624,7 @@ index dd868c47..d8d470fa 100644
  
  // ---------------------------------------------------------------------------
  //  Constants
-@@ -132,16 +1501,99 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -132,16 +1502,99 @@ bool Data::process(uint8_t* data, uint32_t len)
                          m_rfAssembler->dataHeader.getFormat(), m_rfAssembler->dataHeader.getResponseClass(), m_rfAssembler->dataHeader.getResponseType(), m_rfAssembler->dataHeader.getResponseStatus(),
                          m_rfAssembler->dataHeader.getLLId(), m_rfAssembler->dataHeader.getSrcLLId());
  
@@ -4729,7 +4728,7 @@ index dd868c47..d8d470fa 100644
                  } else {
                      if (m_rfAssembler->dataHeader.getResponseClass() == PDUAckClass::NACK) {
                          switch (m_rfAssembler->dataHeader.getResponseType()) {
-@@ -151,7 +1601,16 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -151,12 +1604,37 @@ bool Data::process(uint8_t* data, uint32_t len)
                                  break;
                              case PDUAckType::NACK_PACKET_CRC:
                                  LogInfoEx(LOG_RF, P25_PDU_STR ", ISP, response, OSP NACK, packet CRC error, llId = %u, n = %u",
@@ -4747,7 +4746,28 @@ index dd868c47..d8d470fa 100644
                                  break;
                              case PDUAckType::NACK_SEQ:
                              case PDUAckType::NACK_OUT_OF_SEQ:
-@@ -179,7 +1638,7 @@ bool Data::process(uint8_t* data, uint32_t len)
+                                 LogInfoEx(LOG_RF, P25_PDU_STR ", ISP, response, OSP NACK, packet out of sequence, llId = %u, seqNo = %u",
+                                     m_rfAssembler->dataHeader.getLLId(), m_rfAssembler->dataHeader.getResponseStatus());
++                                {
++                                    auto nackSession = findMotorolaResponseSession(responseLlId);
++                                    if (nackSession != m_motorolaSessions.end() &&
++                                        !nackSession->second.pendingTmsFragments.empty()) {
++                                        LogWarning(LOG_RF, P25_PDU_STR ", restarting Motorola TMS fragmented delivery after out-of-sequence NACK, llId = %u, messageId = %u",
++                                            nackSession->first, nackSession->second.pendingTmsMessageId);
++                                        restartMotorolaTmsInboundDelivery(nackSession->second,
++                                            kMotorolaTmsP25FragmentRestartDelayMs);
++                                        if (m_retryPDUData != nullptr) {
++                                            delete[] m_retryPDUData;
++                                            m_retryPDUData = nullptr;
++                                        }
++                                        m_retryPDUBitLength = 0U;
++                                        m_retryCount = 0U;
++                                    }
++                                }
+                                 break;
+                             case PDUAckType::NACK_UNDELIVERABLE:
+                                 LogInfoEx(LOG_RF, P25_PDU_STR ", ISP, response, OSP NACK, packet undeliverable, llId = %u, n = %u",
+@@ -179,7 +1657,7 @@ bool Data::process(uint8_t* data, uint32_t len)
                                  m_retryCount++;
                              }
                              else {
@@ -4756,7 +4776,7 @@ index dd868c47..d8d470fa 100644
                                  m_retryPDUData = nullptr;
  
                                  m_retryPDUBitLength = 0U;
-@@ -188,14 +1647,33 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -188,14 +1666,33 @@ bool Data::process(uint8_t* data, uint32_t len)
                                  LogInfoEx(LOG_RF, P25_PDU_STR ", ISP, response, OSP ACK RETRY, llId = %u, exceeded retries, undeliverable",
                                      m_rfAssembler->dataHeader.getLLId());
  
@@ -4792,7 +4812,7 @@ index dd868c47..d8d470fa 100644
  
                  // only repeat the PDU locally if the packet isn't for the FNE
                  if (m_repeatPDU && m_rfAssembler->dataHeader.getLLId() != WUID_FNE) {
-@@ -262,7 +1740,6 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -262,7 +1759,6 @@ bool Data::process(uint8_t* data, uint32_t len)
  
                  uint32_t srcId = (m_rfAssembler->getExtendedAddress()) ? m_rfAssembler->dataHeader.getSrcLLId() : m_rfAssembler->dataHeader.getLLId();
                  uint32_t dstId = m_rfAssembler->dataHeader.getLLId();
@@ -4800,7 +4820,7 @@ index dd868c47..d8d470fa 100644
                  // handle standard P25 service access points
                  switch (sap) {
                  case PDUSAP::ARP:
-@@ -275,7 +1752,7 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -275,7 +1771,7 @@ bool Data::process(uint8_t* data, uint32_t len)
                      uint16_t opcode = GET_UINT16(arpPacket, 6U);
                      uint32_t srcHWAddr = GET_UINT24(arpPacket, 8U);
                      uint32_t srcProtoAddr = GET_UINT32(arpPacket, 11U);
@@ -4809,7 +4829,7 @@ index dd868c47..d8d470fa 100644
                      uint32_t tgtProtoAddr = GET_UINT32(arpPacket, 18U);
  
                      if (m_verbose) {
-@@ -285,8 +1762,65 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -285,8 +1781,65 @@ bool Data::process(uint8_t* data, uint32_t len)
                              LogInfoEx(LOG_RF, P25_PDU_STR ", ARP reply, %s is at %u", __IP_FROM_UINT(srcProtoAddr).c_str(), srcHWAddr);
                          }
                      }
@@ -4876,7 +4896,7 @@ index dd868c47..d8d470fa 100644
                          m_rfPduUserData);
                      writeRF_PDU_Buffered(); // re-generate buffered PDU and send it on
                  }
-@@ -302,7 +1836,7 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -302,7 +1855,7 @@ bool Data::process(uint8_t* data, uint32_t len)
                      }
  
                      processSNDCPControl(m_rfPduUserData);
@@ -4885,7 +4905,7 @@ index dd868c47..d8d470fa 100644
                          m_rfPduUserData);
                  }
                  break;
-@@ -318,10 +1852,325 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -318,10 +1871,325 @@ bool Data::process(uint8_t* data, uint32_t len)
                      }
  
                      processConvDataReg(m_rfPduUserData);
@@ -5212,7 +5232,7 @@ index dd868c47..d8d470fa 100644
                  case PDUSAP::UNENC_KMM:
                  case PDUSAP::ENC_KMM:
                  {
-@@ -333,7 +2182,7 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -333,7 +2201,7 @@ bool Data::process(uint8_t* data, uint32_t len)
                              m_rfAssembler->dataHeader.getBlocksToFollow());
                      }
  
@@ -5221,7 +5241,7 @@ index dd868c47..d8d470fa 100644
                          m_rfPduUserData);
                  }
                  break;
-@@ -351,7 +2200,7 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -351,7 +2219,7 @@ bool Data::process(uint8_t* data, uint32_t len)
                  }
                  break;
                  default:
@@ -5230,7 +5250,7 @@ index dd868c47..d8d470fa 100644
                          m_rfPduUserData);
  
                      // only repeat the PDU locally if the packet isn't for the FNE
-@@ -385,7 +2234,595 @@ bool Data::process(uint8_t* data, uint32_t len)
+@@ -385,7 +2253,595 @@ bool Data::process(uint8_t* data, uint32_t len)
          LogError(LOG_RF, "P25 unhandled data DUID, duid = $%02X", duid);
      }
  
@@ -5827,23 +5847,12 @@ index dd868c47..d8d470fa 100644
  }
  
  /* Process a data frame from the network. */
-@@ -464,128 +2903,830 @@ bool Data::processNetwork(uint8_t* data, uint32_t len, uint8_t currentBlock, uin
-                                                     m_netAssembler->dataHeader.getLLId(), m_netAssembler->dataHeader.getResponseStatus());
-                                                 break;
+@@ -471,121 +2927,844 @@ bool Data::processNetwork(uint8_t* data, uint32_t len, uint8_t currentBlock, uin
+                                 }
+                             }
  
--                                            default:
--                                                break;
--                                            }
--                                    }
--                                }
--                            }
-+                                            default:
-+                                                break;
-+                                            }
-+                                    }
-+                                }
-+                            }
-+
+-                            writeRF_PDU_Ack_Response(m_netAssembler->dataHeader.getResponseClass(), m_netAssembler->dataHeader.getResponseType(), m_netAssembler->dataHeader.getResponseStatus(),
+-                                m_netAssembler->dataHeader.getLLId(), (m_netAssembler->dataHeader.getSrcLLId() > 0U), m_netAssembler->dataHeader.getSrcLLId());
 +                            writeRF_PDU_Ack_Response(m_netAssembler->dataHeader.getResponseClass(), m_netAssembler->dataHeader.getResponseType(), m_netAssembler->dataHeader.getResponseStatus(),
 +                                m_netAssembler->dataHeader.getLLId(), (m_netAssembler->dataHeader.getSrcLLId() > 0U), m_netAssembler->dataHeader.getSrcLLId());
 +
@@ -6364,9 +6373,7 @@ index dd868c47..d8d470fa 100644
 +
 +    const size_t fragmentIndex = session->second.pendingTmsFragmentIndex;
 +    const std::vector<uint8_t>& fragment = session->second.pendingTmsFragments[fragmentIndex];
- 
--                            writeRF_PDU_Ack_Response(m_netAssembler->dataHeader.getResponseClass(), m_netAssembler->dataHeader.getResponseType(), m_netAssembler->dataHeader.getResponseStatus(),
--                                m_netAssembler->dataHeader.getLLId(), (m_netAssembler->dataHeader.getSrcLLId() > 0U), m_netAssembler->dataHeader.getSrcLLId());
++
 +    data::DataHeader rspHeader = data::DataHeader();
 +    rspHeader.setFormat(PDUFormatType::CONFIRMED);
 +    rspHeader.setMFId(MFG_STANDARD);
@@ -6384,10 +6391,7 @@ index dd868c47..d8d470fa 100644
 +        static_cast<uint8_t>(1U + ((fragmentIndex - 1U) % 7U));
 +    rspHeader.setFSN(fsn);
 +    rspHeader.calculateLength(static_cast<uint32_t>(fragment.size()));
- 
--                            resetReceivedBlocks();
--                            return true;
--                        }
++
 +    uint32_t bitLength = 0U;
 +    UInt8Array assembled = m_rfAssembler->assemble(rspHeader, false, false,
 +        fragment.data(), &bitLength);
@@ -6404,6 +6408,24 @@ index dd868c47..d8d470fa 100644
 +    session->second.pendingTmsFragmentNs = ns;
 +    session->second.pendingTmsFragmentAckMs = kMotorolaTmsP25FragmentAckTimeoutMs;
 +    return true;
++}
++
++void Data::restartMotorolaTmsInboundDelivery(MotorolaSession& session, uint32_t delayMs)
++{
++    if (session.pendingTmsFragments.empty()) {
++        return;
++    }
+-
++
+-                            resetReceivedBlocks();
+-                            return true;
+-                        }
++    session.pendingTmsFragmentIndex = 0U;
++    session.pendingTmsFragmentAck = false;
++    session.pendingTmsFragmentNs = 0U;
++    session.pendingTmsFragmentAckMs = 0U;
++    session.pendingTmsFragmentDelayMs = delayMs;
++    session.pendingTmsApplicationAckMs = 0U;
 +}
  
 -                        continue;
@@ -6741,6 +6763,13 @@ index dd868c47..d8d470fa 100644
 +        LogWarning(LOG_RF, P25_PDU_STR ", Motorola TMS message has no numeric target address; text was acknowledged but not routed");
 +    }
 +
++    if (!session->second.pendingTmsFragments.empty()) {
++        LogWarning(LOG_RF, P25_PDU_STR ", restarting Motorola TMS fragmented delivery before sending overlapping message acknowledgement, llId = %u, messageId = %u",
++            sourceRid, session->second.pendingTmsMessageId);
++        restartMotorolaTmsInboundDelivery(session->second,
++            kMotorolaTmsP25FragmentRestartDelayMs);
++    }
++
 +    if (directRouting) {
 +        writeMotorolaTmsDirectMessageAcknowledgement(sourceRid,
 +            message.targetRid, message.targetIp, extendedAddress,
@@ -6753,7 +6782,7 @@ index dd868c47..d8d470fa 100644
  }
  
  /* Helper to write user data as a P25 PDU packet. */
-@@ -688,11 +3829,299 @@ void Data::clock(uint32_t ms)
+@@ -688,11 +3867,299 @@ void Data::clock(uint32_t ms)
              }
          }
      }
@@ -7054,7 +7083,7 @@ index dd868c47..d8d470fa 100644
  {
      if (!isSNDCPInitialized(llId)) {
          m_sndcpStateTable[llId] = SNDCPState::IDLE;
-@@ -771,10 +4163,15 @@ Data::Data(Control* p25, bool dumpPDUData, bool repeatPDU, bool debug, bool verb
+@@ -771,10 +4238,15 @@ Data::Data(Control* p25, bool dumpPDUData, bool repeatPDU, bool debug, bool verb
      m_rfPduUserDataLength(0U),
      m_netPduUserData(nullptr),
      m_netPduUserDataLength(0U),
@@ -7070,7 +7099,7 @@ index dd868c47..d8d470fa 100644
      m_inbound(false),
      m_dumpPDUData(dumpPDUData),
      m_repeatPDU(repeatPDU),
-@@ -804,6 +4201,27 @@ Data::Data(Control* p25, bool dumpPDUData, bool repeatPDU, bool debug, bool verb
+@@ -804,6 +4276,27 @@ Data::Data(Control* p25, bool dumpPDUData, bool repeatPDU, bool debug, bool verb
      m_sndcpStateTable.clear();
      m_sndcpReadyTimers.clear();
      m_sndcpStandbyTimers.clear();
@@ -7098,7 +7127,7 @@ index dd868c47..d8d470fa 100644
  }
  
  /* Finalizes a instance of the Data class. */
-@@ -816,7 +4234,7 @@ Data::~Data()
+@@ -816,7 +4309,7 @@ Data::~Data()
      delete[] m_rfPDU;
  
      if (m_retryPDUData != nullptr)
@@ -7107,7 +7136,7 @@ index dd868c47..d8d470fa 100644
  
      delete[] m_rfPduUserData;
      delete[] m_netPduUserData;
-@@ -826,24 +4244,48 @@ Data::~Data()
+@@ -826,24 +4319,48 @@ Data::~Data()
  
  bool Data::processConvDataReg(const uint8_t* pduUserData)
  {
@@ -7159,7 +7188,7 @@ index dd868c47..d8d470fa 100644
                  m_fneRegTable[llId] = ipAddr;
              }
  
-@@ -859,14 +4301,13 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
+@@ -859,14 +4376,13 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
      {
          uint32_t llId = (pduUserData[1U] << 16) + (pduUserData[2U] << 8) + pduUserData[3U];
  
@@ -7177,7 +7206,7 @@ index dd868c47..d8d470fa 100644
              // remove dynamic FNE registration table entry
              try {
                  m_fneRegTable.at(llId);
-@@ -955,12 +4396,24 @@ void Data::writeNetwork(const uint8_t currentBlock, const uint8_t* data, uint32_
+@@ -955,12 +4471,24 @@ void Data::writeNetwork(const uint8_t currentBlock, const uint8_t* data, uint32_
      if (m_p25->m_rfTimeout.isRunning() && m_p25->m_rfTimeout.hasExpired())
          return;
  
@@ -7203,7 +7232,7 @@ index dd868c47..d8d470fa 100644
  {
      assert(pdu != nullptr);
      assert(bitLength > 0U);
-@@ -970,20 +4423,18 @@ void Data::writeRF_PDU(const uint8_t* pdu, uint32_t bitLength, bool imm, bool ac
+@@ -970,20 +4498,18 @@ void Data::writeRF_PDU(const uint8_t* pdu, uint32_t bitLength, bool imm, bool ac
      for (uint8_t i = 0U; i < 5U; i++)
          m_p25->writeRF_Nulls();
  
@@ -7228,7 +7257,7 @@ index dd868c47..d8d470fa 100644
          LogInfoEx(LOG_RF, P25_PDU_STR ", OSP, ack retry, bitLength = %u",
                     m_retryPDUBitLength);
      }
-@@ -1049,6 +4500,8 @@ void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipA
+@@ -1049,6 +4575,8 @@ void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipA
  
      DataHeader rspHeader = DataHeader();
      rspHeader.setFormat(PDUFormatType::CONFIRMED);
@@ -7237,7 +7266,7 @@ index dd868c47..d8d470fa 100644
      rspHeader.setMFId(m_rfAssembler->dataHeader.getMFId());
      rspHeader.setAckNeeded(true);
      rspHeader.setOutbound(true);
-@@ -1071,6 +4524,11 @@ void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipA
+@@ -1071,6 +4599,11 @@ void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipA
      if (m_dumpPDUData)
          Utils::dump(1U, "P25, PDU Registration Response", pduUserData, 12U);
  
@@ -7249,7 +7278,7 @@ index dd868c47..d8d470fa 100644
      rspHeader.calculateLength(12U);
      writeRF_PDU_User(rspHeader, false, false, pduUserData);
  }
-@@ -1118,5 +4576,15 @@ void Data::writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t a
+@@ -1118,5 +4651,15 @@ void Data::writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t a
              rspHeader.getResponseClass(), rspHeader.getResponseType(), rspHeader.getResponseStatus(), rspHeader.getLLId(), rspHeader.getSrcLLId());
      }
  
@@ -7267,7 +7296,7 @@ index dd868c47..d8d470fa 100644
  }
 +#endif
 diff --git a/src/host/p25/packet/Data.h b/src/host/p25/packet/Data.h
-index 6c550270..c9d733c8 100644
+index 6c550270..c44e8910 100644
 --- a/src/host/p25/packet/Data.h
 +++ b/src/host/p25/packet/Data.h
 @@ -29,6 +29,7 @@
@@ -7365,7 +7394,7 @@ index 6c550270..c9d733c8 100644
              bool m_inbound;
  
              bool m_dumpPDUData;
-@@ -179,12 +244,34 @@ namespace p25
+@@ -179,12 +245,34 @@ namespace p25
               */
              ~Data();
  
@@ -7400,7 +7429,7 @@ index 6c550270..c9d733c8 100644
              /**
               * @brief Helper used to process SNDCP control data from PDU data.
               * @param pduUserData Buffer containing user data to transmit.
-@@ -213,7 +300,8 @@ namespace p25
+@@ -213,7 +301,8 @@ namespace p25
               * @param imm Flag indicating the PDU should be written to the immediate queue.
               * @param ackRetry Flag indicating the PDU is being sent as an acknowledged retry.
               */
@@ -7410,7 +7439,7 @@ index 6c550270..c9d733c8 100644
              /**
               * @brief Helper to write a network P25 PDU packet.
               * This will take buffered network PDU data and repeat it over the air.
-@@ -243,6 +331,25 @@ namespace p25
+@@ -243,6 +332,26 @@ namespace p25
               */
              void writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t ackStatus, uint32_t llId, bool extendedAddress,
                  uint32_t srcLlId = 0U);
@@ -7418,6 +7447,7 @@ index 6c550270..c9d733c8 100644
 +            bool writeMotorolaLocationRequest(uint32_t sourceRid);
 +            bool writeMotorolaTmsInboundDelivery(uint32_t targetRid, uint32_t senderRid, const std::string& text);
 +            bool writeNextMotorolaTmsInboundFragment(uint32_t targetRid);
++            void restartMotorolaTmsInboundDelivery(MotorolaSession& session, uint32_t delayMs);
 +            void resetMotorolaTmsInboundDelivery(MotorolaSession& session);
 +            void processMotorolaTmsOutbox();
 +            void writeMotorolaTmsMessageAcknowledgement(uint32_t sourceRid, uint8_t requestOperation, uint8_t messageId);
