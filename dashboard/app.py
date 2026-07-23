@@ -2843,7 +2843,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _security_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Referrer-Policy", "no-referrer")
+        # OSM's public tile service requires browser requests to include a
+        # Referer. Keep the path private while still identifying this dashboard
+        # by its origin for cross-origin tile requests.
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         self.send_header(
             "Content-Security-Policy",

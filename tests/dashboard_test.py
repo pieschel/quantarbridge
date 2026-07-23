@@ -17,6 +17,7 @@ from dashboard.app import (
     AuthStore,
     BrandmeisterProfileMonitor,
     DashboardConfig,
+    DashboardHandler,
     IdentityDirectory,
     LoginLimiter,
     RestartCoordinator,
@@ -25,6 +26,26 @@ from dashboard.app import (
     SettingsManager,
     decode_motorola_lrrp_position,
 )
+
+
+class DashboardSecurityHeadersTest(unittest.TestCase):
+    def test_tile_requests_are_allowed_to_send_origin_referer(self):
+        headers = {}
+
+        class HeaderRecorder:
+            def send_header(self, name, value):
+                headers[name] = value
+
+        DashboardHandler._security_headers(HeaderRecorder())
+
+        self.assertEqual(
+            "strict-origin-when-cross-origin",
+            headers["Referrer-Policy"],
+        )
+        self.assertIn(
+            "https://tile.openstreetmap.org",
+            headers["Content-Security-Policy"],
+        )
 
 
 class TwoCycleStop:
