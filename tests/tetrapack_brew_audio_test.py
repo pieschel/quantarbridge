@@ -70,6 +70,16 @@ class TetrapackBrewAudioTest(unittest.TestCase):
                 "logFile": "audio.log",
                 "p25PcmInput": {"port": 31120},
                 "p25PcmOutput": {"port": 31121},
+                "p25PcmAdditionalInputs": [
+                    {
+                        "address": "192.168.1.232",
+                        "port": 31124,
+                        "allowedSources": ["192.168.1.189"],
+                    }
+                ],
+                "p25PcmAdditionalOutputs": [
+                    {"address": "192.168.1.189", "port": 31121}
+                ],
                 "staticTalkgroups": [983872],
                 "talkgroupMappings": [{"p25": 999, "brew": 983872}],
                 "dynamicTimeoutSeconds": 600,
@@ -85,6 +95,20 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             self.assertEqual({26291: 999}, config.brew_to_p25)
             self.assertEqual(900, config.dynamic_timeout_seconds)
             self.assertEqual(4001, config.disconnect_talkgroup)
+            self.assertEqual(
+                [
+                    AUDIO.PcmInputConfig(
+                        "192.168.1.232",
+                        31124,
+                        frozenset({"192.168.1.189"}),
+                    )
+                ],
+                config.pcm_additional_inputs,
+            )
+            self.assertEqual(
+                [AUDIO.PcmOutputConfig("192.168.1.189", 31121)],
+                config.pcm_additional_outputs,
+            )
 
     def test_inbound_brew_sds_is_queued_for_registered_p25_radio(self):
         test_case = self
@@ -93,7 +117,7 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             @staticmethod
             def parse_text_sds_type4_pdu(payload, length_bits):
                 test_case.assertEqual(len(payload) * 8, length_bits)
-                return payload.decode("utf-8")
+                return payload[1:].decode("utf-8")
 
             @staticmethod
             def build_brew_sds_report(session_id, status=0):
@@ -120,6 +144,7 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             bridge.local_issis_lock = threading.Lock()
             bridge.local_issis = {1000002}
             bridge.pending_sds = {}
+            bridge.recent_inbound_sds = {}
             bridge.owned_uuids = {}
 
             call_uuid = bytes.fromhex("8aa5b78d6053f04f929dcf20b578cdce")
@@ -131,7 +156,8 @@ class TetrapackBrewAudioTest(unittest.TestCase):
                 + struct.pack("<II", source, target)
                 + bytes(32)
             )
-            payload = b"Private test"
+            text = b"Private test"
+            payload = b"\x01" + text
             transfer = (
                 bytes((AUDIO.BREW_CLASS_FRAME, AUDIO.FRAME_TYPE_SDS_TRANSFER))
                 + call_uuid
@@ -147,9 +173,43 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             body = queued[0].read_text(encoding="utf-8")
             self.assertIn("sourceRid: 1000001", body)
             self.assertIn("targetRid: 1000002", body)
-            self.assertIn(payload.hex(), body)
+            self.assertIn(text.hex(), body)
             self.assertEqual(1, len(bridge.transport.frames))
             self.assertTrue(bridge.transport.frames[0].startswith(b"report:"))
+
+            duplicate_uuid = bytes.fromhex(
+                "c8567b1174886f409096b3bb11b66512"
+            )
+            duplicate_header = (
+                bytes(
+                    (
+                        AUDIO.BREW_CLASS_CALL_CONTROL,
+                        AUDIO.CALL_STATE_SHORT_TRANSFER,
+                    )
+                )
+                + duplicate_uuid
+                + struct.pack("<II", source, target)
+                + bytes(32)
+            )
+            duplicate_payload = b"\x02" + text
+            duplicate_transfer = (
+                bytes((AUDIO.BREW_CLASS_FRAME, AUDIO.FRAME_TYPE_SDS_TRANSFER))
+                + duplicate_uuid
+                + struct.pack("<H", len(duplicate_payload) * 8)
+                + duplicate_payload
+            )
+
+            bridge._on_brew_binary(duplicate_header)
+            bridge._on_brew_binary(duplicate_transfer)
+
+            queued = list((root / "sms" / "p25-outbox").glob("*.yaml"))
+            self.assertEqual(1, len(queued))
+            self.assertEqual(2, len(bridge.transport.frames))
+            self.assertTrue(bridge.transport.frames[1].startswith(b"report:"))
+            self.assertEqual(
+                1,
+                bridge.status.data["counters"]["duplicateBrewSmsFrames"],
+            )
 
     def test_sms_command_is_sent_over_the_audio_transport(self):
         class FakeBrewModule:

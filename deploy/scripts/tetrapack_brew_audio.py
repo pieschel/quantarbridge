@@ -50,6 +50,7 @@ CALL_STATE_SHORT_TRANSFER = 11
 FRAME_TYPE_TRAFFIC_CHANNEL = 0
 FRAME_TYPE_SDS_TRANSFER = 1
 FRAME_TYPE_SDS_REPORT = 2
+BREW_SDS_DUPLICATE_WINDOW_SECONDS = 60.0
 
 RTP_HEADER_BYTES = 12
 PCM_SAMPLES_20MS = 160
@@ -486,6 +487,7 @@ class AtomicStatus:
 class PcmInputConfig:
     address: str
     port: int
+    allowed_sources: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -514,6 +516,8 @@ class AudioConfig:
     disconnect_talkgroup: int
     pcm_input: PcmInputConfig
     pcm_output: PcmOutputConfig
+    pcm_additional_inputs: list[PcmInputConfig] = field(default_factory=list)
+    pcm_additional_outputs: list[PcmOutputConfig] = field(default_factory=list)
     sms_command_dir: Path | None = None
     jitter_frames: int = 4
     rebuffer_frames: int = 2
@@ -579,6 +583,21 @@ class AudioConfig:
         )
         if not 1 <= disconnect_talkgroup <= 0xFFFFFF:
             raise ValueError("disconnectTalkgroup must be between 1 and 16777215")
+        additional_inputs = [
+            PcmInputConfig(
+                str(item.get("address", "127.0.0.1")),
+                int(item["port"]),
+                frozenset(str(value) for value in item.get("allowedSources", [])),
+            )
+            for item in raw.get("p25PcmAdditionalInputs", [])
+        ]
+        additional_outputs = [
+            PcmOutputConfig(
+                str(item.get("address", "127.0.0.1")),
+                int(item["port"]),
+            )
+            for item in raw.get("p25PcmAdditionalOutputs", [])
+        ]
         return cls(
             enabled=bool(raw.get("enabled", True)),
             existing_brew_config=resolve(str(raw["existingBrewConfig"])),
@@ -613,6 +632,8 @@ class AudioConfig:
                 str(raw["p25PcmOutput"].get("address", "127.0.0.1")),
                 int(raw["p25PcmOutput"]["port"]),
             ),
+            pcm_additional_inputs=additional_inputs,
+            pcm_additional_outputs=additional_outputs,
             sms_command_dir=(
                 resolve(str(raw["smsCommandDir"]))
                 if raw.get("smsCommandDir")
@@ -1134,8 +1155,9 @@ class BrewAudioBridge:
         self.ignored_downlink_uuids: set[bytes] = set()
         self.active_downlink_uuid: bytes | None = None
         self.pending_sds: dict[bytes, PendingSds] = {}
+        self.recent_inbound_sds: dict[tuple[int, int, str], float] = {}
 
-        self.input_socket: socket.socket | None = None
+        self.input_sockets: list[socket.socket] = []
         self.output_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rtp_sequence = 0
         self.rtp_timestamp = random.getrandbits(32)
@@ -1147,8 +1169,17 @@ class BrewAudioBridge:
         except OSError:
             self.routing_config_mtime_ns = -1
 
+        input_endpoints = [self.config.pcm_input, *self.config.pcm_additional_inputs]
         self.threads = [
-            threading.Thread(target=self._udp_receive_loop, name="p25-pcm-receive", daemon=True),
+            *[
+                threading.Thread(
+                    target=self._udp_receive_loop,
+                    args=(endpoint,),
+                    name=f"p25-pcm-receive-{index}",
+                    daemon=True,
+                )
+                for index, endpoint in enumerate(input_endpoints)
+            ],
             threading.Thread(target=self._uplink_loop, name="p25-to-brew", daemon=True),
             threading.Thread(target=self._downlink_loop, name="brew-to-p25", daemon=True),
             threading.Thread(target=self._registration_loop, name="ars-registration-monitor", daemon=True),
@@ -1182,6 +1213,14 @@ class BrewAudioBridge:
             ],
             p25PcmInput=f"{self.config.pcm_input.address}:{self.config.pcm_input.port}",
             p25PcmOutput=f"{self.config.pcm_output.address}:{self.config.pcm_output.port}",
+            p25PcmAdditionalInputs=[
+                f"{item.address}:{item.port}"
+                for item in self.config.pcm_additional_inputs
+            ],
+            p25PcmAdditionalOutputs=[
+                f"{item.address}:{item.port}"
+                for item in self.config.pcm_additional_outputs
+            ],
         )
         self.transport.start()
         for thread in self.threads:
@@ -1191,9 +1230,9 @@ class BrewAudioBridge:
         self.stop_event.set()
         with self.uplink_condition:
             self.uplink_condition.notify_all()
-        if self.input_socket is not None:
+        for input_socket in self.input_sockets:
             try:
-                self.input_socket.close()
+                input_socket.close()
             except Exception:
                 pass
 
@@ -1579,6 +1618,32 @@ class BrewAudioBridge:
             self.status.increment("undeliverableBrewSmsFrames")
             logging.warning("BREW SDS cannot be delivered because smsCommandDir is disabled")
             return
+
+        now = time.monotonic()
+        self.recent_inbound_sds = {
+            key: expiry
+            for key, expiry in self.recent_inbound_sds.items()
+            if expiry > now
+        }
+        duplicate_key = (
+            pending.source,
+            pending.destination,
+            text,
+        )
+        duplicate = duplicate_key in self.recent_inbound_sds
+
+        if duplicate:
+            self._send_brew_sds_report(call_uuid, pending)
+            self.status.increment("duplicateBrewSmsFrames")
+            logging.info(
+                "Dropping duplicate BREW SDS after acknowledgement uuid=%s src=%u dst=%u chars=%u",
+                uuid_text(call_uuid),
+                pending.source,
+                pending.destination,
+                len(text),
+            )
+            return
+
         outbox = self.config.sms_command_dir.parent / "p25-outbox"
         outbox.mkdir(parents=True, exist_ok=True)
         event_id = f"brew-sds-{int(time.time_ns() // 1_000_000)}-{uuid_text(call_uuid)}"
@@ -1592,10 +1657,10 @@ class BrewAudioBridge:
         )
         os.chmod(temporary, 0o600)
         temporary.replace(path)
-
-        session_id = uuid.UUID(bytes_le=call_uuid)
-        report = self.transport.brew_module.build_brew_sds_report(session_id, status=0)
-        self.transport.send(report)
+        self.recent_inbound_sds[duplicate_key] = (
+            now + BREW_SDS_DUPLICATE_WINDOW_SECONDS
+        )
+        self._send_brew_sds_report(call_uuid, pending)
         self.status.increment("brewSmsMessagesDelivered")
         logging.info(
             "BREW SDS queued for P25 uuid=%s src=%u dst=%u chars=%u",
@@ -1604,6 +1669,22 @@ class BrewAudioBridge:
             pending.destination,
             len(text),
         )
+
+    def _send_brew_sds_report(
+        self, call_uuid: bytes, pending: PendingSds
+    ) -> None:
+        session_id = uuid.UUID(bytes_le=call_uuid)
+        report = self.transport.brew_module.build_brew_sds_report(
+            session_id, status=0
+        )
+        if not self.transport.send(report):
+            self.status.increment("brewSmsReportSendFailures")
+            logging.warning(
+                "BREW SDS report send failed uuid=%s src=%u dst=%u",
+                uuid_text(call_uuid),
+                pending.source,
+                pending.destination,
+            )
 
     def _start_or_update_downlink(self, call_uuid: bytes, source: int, destination: int) -> None:
         with self.router_lock:
@@ -1694,19 +1775,25 @@ class BrewAudioBridge:
             if length_bits not in (TETRA_BITS_60MS, TETRA_STE_BYTES * 8):
                 self.status.increment("unusualBrewVoiceLengths")
 
-    def _udp_receive_loop(self) -> None:
+    def _udp_receive_loop(self, endpoint: PcmInputConfig) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
-        sock.bind((self.config.pcm_input.address, self.config.pcm_input.port))
+        sock.bind((endpoint.address, endpoint.port))
         sock.settimeout(0.2)
-        self.input_socket = sock
+        self.input_sockets.append(sock)
         while not self.stop_event.is_set():
             try:
-                packet, _address = sock.recvfrom(2048)
+                packet, source_address = sock.recvfrom(2048)
             except socket.timeout:
                 continue
             except OSError:
                 break
+            if (
+                endpoint.allowed_sources
+                and source_address[0] not in endpoint.allowed_sources
+            ):
+                self.status.increment("rejectedP25PcmSources")
+                continue
             parsed = parse_dvm_rtp(packet)
             if parsed is None:
                 self.status.increment("invalidP25PcmPackets")
@@ -1980,7 +2067,22 @@ class BrewAudioBridge:
                 self.rtp_ssrc,
                 self.rtp_sequence == 0,
             )
-            self.output_socket.sendto(packet, (self.config.pcm_output.address, self.config.pcm_output.port))
+            for endpoint in [
+                self.config.pcm_output,
+                *self.config.pcm_additional_outputs,
+            ]:
+                try:
+                    self.output_socket.sendto(
+                        packet, (endpoint.address, endpoint.port)
+                    )
+                except OSError as exc:
+                    logging.warning(
+                        "P25 PCM output %s:%u failed: %s",
+                        endpoint.address,
+                        endpoint.port,
+                        type(exc).__name__,
+                    )
+                    self.status.increment("p25PcmOutputFailures")
             self.rtp_sequence = (self.rtp_sequence + 1) % 65535
             self.rtp_timestamp = (self.rtp_timestamp + PCM_SAMPLES_20MS) & 0xFFFFFFFF
             self.status.increment("p25PcmFramesSent")
