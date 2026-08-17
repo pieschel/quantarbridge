@@ -112,7 +112,11 @@ trap - EXIT
 
 COMMIT="${GITHUB_SHA:-unknown}"
 SHORT_COMMIT="${COMMIT:0:12}"
-FINAL_IMAGE="${OUTPUT_DIR}/quantarbridge-rpios-trixie-arm64-${SHORT_COMMIT}.img"
+IMAGE_VERSION="${SHORT_COMMIT}"
+if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
+  IMAGE_VERSION="${GITHUB_REF_NAME}"
+fi
+FINAL_IMAGE="${OUTPUT_DIR}/quantarbridge-rpios-trixie-arm64-${IMAGE_VERSION}.img"
 mv "${IMAGE_PATH}" "${FINAL_IMAGE}"
 xz --threads=0 --compress --keep --force "${FINAL_IMAGE}"
 rm -f "${FINAL_IMAGE}"
@@ -124,6 +128,7 @@ Architecture: ARM64 / aarch64
 Base: Raspberry Pi OS Lite 64-bit, Debian 13 (trixie), 2026-06-18
 Base SHA256: ${BASE_IMAGE_SHA256}
 QuantarBridge commit: ${COMMIT}
+Release version: ${GITHUB_REF_NAME:-development}
 Image: $(basename "${FINAL_IMAGE}.xz")
 EOF
 
