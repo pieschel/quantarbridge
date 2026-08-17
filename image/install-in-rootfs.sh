@@ -87,6 +87,7 @@ install -m 0440 "${INSTALL_DIR}/image/quantarbridge-sudoers" \
   /etc/sudoers.d/quantarbridge-dashboard
 visudo -cf /etc/sudoers.d/quantarbridge-dashboard
 install -m 0755 "${INSTALL_DIR}/image/quantarbridge-setup" /usr/local/sbin/quantarbridge-setup
+install -d -m 0755 /etc/motd.d
 install -m 0644 "${INSTALL_DIR}/image/quantarbridge-motd" /etc/motd.d/90-quantarbridge
 install -m 0644 "${INSTALL_DIR}/image/QUANTARBRIDGE-README.txt" \
   /boot/firmware/QUANTARBRIDGE-README.txt

@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - name: Check out QuantarBridge
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build and validate ARM64 image
         run: sudo --preserve-env=GITHUB_SHA,RUNNER_TEMP bash image/build-rpi-image.sh
