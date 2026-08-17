@@ -82,17 +82,26 @@ BmPacketDataReassembler::Result BmPacketDataReassembler::push(
 
     if (dataType == DataType::DATA_HEADER) {
         dmr::data::DataHeader header;
-        if (!header.decode(payload) ||
-            (header.getDPF() != DPF::CONFIRMED_DATA && header.getDPF() != DPF::UNCONFIRMED_DATA) ||
-            header.getSAP() != PDUSAP::PACKET_DATA ||
-            header.getBlocksToFollow() == 0U || header.getBlocksToFollow() > kMaxBlocks) {
+        if (!header.decode(payload)) {
+            return {};
+        }
+
+        const bool packetData =
+            (header.getDPF() == DPF::CONFIRMED_DATA || header.getDPF() == DPF::UNCONFIRMED_DATA) &&
+            header.getSAP() == PDUSAP::PACKET_DATA;
+        const bool definedShortData = header.getDPF() == DPF::DEFINED_SHORT &&
+            header.getSAP() == PDUSAP::SHORT_DATA;
+        if ((!packetData && !definedShortData) || header.getBlocksToFollow() == 0U ||
+            header.getBlocksToFollow() > kMaxBlocks) {
             return {};
         }
 
         Session session;
         session.header = header;
         session.expectedBlocks = header.getBlocksToFollow();
-        session.confirmed = header.getDPF() == DPF::CONFIRMED_DATA;
+        session.definedShortData = definedShortData;
+        session.confirmed = header.getDPF() == DPF::CONFIRMED_DATA ||
+            (definedShortData && header.getA());
         session.blocks.resize(session.expectedBlocks);
         session.received.resize(session.expectedBlocks, false);
         session.updatedAt = now;
@@ -114,12 +123,19 @@ BmPacketDataReassembler::Result BmPacketDataReassembler::push(
 
     dmr::data::DataBlock block;
     block.setDataType(dataType);
-    if (!block.decode(payload, session.header)) {
+    dmr::data::DataHeader decodingHeader = session.header;
+    if (session.definedShortData && session.confirmed) {
+        // Acknowledged Defined Short Data uses the same per-block serial/CRC
+        // layout as Confirmed Data even though its header has DPF 0x0D.
+        decodingHeader.setDPF(DPF::CONFIRMED_DATA);
+    }
+    if (!block.decode(payload, decodingHeader)) {
         return {true, std::nullopt};
     }
 
     std::array<uint8_t, 32U> decoded {};
     const uint32_t decodedLength = block.getData(decoded.data());
+    const std::vector<uint8_t> decodedBytes(decoded.begin(), decoded.begin() + decodedLength);
     uint32_t blockIndex = session.nextUnconfirmedBlock;
     if (session.confirmed) {
         blockIndex = block.getSerialNo();
@@ -132,7 +148,7 @@ BmPacketDataReassembler::Result BmPacketDataReassembler::push(
     }
 
     if (!session.received[blockIndex]) {
-        session.blocks[blockIndex].assign(decoded.begin(), decoded.begin() + decodedLength);
+        session.blocks[blockIndex] = decodedBytes;
         session.received[blockIndex] = true;
         ++session.receivedBlocks;
     }
@@ -146,11 +162,15 @@ BmPacketDataReassembler::Result BmPacketDataReassembler::push(
     packet.targetRid = frame.getDstId();
     packet.slotNo = static_cast<uint8_t>(frame.getSlotNo());
     packet.sequenceNo = session.header.getNs();
+    packet.definedShortData = session.definedShortData;
     for (const auto& bytes : session.blocks) {
         packet.bytes.insert(packet.bytes.end(), bytes.begin(), bytes.end());
     }
 
-    const uint32_t padAndCrc = static_cast<uint32_t>(session.header.getPadLength()) + 4U;
+    const uint32_t padBytes = session.definedShortData ?
+        (static_cast<uint32_t>(session.header.getPadLength()) + 7U) / 8U :
+        static_cast<uint32_t>(session.header.getPadLength());
+    const uint32_t padAndCrc = padBytes + 4U;
     if (packet.bytes.size() >= 20U && (packet.bytes[0U] >> 4U) == 4U) {
         const uint32_t ipv4Length = (static_cast<uint32_t>(packet.bytes[2U]) << 8U) | packet.bytes[3U];
         const uint32_t headerLength = static_cast<uint32_t>(packet.bytes[0U] & 0x0FU) * 4U;

@@ -393,6 +393,86 @@ std::optional<SmsSubsystem::ServiceReplyRoute> SmsSubsystem::findServiceReplyRou
     return std::nullopt;
 }
 
+SmsSubsystem::BrandmeisterTextResult SmsSubsystem::queueBrandmeisterText(
+    uint32_t sourceRid, uint32_t targetRid, const std::string& text, const char* transportName)
+{
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = m_recentBmTmsReplies.begin(); it != m_recentBmTmsReplies.end();) {
+        if (now >= it->second) {
+            it = m_recentBmTmsReplies.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    const std::string replyKey = std::to_string(sourceRid) + ">" + std::to_string(targetRid) + ":" + text;
+    const auto duplicate = m_recentBmTmsReplies.find(replyKey);
+    if (duplicate != m_recentBmTmsReplies.end() && now < duplicate->second) {
+        ::LogInfoEx(LOG_HOST, "Dropping duplicate BM %s reply srcRid=%u dstRid=%u textLength=%u",
+            transportName, sourceRid, targetRid, static_cast<uint32_t>(text.size()));
+        return BrandmeisterTextResult::DUPLICATE;
+    }
+
+    const auto serviceRoute = findServiceReplyRoute(sourceRid);
+    const uint32_t deliveryTargetRid = serviceRoute.has_value() ?
+        serviceRoute->requesterRid : targetRid;
+    if (serviceRoute.has_value() && deliveryTargetRid != targetRid) {
+        ::LogInfoEx(LOG_HOST,
+            "Routing BM %s service reply from srcRid=%u networkDstRid=%u to requesterRid=%u",
+            transportName, sourceRid, targetRid, deliveryTargetRid);
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(m_config.p25OutboxPath, ec);
+    if (ec) {
+        ::LogWarning(LOG_HOST, "P25 TMS outbox directory %s could not be created: %s",
+            m_config.p25OutboxPath.c_str(), ec.message().c_str());
+        return BrandmeisterTextResult::FAILED;
+    }
+
+    const std::string stem = makeEventStem("bm-tms");
+    const auto targetPath = std::filesystem::path(m_config.p25OutboxPath) / (stem + ".yaml");
+    const auto tempPath = targetPath.string() + ".tmp";
+    std::ofstream output(tempPath, std::ios::trunc | std::ios::binary);
+    if (!output.is_open()) {
+        ::LogWarning(LOG_HOST, "P25 TMS outbox file %s could not be opened", tempPath.c_str());
+        return BrandmeisterTextResult::FAILED;
+    }
+
+    output << "sourceRid: " << sourceRid << '\n';
+    output << "targetRid: " << deliveryTargetRid << '\n';
+    output << "textHex: " << bytesToHex(reinterpret_cast<const uint8_t*>(text.data()),
+        static_cast<uint32_t>(text.size())) << '\n';
+    output.close();
+    if (!output) {
+        std::filesystem::remove(tempPath, ec);
+        return BrandmeisterTextResult::FAILED;
+    }
+
+    std::filesystem::rename(tempPath, targetPath, ec);
+    if (ec) {
+        ::LogWarning(LOG_HOST, "P25 TMS outbox event %s could not be published: %s",
+            targetPath.string().c_str(), ec.message().c_str());
+        std::filesystem::remove(tempPath, ec);
+        return BrandmeisterTextResult::FAILED;
+    }
+
+    if (serviceRoute.has_value()) {
+        ec.clear();
+        if (!std::filesystem::remove(serviceRoute->path, ec) || ec) {
+            ::LogWarning(LOG_HOST, "TMS service-route file %s could not be consumed: %s",
+                serviceRoute->path.string().c_str(), ec ? ec.message().c_str() : "file not found");
+        }
+    }
+
+    m_recentBmTmsReplies[replyKey] = now + kBmTmsReplyDuplicateWindow;
+    ::LogInfoEx(LOG_HOST,
+        "BM %s reply queued for P25, srcRid=%u dstRid=%u textLength=%u file=%s",
+        transportName, sourceRid, deliveryTargetRid, static_cast<uint32_t>(text.size()),
+        targetPath.string().c_str());
+    return BrandmeisterTextResult::QUEUED;
+}
+
 bool SmsSubsystem::handleBrandmeisterPacketData(uint32_t sourceRid, uint32_t targetRid,
     uint8_t slotNo, const std::vector<uint8_t>& ipv4Packet)
 {
@@ -443,80 +523,10 @@ bool SmsSubsystem::handleBrandmeisterPacketData(uint32_t sourceRid, uint32_t tar
         return false;
     }
 
-    const auto now = std::chrono::steady_clock::now();
-    for (auto it = m_recentBmTmsReplies.begin(); it != m_recentBmTmsReplies.end();) {
-        if (now >= it->second) {
-            it = m_recentBmTmsReplies.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    const std::string replyKey = std::to_string(sourceRid) + ">" + std::to_string(targetRid) + ":" + text;
-    const auto duplicate = m_recentBmTmsReplies.find(replyKey);
-    if (duplicate != m_recentBmTmsReplies.end() && now < duplicate->second) {
-        if (parsed.has_value() && !sendBrandmeisterTmsAcknowledgement(sourceRid, targetRid, slotNo,
-            ipv4Packet, sourcePort, targetPort, parsed->operation, parsed->messageId)) {
-            ::LogWarning(LOG_HOST, "BM Motorola TMS duplicate acknowledgement failed, srcRid=%u dstRid=%u messageId=%u",
-                sourceRid, targetRid, parsed->messageId);
-        }
-        ::LogInfoEx(LOG_HOST, "Dropping duplicate BM Motorola TMS reply srcRid=%u dstRid=%u textLength=%u",
-            sourceRid, targetRid, static_cast<uint32_t>(text.size()));
-        return true;
-    }
-
-    const auto serviceRoute = findServiceReplyRoute(sourceRid);
-    const uint32_t deliveryTargetRid = serviceRoute.has_value() ?
-        serviceRoute->requesterRid : targetRid;
-    if (serviceRoute.has_value() && deliveryTargetRid != targetRid) {
-        ::LogInfoEx(LOG_HOST,
-            "Routing BM Motorola TMS service reply from srcRid=%u networkDstRid=%u to requesterRid=%u",
-            sourceRid, targetRid, deliveryTargetRid);
-    }
-
-    std::error_code ec;
-    std::filesystem::create_directories(m_config.p25OutboxPath, ec);
-    if (ec) {
-        ::LogWarning(LOG_HOST, "P25 TMS outbox directory %s could not be created: %s",
-            m_config.p25OutboxPath.c_str(), ec.message().c_str());
+    const auto queueResult = queueBrandmeisterText(sourceRid, targetRid, text, "Motorola TMS");
+    if (queueResult == BrandmeisterTextResult::FAILED) {
         return false;
     }
-
-    const std::string stem = makeEventStem("bm-tms");
-    const auto targetPath = std::filesystem::path(m_config.p25OutboxPath) / (stem + ".yaml");
-    const auto tempPath = targetPath.string() + ".tmp";
-    std::ofstream output(tempPath, std::ios::trunc | std::ios::binary);
-    if (!output.is_open()) {
-        ::LogWarning(LOG_HOST, "P25 TMS outbox file %s could not be opened", tempPath.c_str());
-        return false;
-    }
-
-    output << "sourceRid: " << sourceRid << '\n';
-    output << "targetRid: " << deliveryTargetRid << '\n';
-    output << "textHex: " << bytesToHex(reinterpret_cast<const uint8_t*>(text.data()),
-        static_cast<uint32_t>(text.size())) << '\n';
-    output.close();
-    if (!output) {
-        std::filesystem::remove(tempPath, ec);
-        return false;
-    }
-
-    std::filesystem::rename(tempPath, targetPath, ec);
-    if (ec) {
-        ::LogWarning(LOG_HOST, "P25 TMS outbox event %s could not be published: %s",
-            targetPath.string().c_str(), ec.message().c_str());
-        std::filesystem::remove(tempPath, ec);
-        return false;
-    }
-
-    if (serviceRoute.has_value()) {
-        ec.clear();
-        if (!std::filesystem::remove(serviceRoute->path, ec) || ec) {
-            ::LogWarning(LOG_HOST, "TMS service-route file %s could not be consumed: %s",
-                serviceRoute->path.string().c_str(), ec ? ec.message().c_str() : "file not found");
-        }
-    }
-
-    m_recentBmTmsReplies[replyKey] = now + kBmTmsReplyDuplicateWindow;
 
     if (parsed.has_value() && !sendBrandmeisterTmsAcknowledgement(sourceRid, targetRid, slotNo,
         ipv4Packet, sourcePort, targetPort, parsed->operation, parsed->messageId)) {
@@ -524,11 +534,23 @@ bool SmsSubsystem::handleBrandmeisterPacketData(uint32_t sourceRid, uint32_t tar
             sourceRid, targetRid, parsed->messageId);
     }
 
-    ::LogInfoEx(LOG_HOST,
-        "BM Motorola TMS reply queued for P25, srcRid=%u dstRid=%u ports=%u->%u textLength=%u file=%s",
-        sourceRid, deliveryTargetRid, sourcePort, targetPort, static_cast<uint32_t>(text.size()),
-        targetPath.string().c_str());
     return true;
+}
+
+bool SmsSubsystem::handleBrandmeisterShortData(uint32_t sourceRid, uint32_t targetRid,
+    const std::vector<uint8_t>& shortData)
+{
+    const std::string text = trim(decodeUtf16Be(shortData));
+    if (text.empty()) {
+        ::LogWarning(LOG_HOST,
+            "BM Defined Short Data did not contain decodable UTF-16BE text, srcRid=%u dstRid=%u dataHex=%s",
+            sourceRid, targetRid,
+            bytesToHex(shortData.data(), static_cast<uint32_t>(shortData.size())).c_str());
+        return false;
+    }
+
+    return queueBrandmeisterText(sourceRid, targetRid, text, "Defined Short Data") !=
+        BrandmeisterTextResult::FAILED;
 }
 
 bool SmsSubsystem::sendBrandmeisterTmsAcknowledgement(uint32_t sourceRid, uint32_t targetRid,
@@ -1320,6 +1342,32 @@ std::string SmsSubsystem::jsonEscape(const std::string& value)
         }
     }
     return stream.str();
+}
+
+std::string SmsSubsystem::decodeUtf16Be(const std::vector<uint8_t>& data)
+{
+    std::u16string wide;
+    wide.reserve(data.size() / 2U);
+    for (size_t offset = 0U; offset + 1U < data.size(); offset += 2U) {
+        const uint16_t value = (static_cast<uint16_t>(data[offset]) << 8U) |
+            static_cast<uint16_t>(data[offset + 1U]);
+        if (value == 0xFEFFU && wide.empty()) {
+            continue;
+        }
+        if (value == 0x0000U) {
+            break;
+        }
+        if (!isPrintableUtf16(value)) {
+            return {};
+        }
+        wide.push_back(static_cast<char16_t>(value));
+    }
+
+    if (wide.empty()) {
+        return {};
+    }
+    std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> convert;
+    return convert.to_bytes(wide);
 }
 
 std::vector<uint8_t> SmsSubsystem::encodeUtf16Le(const std::string& text, bool appendNullTerminator)

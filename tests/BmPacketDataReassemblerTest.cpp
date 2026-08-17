@@ -25,7 +25,8 @@ std::vector<uint8_t> fromHex(const std::string& hex)
     return bytes;
 }
 
-dmr::data::NetData makeFrame(DataType::E type, const std::string& hex, uint8_t sequence)
+dmr::data::NetData makeFrame(
+    DataType::E type, const std::string& hex, uint8_t sequence, uint32_t targetRid = 1000002U)
 {
     const auto bytes = fromHex(hex);
     if (bytes.size() != 33U) {
@@ -34,7 +35,7 @@ dmr::data::NetData makeFrame(DataType::E type, const std::string& hex, uint8_t s
 
     dmr::data::NetData frame;
     frame.setSrcId(262993U);
-    frame.setDstId(1000002U);
+    frame.setDstId(targetRid);
     frame.setSlotNo(2U);
     frame.setFLCO(FLCO::PRIVATE);
     frame.setSeqNo(sequence);
@@ -95,6 +96,41 @@ int main()
     if (packet.sourceRid != 262993U || packet.targetRid != 1000002U ||
         packet.bytes.size() < 28U || (packet.bytes[0U] >> 4U) != 4U || packet.bytes[9U] != 0x11U) {
         std::cerr << "reassembled packet metadata is invalid\n";
+        return 1;
+    }
+
+    const std::vector<std::string> weatherPayloads = {
+        "2f1011cd201514262108dfc8058dff57d75df5d33aa0e1561381152b56d87e3550",
+        "2ce22ae23b12a2e0d22fd220c63dff57d75df5da8522f822ab22a28276e2f5427b",
+        "281223d2b412726c222ed2e6c63dff57d75df5da85b2372f2e22eb822fe22442a6",
+        "23127422a0d22d2fd23e2238063dff57d75df5da868f642ffb2f34f2afb2fb12fb",
+        "2ad220d22cd22df422bed234063dff57d75df5da86d2672f2122a4e2ff722e12ab",
+        "2cd223d2e6d23ee12222222b063dff57d75df5da866277222b223b02af82f812ad",
+        "27122722b212fe2fd27ed2a0c63dff57d75df5da85cfa72ff72f3b822ab2fcb2fa",
+        "23d2ed12b2d231fe226022fe063dff57d75df5da860f2b2ff822283228b2a0b229",
+        "27d2e312342261ae22a9d23ec63dff57d75df5da853f2b2feb2ff2f2281225b2f4",
+        "2812e2123412f7e6d2acd2e9c63dff57d75df5da853fbb223b227bc270422542aa",
+        "23d26e123b12272ed270d2a3063dff57d75df5da869f2b22a22262222cb27db272",
+        "2822222222c078622222221e863dff57d75df5da85522222222c4992222222292f",
+    };
+
+    BmPacketDataReassembler weatherReassembler;
+    auto weatherResult = weatherReassembler.push(
+        makeFrame(DataType::DATA_HEADER, weatherPayloads.front(), 0U, 2621501U));
+    for (size_t i = 1U; i < weatherPayloads.size(); ++i) {
+        weatherResult = weatherReassembler.push(
+            makeFrame(DataType::RATE_34_DATA, weatherPayloads[i], static_cast<uint8_t>(i), 2621501U));
+    }
+    if (!weatherResult.packet.has_value()) {
+        std::cerr << "captured weather packet was not completed\n";
+        return 1;
+    }
+    const auto& weatherPacket = weatherResult.packet.value();
+    if (weatherPacket.sourceRid != 262993U || weatherPacket.targetRid != 2621501U ||
+        !weatherPacket.definedShortData || weatherPacket.bytes.size() != 158U ||
+        weatherPacket.bytes[0U] != 0x00U || weatherPacket.bytes[1U] != 'W' ||
+        weatherPacket.bytes[2U] != 0x00U || weatherPacket.bytes[3U] != 'X') {
+        std::cerr << "reassembled weather packet metadata is invalid\n";
         return 1;
     }
 

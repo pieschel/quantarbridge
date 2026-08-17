@@ -17,6 +17,7 @@ public:
         uint32_t targetRid {0U};
         uint8_t slotNo {2U};
         uint8_t sequenceNo {0U};
+        bool definedShortData {false};
         std::vector<uint8_t> bytes;
     };
 
@@ -35,6 +36,7 @@ private:
         uint32_t receivedBlocks {0U};
         uint32_t nextUnconfirmedBlock {0U};
         bool confirmed {false};
+        bool definedShortData {false};
         std::vector<std::vector<uint8_t>> blocks;
         std::vector<bool> received;
         std::chrono::steady_clock::time_point updatedAt {};
