@@ -56,7 +56,7 @@ int main()
               << "  \"createdAtMs\": " << nowMs << ",\n"
               << "  \"expiresAtMs\": " << nowMs + 60000U << ",\n"
               << "  \"serviceRid\": 262993,\n"
-              << "  \"requesterRid\": 2621501\n"
+              << "  \"requesterRid\": 1000001\n"
               << "}\n";
     }
 
@@ -77,7 +77,7 @@ int main()
     const std::string contents((std::istreambuf_iterator<char>(queued)),
         std::istreambuf_iterator<char>());
     if (contents.find("sourceRid: 262993") == std::string::npos ||
-        contents.find("targetRid: 2621501") == std::string::npos ||
+        contents.find("targetRid: 1000001") == std::string::npos ||
         contents.find("textHex: 5758205265706f7274202d2047726166696e670a32372e3836204320483a353825") ==
             std::string::npos) {
         std::cerr << "Defined Short Data weather event contents are invalid\n";

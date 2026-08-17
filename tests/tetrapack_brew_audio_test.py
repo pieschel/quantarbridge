@@ -72,13 +72,13 @@ class TetrapackBrewAudioTest(unittest.TestCase):
                 "p25PcmOutput": {"port": 31121},
                 "p25PcmAdditionalInputs": [
                     {
-                        "address": "192.168.1.232",
+                        "address": "192.0.2.232",
                         "port": 31124,
-                        "allowedSources": ["192.168.1.189"],
+                        "allowedSources": ["192.0.2.189"],
                     }
                 ],
                 "p25PcmAdditionalOutputs": [
-                    {"address": "192.168.1.189", "port": 31121}
+                    {"address": "192.0.2.189", "port": 31121}
                 ],
                 "staticTalkgroups": [983872],
                 "talkgroupMappings": [{"p25": 999, "brew": 983872}],
@@ -98,15 +98,15 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             self.assertEqual(
                 [
                     AUDIO.PcmInputConfig(
-                        "192.168.1.232",
+                        "192.0.2.232",
                         31124,
-                        frozenset({"192.168.1.189"}),
+                        frozenset({"192.0.2.189"}),
                     )
                 ],
                 config.pcm_additional_inputs,
             )
             self.assertEqual(
-                [AUDIO.PcmOutputConfig("192.168.1.189", 31121)],
+                [AUDIO.PcmOutputConfig("192.0.2.189", 31121)],
                 config.pcm_additional_outputs,
             )
 
