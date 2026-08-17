@@ -4,6 +4,13 @@ The image build uses the official Raspberry Pi OS Lite 64-bit release and
 builds QuantarBridge, the pinned DVMHost revision, and the pinned
 `tetra-codec` revision natively on an ARM64 GitHub-hosted runner.
 
+Tagged builds are also published as GitHub release assets and as an OCI
+artifact in the GitHub Container Registry. Pull a packaged release with ORAS:
+
+```bash
+oras pull ghcr.io/pieschel/quantarbridge-rpi-image:v0.1.0
+```
+
 ## Target
 
 - Raspberry Pi OS Lite 64-bit, Debian 13 (`trixie`), 2026-06-18
