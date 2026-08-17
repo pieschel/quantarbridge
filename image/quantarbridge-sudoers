@@ -1,0 +1,7 @@
+quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart dvmhost.service
+quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart dvmfne.service
+quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart dvmbridge-p25-to-dmr.service
+quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart dvmbridge-dmr-to-p25.service
+quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart quantarbridge.service
+quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart tetrapack-brew-bridge.service
+quantar ALL=(root) NOPASSWD: /usr/bin/systemctl restart tetrapack-brew-audio.service

@@ -56,6 +56,7 @@ configuration generated during installation.
 ## Documentation
 
 - [Installation](docs/INSTALL.md)
+- [Raspberry Pi ARM64 image](docs/RASPBERRY_PI_IMAGE.md)
 - [Configuration and architecture](docs/ARCHITECTURE.md)
 - [Motorola APX CPS setup](docs/APX_CONFIGURATION.md)
 - [Operation and troubleshooting](docs/OPERATIONS.md)
