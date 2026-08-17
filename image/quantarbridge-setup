@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+INSTALL_DIR="/home/quantar/quantarbridge"
+RUNTIME_DIR="/home/quantar/quantar-runtime"
+RECONFIGURE=0
+
+usage() {
+  cat <<'EOF'
+Usage: sudo quantarbridge-setup [--reconfigure]
+
+Configures the prebuilt QuantarBridge ARM64 image. Credentials are prompted
+without echo and are written only to the protected runtime directory.
+EOF
+}
+
+if [[ $# -gt 1 ]]; then
+  usage >&2
+  exit 2
+fi
+if [[ $# -eq 1 ]]; then
+  case "$1" in
+    --reconfigure) RECONFIGURE=1 ;;
+    --help|-h) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+fi
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "Run this command with sudo." >&2
+  exit 1
+fi
+if [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
+  echo "This image requires a 64-bit ARM Raspberry Pi." >&2
+  exit 1
+fi
+if [[ -e "${RUNTIME_DIR}/.configured" && "${RECONFIGURE}" -ne 1 ]]; then
+  echo "QuantarBridge is already configured. Use --reconfigure after making a backup." >&2
+  exit 1
+fi
+
+prompt_value() {
+  local variable_name="$1"
+  local label="$2"
+  local default_value="${3:-}"
+  local required="${4:-1}"
+  local answer=""
+  while true; do
+    if [[ -n "${default_value}" ]]; then
+      read -r -p "${label} [${default_value}]: " answer
+      answer="${answer:-${default_value}}"
+    else
+      read -r -p "${label}: " answer
+    fi
+    if [[ -n "${answer}" || "${required}" -eq 0 ]]; then
+      printf -v "${variable_name}" '%s' "${answer}"
+      return
+    fi
+    echo "A value is required."
+  done
+}
+
+echo "QuantarBridge ARM64 setup"
+echo "This image targets a Quantar V.24/DFSI serial interface, normally /dev/ttyUSB0."
+echo
+
+prompt_value BM_ID "BrandMeister repeater ID (six digits)"
+prompt_value BM_CALLSIGN "Callsign"
+prompt_value BM_MASTER "BrandMeister master hostname" "2622.master.brandmeister.network"
+prompt_value BREW_USERNAME "TETRAPACK BREW username" "${BM_ID}"
+prompt_value RX_FREQUENCY "Repeater receive frequency in Hz"
+prompt_value TX_FREQUENCY "Repeater transmit frequency in Hz"
+prompt_value SERIAL_PORT "Quantar serial device" "/dev/ttyUSB0"
+prompt_value ARS_SERVER_IP "APX ARS/TMS server IP" "10.0.0.2"
+prompt_value ARS_PEER_IP "APX compatibility peer IP" "10.0.0.1"
+prompt_value P25_NAC "P25 NAC" "293"
+prompt_value P25_NETWORK_ID "P25 network ID" "BB800"
+prompt_value P25_SYSTEM_ID "P25 system ID" "001"
+prompt_value LATITUDE "Latitude" "0.0"
+prompt_value LONGITUDE "Longitude" "0.0"
+prompt_value HEIGHT "Antenna height in metres" "0"
+prompt_value POWER "Transmitter power in watts" "25"
+prompt_value LOCATION "Site description" "Quantar Bridge"
+prompt_value DASHBOARD_LISTEN "Dashboard listen address" "127.0.0.1"
+prompt_value DASHBOARD_PORT "Dashboard port" "8088"
+
+read -r -s -p "BrandMeister device password: " BM_PASSWORD
+echo
+if [[ -z "${BM_PASSWORD}" ]]; then
+  echo "BrandMeister password must not be empty." >&2
+  exit 2
+fi
+read -r -s -p "New dashboard admin password (minimum 12 characters): " DASHBOARD_PASSWORD
+echo
+read -r -s -p "Repeat dashboard password: " DASHBOARD_PASSWORD_CONFIRM
+echo
+if [[ "${DASHBOARD_PASSWORD}" != "${DASHBOARD_PASSWORD_CONFIRM}" || ${#DASHBOARD_PASSWORD} -lt 12 ]]; then
+  echo "Dashboard passwords do not match or are shorter than 12 characters." >&2
+  exit 2
+fi
+read -r -s -p "BrandMeister API key (optional): " BM_API_KEY
+echo
+
+if [[ "${RECONFIGURE}" -eq 1 && -d "${RUNTIME_DIR}" ]]; then
+  BACKUP="/root/quantar-runtime-$(date -u +%Y%m%d-%H%M%S).tar.gz"
+  tar -C /home/quantar -czf "${BACKUP}" quantar-runtime
+  echo "Existing runtime backed up to ${BACKUP}"
+fi
+
+CONFIGURE_ARGS=(
+  --runtime-dir "${RUNTIME_DIR}"
+  --install-dir "${INSTALL_DIR}"
+  --bm-id "${BM_ID}"
+  --bm-callsign "${BM_CALLSIGN}"
+  --bm-master "${BM_MASTER}"
+  --brew-username "${BREW_USERNAME}"
+  --rx-frequency "${RX_FREQUENCY}"
+  --tx-frequency "${TX_FREQUENCY}"
+  --serial-port "${SERIAL_PORT}"
+  --ars-server-ip "${ARS_SERVER_IP}"
+  --ars-peer-ip "${ARS_PEER_IP}"
+  --p25-nac "${P25_NAC}"
+  --p25-network-id "${P25_NETWORK_ID}"
+  --p25-system-id "${P25_SYSTEM_ID}"
+  --latitude "${LATITUDE}"
+  --longitude "${LONGITUDE}"
+  --height "${HEIGHT}"
+  --power "${POWER}"
+  --location "${LOCATION}"
+  --dashboard-listen "${DASHBOARD_LISTEN}"
+  --dashboard-port "${DASHBOARD_PORT}"
+  --bm-password-stdin
+)
+AUTH_ARGS=(
+  --config "${RUNTIME_DIR}/quantar-dashboard.json"
+  --init-auth
+  --username admin
+  --password-stdin
+)
+if [[ "${RECONFIGURE}" -eq 1 ]]; then
+  CONFIGURE_ARGS+=(--force)
+  AUTH_ARGS+=(--force)
+fi
+
+printf '%s\n' "${BM_PASSWORD}" | runuser -u quantar -- \
+  python3 "${INSTALL_DIR}/scripts/configure.py" "${CONFIGURE_ARGS[@]}"
+printf '%s\n' "${DASHBOARD_PASSWORD}" | runuser -u quantar -- \
+  python3 "${INSTALL_DIR}/dashboard/app.py" "${AUTH_ARGS[@]}"
+
+if [[ -n "${BM_API_KEY}" ]]; then
+  printf '%s\n' "${BM_API_KEY}" > "${RUNTIME_DIR}/bm_api.key"
+  chown quantar:quantar "${RUNTIME_DIR}/bm_api.key"
+  chmod 0600 "${RUNTIME_DIR}/bm_api.key"
+fi
+
+touch "${RUNTIME_DIR}/.configured"
+chown quantar:quantar "${RUNTIME_DIR}/.configured"
+chmod 0600 "${RUNTIME_DIR}/.configured"
+
+systemctl daemon-reload
+systemctl disable --now \
+  quantar-static-recover.path \
+  dmr-to-p25-recover.timer \
+  bm-to-p25-recover.timer \
+  ensure-static-tg.timer 2>/dev/null || true
+
+CORE_UNITS=(
+  dvmfne.service
+  dvmhost.service
+  dvmbridge-p25-to-dmr.service
+  dvmbridge-dmr-to-p25.service
+  tetrapack-brew-audio.service
+  quantarbridge.service
+  tetrapack-brew-bridge.service
+  quantar-dashboard.service
+)
+systemctl enable "${CORE_UNITS[@]}"
+if [[ -n "${BM_API_KEY}" ]]; then
+  systemctl enable bm-static-sync.timer bm-static-guard.timer
+fi
+
+START_FAILED=0
+for unit in "${CORE_UNITS[@]}"; do
+  if ! systemctl restart "${unit}"; then
+    START_FAILED=1
+  fi
+done
+
+unset BM_PASSWORD DASHBOARD_PASSWORD DASHBOARD_PASSWORD_CONFIRM BM_API_KEY
+echo
+echo "Configuration complete. Dashboard: http://${DASHBOARD_LISTEN}:${DASHBOARD_PORT}/"
+if [[ "${START_FAILED}" -ne 0 ]]; then
+  echo "At least one service did not start. Check the Quantar serial connection and run:"
+  echo "  systemctl --failed"
+  echo "  journalctl -b -u dvmhost.service -u quantarbridge.service"
+  exit 1
+fi
+
+systemctl --no-pager --full status "${CORE_UNITS[@]}"
