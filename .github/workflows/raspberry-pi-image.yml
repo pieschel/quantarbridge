@@ -1,0 +1,46 @@
+name: Raspberry Pi ARM64 image
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/raspberry-pi-image
+    paths:
+      - .github/workflows/raspberry-pi-image.yml
+      - CMakeLists.txt
+      - dashboard/**
+      - deploy/**
+      - docs/**
+      - image/**
+      - patches/**
+      - scripts/**
+      - src/**
+      - tests/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raspberry-pi-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-image:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out QuantarBridge
+        uses: actions/checkout@v5
+
+      - name: Build and validate ARM64 image
+        run: sudo --preserve-env=GITHUB_SHA,RUNNER_TEMP bash image/build-rpi-image.sh
+
+      - name: Upload flashable image
+        uses: actions/upload-artifact@v4
+        with:
+          name: quantarbridge-rpios-arm64-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

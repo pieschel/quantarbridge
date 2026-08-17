@@ -86,6 +86,19 @@ if(BUILD_TESTING)
     "${DVMHOST_COMMON_LIBRARY}" yaml-cpp OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
   add_test(NAME sms_brandmeister_tms COMMAND sms_brandmeister_tms_test)
 
+  add_executable(sms_brandmeister_short_data_test
+    tests/SmsSubsystemShortDataTest.cpp
+    src/SmsSubsystem.cpp
+  )
+  target_include_directories(sms_brandmeister_short_data_test PRIVATE
+    "${DVMHOST_SOURCE_DIR}/src"
+    "${DVMHOST_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  )
+  target_link_libraries(sms_brandmeister_short_data_test PRIVATE
+    "${DVMHOST_COMMON_LIBRARY}" yaml-cpp OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+  add_test(NAME sms_brandmeister_short_data COMMAND sms_brandmeister_short_data_test)
+
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
     add_test(NAME tetrapack_brew_bridge

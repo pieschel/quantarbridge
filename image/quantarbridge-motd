@@ -1,0 +1,3 @@
+
+QuantarBridge ARM64 is preinstalled but intentionally not configured.
+Run: sudo quantarbridge-setup

@@ -72,13 +72,13 @@ class TetrapackBrewAudioTest(unittest.TestCase):
                 "p25PcmOutput": {"port": 31121},
                 "p25PcmAdditionalInputs": [
                     {
-                        "address": "192.168.1.232",
+                        "address": "192.0.2.232",
                         "port": 31124,
-                        "allowedSources": ["192.168.1.189"],
+                        "allowedSources": ["192.0.2.189"],
                     }
                 ],
                 "p25PcmAdditionalOutputs": [
-                    {"address": "192.168.1.189", "port": 31121}
+                    {"address": "192.0.2.189", "port": 31121}
                 ],
                 "staticTalkgroups": [983872],
                 "talkgroupMappings": [{"p25": 999, "brew": 983872}],
@@ -98,15 +98,15 @@ class TetrapackBrewAudioTest(unittest.TestCase):
             self.assertEqual(
                 [
                     AUDIO.PcmInputConfig(
-                        "192.168.1.232",
+                        "192.0.2.232",
                         31124,
-                        frozenset({"192.168.1.189"}),
+                        frozenset({"192.0.2.189"}),
                     )
                 ],
                 config.pcm_additional_inputs,
             )
             self.assertEqual(
-                [AUDIO.PcmOutputConfig("192.168.1.189", 31121)],
+                [AUDIO.PcmOutputConfig("192.0.2.189", 31121)],
                 config.pcm_additional_outputs,
             )
 
@@ -427,6 +427,76 @@ class TetrapackBrewAudioTest(unittest.TestCase):
                 1,
                 bridge.status.data["counters"]["brewRestrictedCalls"],
             )
+
+    def test_restricted_brew_response_is_scoped_to_the_call(self):
+        class FakeTransport:
+            def __init__(self):
+                self.closed = False
+
+            def close_socket(self):
+                self.closed = True
+
+        with tempfile.TemporaryDirectory() as directory:
+            bridge = object.__new__(AUDIO.BrewAudioBridge)
+            bridge.transport = FakeTransport()
+            bridge.status = AUDIO.AtomicStatus(Path(directory) / "status.json")
+            frame = bytes(
+                (
+                    AUDIO.BREW_CLASS_ERROR,
+                    AUDIO.BREW_TYPE_RESTRICTED,
+                    AUDIO.BREW_CLASS_CALL_CONTROL,
+                    AUDIO.CALL_STATE_GROUP_IDLE,
+                )
+            ) + bytes(17)
+
+            bridge._on_brew_binary(frame)
+
+            self.assertFalse(bridge.transport.closed)
+            self.assertEqual(
+                1,
+                bridge.status.data["counters"]["brewRestrictedCalls"],
+            )
+
+    def test_rejected_owned_uplink_idle_reconnects_with_cooldown(self):
+        class FakeTransport:
+            def __init__(self):
+                self.close_count = 0
+
+            def close_socket(self):
+                self.close_count += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            call_uuid = uuid.UUID("01234567-89ab-cdef-0123-456789abcdef").bytes_le
+            bridge = object.__new__(AUDIO.BrewAudioBridge)
+            bridge.transport = FakeTransport()
+            bridge.status = AUDIO.AtomicStatus(Path(directory) / "status.json")
+            bridge.owned_uuids = {call_uuid: time.monotonic() + 10.0}
+            bridge.uplink_session_recovery_lock = threading.Lock()
+            bridge.last_uplink_session_recovery = 0.0
+            frame = bytes(
+                (
+                    AUDIO.BREW_CLASS_ERROR,
+                    AUDIO.BREW_TYPE_RESTRICTED,
+                    AUDIO.BREW_CLASS_CALL_CONTROL,
+                    AUDIO.CALL_STATE_GROUP_IDLE,
+                )
+            ) + call_uuid + b"\x00"
+
+            bridge._on_brew_binary(frame)
+            bridge._on_brew_binary(frame)
+
+            self.assertEqual(1, bridge.transport.close_count)
+            self.assertEqual(
+                1,
+                bridge.status.data["counters"]["brewUplinkSessionRecoveries"],
+            )
+            self.assertEqual(
+                1,
+                bridge.status.data["counters"]["brewUplinkSessionRecoverySuppressed"],
+            )
+            self.assertFalse(bridge.status.data["connected"])
+            self.assertFalse(bridge.status.data["registered"])
+            self.assertFalse(bridge.status.data["affiliated"])
 
     def test_dvm_rtp_round_trip_keeps_radio_and_talkgroup_metadata(self):
         pcm = struct.pack("<160h", *range(160))

@@ -37,6 +37,7 @@ BREW_CLASS_CALL_CONTROL = 0xF1
 BREW_CLASS_FRAME = 0xF2
 BREW_CLASS_ERROR = 0xF3
 BREW_TYPE_RESTRICTED = 1
+BREW_UPLINK_SESSION_RECOVERY_COOLDOWN_SECONDS = 60.0
 
 SUBSCRIBER_DEREGISTER = 0
 SUBSCRIBER_REGISTER = 1
@@ -1149,6 +1150,8 @@ class BrewAudioBridge:
         self.last_p25_rx = 0.0
         self.active_uplink: UplinkCall | None = None
         self.owned_uuids: dict[bytes, float] = {}
+        self.uplink_session_recovery_lock = threading.Lock()
+        self.last_uplink_session_recovery = 0.0
 
         self.downlink_lock = threading.Lock()
         self.downlink_calls: dict[bytes, DownlinkCall] = {}
@@ -1503,6 +1506,29 @@ class BrewAudioBridge:
         for issi in local_issis:
             self.transport.send(build_subscriber_message(message_type, issi, groups))
 
+    def _recover_rejected_uplink_session(self, call_uuid: bytes) -> None:
+        now = time.monotonic()
+        with self.uplink_session_recovery_lock:
+            if (
+                now - self.last_uplink_session_recovery
+                < BREW_UPLINK_SESSION_RECOVERY_COOLDOWN_SECONDS
+            ):
+                self.status.increment("brewUplinkSessionRecoverySuppressed")
+                return
+            self.last_uplink_session_recovery = now
+        self.status.increment("brewUplinkSessionRecoveries")
+        self.status.set(
+            connected=False,
+            registered=False,
+            affiliated=False,
+            lastUplinkSessionRecoveryAt=utc_now(),
+        )
+        logging.warning(
+            "Reconnecting BREW session after rejected uplink idle uuid=%s",
+            uuid_text(call_uuid),
+        )
+        self.transport.close_socket()
+
     def _on_brew_binary(self, frame: bytes) -> None:
         if len(frame) < 2:
             return
@@ -1528,6 +1554,13 @@ class BrewAudioBridge:
             )
             if message_type == BREW_TYPE_RESTRICTED:
                 self.status.increment("brewRestrictedCalls")
+                if (
+                    len(frame) >= 20
+                    and frame[2] == BREW_CLASS_CALL_CONTROL
+                    and frame[3] == CALL_STATE_GROUP_IDLE
+                    and frame[4:20] in getattr(self, "owned_uuids", {})
+                ):
+                    self._recover_rejected_uplink_session(frame[4:20])
             return
         if message_class == BREW_CLASS_FRAME and message_type == FRAME_TYPE_SDS_REPORT:
             self.status.increment("brewSmsReportsReceived")

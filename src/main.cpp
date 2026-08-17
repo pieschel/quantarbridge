@@ -1170,14 +1170,18 @@ int main(int argc, char** argv)
                     if (packetDataResult.packet.has_value()) {
                         const auto& packet = packetDataResult.packet.value();
                         ::LogInfoEx(LOG_HOST,
-                            "BM private packet-data reassembled srcId=%u dstId=%u slot=%u ns=%u ipLen=%u ipHex=%s",
+                            "BM private data reassembled srcId=%u dstId=%u slot=%u ns=%u format=%s dataLen=%u dataHex=%s",
                             packet.sourceRid, packet.targetRid, packet.slotNo, packet.sequenceNo,
+                            packet.definedShortData ? "defined-short" : "ip-packet",
                             static_cast<uint32_t>(packet.bytes.size()),
                             bytesToHex(packet.bytes.data(), packet.bytes.size()).c_str());
-                        if (!sms.handleBrandmeisterPacketData(packet.sourceRid, packet.targetRid,
-                            packet.slotNo, packet.bytes)) {
+                        const bool handled = packet.definedShortData ?
+                            sms.handleBrandmeisterShortData(packet.sourceRid, packet.targetRid, packet.bytes) :
+                            sms.handleBrandmeisterPacketData(packet.sourceRid, packet.targetRid,
+                                packet.slotNo, packet.bytes);
+                        if (!handled) {
                             ::LogWarning(LOG_HOST,
-                                "BM private packet-data was complete but not recognized as a routable TMS reply, srcId=%u dstId=%u",
+                                "BM private data was complete but not recognized as a routable TMS reply, srcId=%u dstId=%u",
                                 packet.sourceRid, packet.targetRid);
                         }
                     }

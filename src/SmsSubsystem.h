@@ -24,8 +24,16 @@ public:
     void setBmPacketDataWriter(std::function<bool(uint32_t, uint32_t, uint8_t, const std::vector<uint8_t>&)> writer);
     bool handleBrandmeisterPacketData(uint32_t sourceRid, uint32_t targetRid, uint8_t slotNo,
         const std::vector<uint8_t>& ipv4Packet);
+    bool handleBrandmeisterShortData(uint32_t sourceRid, uint32_t targetRid,
+        const std::vector<uint8_t>& shortData);
 
 private:
+    enum class BrandmeisterTextResult {
+        FAILED,
+        DUPLICATE,
+        QUEUED,
+    };
+
     struct ParsedSmsPacket {
         std::string application;
         uint32_t sourceRid {0U};
@@ -69,12 +77,15 @@ private:
     bool sendBrandmeisterTmsAcknowledgement(uint32_t sourceRid, uint32_t targetRid, uint8_t slotNo,
         const std::vector<uint8_t>& ipv4Packet, uint16_t sourcePort, uint16_t targetPort,
         uint8_t requestOperation, uint8_t messageId);
+    BrandmeisterTextResult queueBrandmeisterText(uint32_t sourceRid, uint32_t targetRid,
+        const std::string& text, const char* transportName);
     std::optional<ServiceReplyRoute> findServiceReplyRoute(uint32_t serviceRid) const;
     static std::vector<uint8_t> buildIpv4UdpPacket(const std::string& sourceIp, const std::string& targetIp,
         uint16_t sourcePort, uint16_t targetPort, const std::vector<uint8_t>& payload);
     static std::string bytesToHex(const uint8_t* data, uint32_t length);
     static bool hexToBytes(const std::string& hex, std::vector<uint8_t>& output);
     static std::string jsonEscape(const std::string& value);
+    static std::string decodeUtf16Be(const std::vector<uint8_t>& data);
     static std::vector<uint8_t> encodeUtf16Le(const std::string& text, bool appendNullTerminator);
 
     SmsConfig m_config;
