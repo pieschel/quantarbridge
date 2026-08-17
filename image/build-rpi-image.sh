@@ -132,4 +132,8 @@ Release version: ${GITHUB_REF_NAME:-development}
 Image: $(basename "${FINAL_IMAGE}.xz")
 EOF
 
+if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
+  chown -R "${SUDO_UID}:${SUDO_GID}" "${OUTPUT_DIR}"
+fi
+
 ls -lh "${OUTPUT_DIR}"
