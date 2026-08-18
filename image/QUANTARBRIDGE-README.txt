@@ -13,18 +13,23 @@ Supported image target
 - Raspberry Pi 4 or 5 recommended
 - Motorola Quantar V.24/DFSI interface through a serial adapter
 
-Before first boot
------------------
+Default first login
+-------------------
 
-Write the .img.xz file with Raspberry Pi Imager using "Use custom". In OS
-customisation set a unique admin username and password (or SSH public key),
-hostname, locale, network, and enable SSH. No default login is included.
+Write the .img.xz file to an SD card and connect Ethernet before first boot.
+The public initial SSH credentials are:
+
+    Username: qbadmin
+    Password: quantarbridge
+
+The password is expired in the image and must be replaced immediately during
+the first login. Do not expose the unconfigured device to an untrusted network.
 
 First configuration
 -------------------
 
 1. Connect the Quantar serial adapter, normally exposed as /dev/ttyUSB0.
-2. Boot and log in using the account created by Raspberry Pi Imager.
+2. Boot, log in as qbadmin, and replace the initial password when prompted.
 3. Run:
 
        sudo quantarbridge-setup
