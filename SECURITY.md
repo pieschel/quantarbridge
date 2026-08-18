@@ -25,6 +25,13 @@ The installer creates the runtime directory with restrictive permissions.
 Dashboard passwords are stored as salted PBKDF2-SHA256 records. BrandMeister
 and BREW passwords are not returned by the dashboard API.
 
+The Raspberry Pi image publishes the bootstrap operating-system credentials
+`qbadmin` / `quantarbridge`. The account has `sudo` access, but its password is
+expired in the image and must be changed during the first login. Keep a newly
+flashed device on a trusted local network until that change is complete. These
+bootstrap credentials are not used for the dashboard, BrandMeister, BREW, or
+any radio service.
+
 ## Network Exposure
 
 The dashboard is intended for a trusted management network. Bind it to a

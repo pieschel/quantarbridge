@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - agent/raspberry-pi-image
+      - agent/raspberry-pi-image-*
     tags:
       - v*
     paths:

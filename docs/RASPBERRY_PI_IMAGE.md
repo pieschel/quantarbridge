@@ -33,16 +33,18 @@ artifact containing:
 - base and QuantarBridge revision metadata;
 - architecture checks for QuantarBridge, DVMHost, and `tetra-codec`.
 
-The image contains no station identity, frequencies, passwords, API keys,
-location, radio activity, or copied production runtime state.
+The image contains no station identity, frequencies, network passwords, API
+keys, location, radio activity, or copied production runtime state. It does
+contain the public bootstrap login `qbadmin` / `quantarbridge`; that password
+is expired and must be changed during the first login.
 
 ## Install and configure
 
-1. In Raspberry Pi Imager, choose **Use custom** and select the `.img.xz`.
-2. Use OS customisation to create a unique administrator login, configure the
-   network and locale, and enable SSH.
-3. Write and verify the card, attach the Quantar serial interface, and boot.
-4. Log in and run `sudo quantarbridge-setup`.
+1. Write and verify the `.img.xz` with Raspberry Pi Imager and connect Ethernet.
+2. Boot and connect with `ssh qbadmin@raspberrypi.local` using the initial
+   password `quantarbridge`.
+3. Replace the expired initial password immediately when SSH prompts for it.
+4. Attach the Quantar serial interface and run `sudo quantarbridge-setup`.
 5. Enter the assigned station, P25, BrandMeister, and BREW settings.
 6. Verify voice, ARS, TMS, and LRRP in that order before enabling recovery
    watchdogs.

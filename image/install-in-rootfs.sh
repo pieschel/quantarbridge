@@ -5,6 +5,8 @@ set -euo pipefail
 DVMHOST_COMMIT="01979084df9fc6a5737fac9efb213430268377c9"
 TETRA_CODEC_COMMIT="21d884064478d63306ec654378e666ae41503d00"
 SERVICE_USER="quantar"
+DEFAULT_ADMIN_USER="qbadmin"
+DEFAULT_ADMIN_PASSWORD="quantarbridge"
 INSTALL_DIR="/home/${SERVICE_USER}/quantarbridge"
 RUNTIME_DIR="/home/${SERVICE_USER}/quantar-runtime"
 DVMHOST_DIR="/home/${SERVICE_USER}/src/dvmhost"
@@ -41,6 +43,18 @@ if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash "${SERVICE_USER}"
 fi
 usermod -aG dialout "${SERVICE_USER}"
+
+if ! id -u "${DEFAULT_ADMIN_USER}" >/dev/null 2>&1; then
+  useradd --create-home --shell /bin/bash "${DEFAULT_ADMIN_USER}"
+fi
+printf '%s:%s\n' "${DEFAULT_ADMIN_USER}" "${DEFAULT_ADMIN_PASSWORD}" | chpasswd
+chage --lastday 0 "${DEFAULT_ADMIN_USER}"
+for group in sudo adm dialout plugdev users input render netdev gpio i2c spi video; do
+  if getent group "${group}" >/dev/null; then
+    usermod -aG "${group}" "${DEFAULT_ADMIN_USER}"
+  fi
+done
+
 install -d -m 0750 -o "${SERVICE_USER}" -g "${SERVICE_USER}" "/home/${SERVICE_USER}/src"
 install -d -m 0700 -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${RUNTIME_DIR}"
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "${INSTALL_DIR}"
@@ -89,6 +103,9 @@ visudo -cf /etc/sudoers.d/quantarbridge-dashboard
 install -m 0755 "${INSTALL_DIR}/image/quantarbridge-setup" /usr/local/sbin/quantarbridge-setup
 install -d -m 0755 /etc/motd.d
 install -m 0644 "${INSTALL_DIR}/image/quantarbridge-motd" /etc/motd.d/90-quantarbridge
+install -d -m 0755 /etc/ssh/sshd_config.d
+install -m 0644 "${INSTALL_DIR}/image/60-quantarbridge-default-login.conf" \
+  /etc/ssh/sshd_config.d/60-quantarbridge-default-login.conf
 install -m 0644 "${INSTALL_DIR}/image/QUANTARBRIDGE-README.txt" \
   /boot/firmware/QUANTARBRIDGE-README.txt
 
@@ -107,6 +124,9 @@ touch /boot/firmware/ssh
 file "${INSTALL_DIR}/build/quantarbridge" | grep -q 'ARM aarch64'
 file "${DVMHOST_DIR}/build/dvmhost" | grep -q 'ARM aarch64'
 file "${TETRA_CODEC_DIR}/build/libtetra-codec.so" | grep -q 'ARM aarch64'
+id -nG "${DEFAULT_ADMIN_USER}" | tr ' ' '\n' | grep -qx sudo
+passwd -S "${DEFAULT_ADMIN_USER}" | grep -Eq "^${DEFAULT_ADMIN_USER} P "
+[[ "$(getent shadow "${DEFAULT_ADMIN_USER}" | cut -d: -f3)" == "0" ]]
 
 strip --strip-unneeded "${INSTALL_DIR}/build/quantarbridge"
 strip --strip-unneeded \
