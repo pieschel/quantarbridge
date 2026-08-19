@@ -39,21 +39,24 @@ apt-get install -y --no-install-recommends \
   rsync \
   sudo
 
-if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
-  useradd --create-home --shell /bin/bash "${SERVICE_USER}"
-fi
-usermod -aG dialout "${SERVICE_USER}"
-
 if ! id -u "${DEFAULT_ADMIN_USER}" >/dev/null 2>&1; then
-  useradd --create-home --shell /bin/bash "${DEFAULT_ADMIN_USER}"
+  if [[ "$(getent passwd 1000 | cut -d: -f1)" != "pi" ]]; then
+    echo "Raspberry Pi bootstrap user pi was not found at UID 1000." >&2
+    exit 1
+  fi
+  default_admin_hash="$(openssl passwd -6 "${DEFAULT_ADMIN_PASSWORD}")"
+  /usr/lib/userconf-pi/userconf "${DEFAULT_ADMIN_USER}" "${default_admin_hash}"
 fi
-printf '%s:%s\n' "${DEFAULT_ADMIN_USER}" "${DEFAULT_ADMIN_PASSWORD}" | chpasswd
-chage --lastday 0 "${DEFAULT_ADMIN_USER}"
 for group in sudo adm dialout plugdev users input render netdev gpio i2c spi video; do
   if getent group "${group}" >/dev/null; then
     usermod -aG "${group}" "${DEFAULT_ADMIN_USER}"
   fi
 done
+
+if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
+  useradd --create-home --shell /bin/bash "${SERVICE_USER}"
+fi
+usermod -aG dialout "${SERVICE_USER}"
 
 install -d -m 0750 -o "${SERVICE_USER}" -g "${SERVICE_USER}" "/home/${SERVICE_USER}/src"
 install -d -m 0700 -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${RUNTIME_DIR}"
@@ -126,7 +129,13 @@ file "${DVMHOST_DIR}/build/dvmhost" | grep -q 'ARM aarch64'
 file "${TETRA_CODEC_DIR}/build/libtetra-codec.so" | grep -q 'ARM aarch64'
 id -nG "${DEFAULT_ADMIN_USER}" | tr ' ' '\n' | grep -qx sudo
 passwd -S "${DEFAULT_ADMIN_USER}" | grep -Eq "^${DEFAULT_ADMIN_USER} P "
-[[ "$(getent shadow "${DEFAULT_ADMIN_USER}" | cut -d: -f3)" == "0" ]]
+[[ "$(getent passwd 1000 | cut -d: -f1)" == "${DEFAULT_ADMIN_USER}" ]]
+[[ "$(getent shadow "${DEFAULT_ADMIN_USER}" | cut -d: -f3)" -gt 0 ]]
+[[ ! -e /etc/ssh/sshd_config.d/rename_user.conf ]]
+if systemctl --quiet is-enabled userconfig.service; then
+  echo "Raspberry Pi first-boot user configuration is still enabled." >&2
+  exit 1
+fi
 
 strip --strip-unneeded "${INSTALL_DIR}/build/quantarbridge"
 strip --strip-unneeded \

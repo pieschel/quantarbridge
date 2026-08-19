@@ -22,14 +22,14 @@ The public initial SSH credentials are:
     Username: qbadmin
     Password: quantarbridge
 
-The password is expired in the image and must be replaced immediately during
-the first login. Do not expose the unconfigured device to an untrusted network.
+Run passwd immediately after the first login and replace the public initial
+password. Do not expose the unconfigured device to an untrusted network.
 
 First configuration
 -------------------
 
 1. Connect the Quantar serial adapter, normally exposed as /dev/ttyUSB0.
-2. Boot, log in as qbadmin, and replace the initial password when prompted.
+2. Boot, log in as qbadmin, and immediately run passwd.
 3. Run:
 
        sudo quantarbridge-setup
