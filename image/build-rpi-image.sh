@@ -13,6 +13,8 @@ ROOTFS_DIR="${WORK_DIR}/rootfs"
 BASE_ARCHIVE="${WORK_DIR}/raspios-lite-arm64.img.xz"
 IMAGE_PATH="${WORK_DIR}/quantarbridge-rpios-arm64.img"
 LOOP_DEVICE=""
+SSHD_TEST_PID=""
+SSHD_TEST_PORT=22222
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Run this image builder as root." >&2
@@ -39,8 +41,17 @@ unmount_image() {
   done
 }
 
+stop_sshd_test() {
+  if [[ -n "${SSHD_TEST_PID}" ]]; then
+    kill "${SSHD_TEST_PID}" 2>/dev/null || true
+    wait "${SSHD_TEST_PID}" 2>/dev/null || true
+    SSHD_TEST_PID=""
+  fi
+}
+
 cleanup() {
   set +e
+  stop_sshd_test
   unmount_image
   if [[ -n "${LOOP_DEVICE}" ]]; then
     losetup -d "${LOOP_DEVICE}" 2>/dev/null || true
@@ -55,8 +66,10 @@ apt-get install -y --no-install-recommends \
   e2fsprogs \
   file \
   mount \
+  openssh-client \
   parted \
   rsync \
+  sshpass \
   util-linux \
   xz-utils \
   zerofree
@@ -94,6 +107,47 @@ mount --types sysfs sys "${ROOTFS_DIR}/sys"
 mount --types tmpfs tmpfs "${ROOTFS_DIR}/run"
 
 chroot "${ROOTFS_DIR}" /bin/bash /home/quantar/quantarbridge/image/install-in-rootfs.sh
+
+install -d -m 0755 "${ROOTFS_DIR}/run/sshd"
+chroot "${ROOTFS_DIR}" /usr/bin/ssh-keygen -A
+chroot "${ROOTFS_DIR}" /usr/sbin/sshd \
+  -D \
+  -e \
+  -p "${SSHD_TEST_PORT}" \
+  -o ListenAddress=127.0.0.1 \
+  -o PidFile=/run/quantarbridge-sshd-test.pid \
+  > "${WORK_DIR}/sshd-login-test.log" 2>&1 &
+SSHD_TEST_PID="$!"
+sleep 1
+if ! kill -0 "${SSHD_TEST_PID}" 2>/dev/null; then
+  cat "${WORK_DIR}/sshd-login-test.log" >&2
+  echo "Temporary SSH server did not start." >&2
+  exit 1
+fi
+if ! sshpass -p quantarbridge ssh \
+  -p "${SSHD_TEST_PORT}" \
+  -o ConnectTimeout=10 \
+  -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null \
+  -o PreferredAuthentications=password \
+  -o PubkeyAuthentication=no \
+  -o NumberOfPasswordPrompts=1 \
+  qbadmin@127.0.0.1 \
+  'test "$(id -un)" = qbadmin && id -nG | grep -qw sudo && echo quantarbridge | sudo -S -k -p "" true' \
+  > "${OUTPUT_DIR}/SSH-LOGIN-CHECK.txt" 2>&1; then
+  cat "${WORK_DIR}/sshd-login-test.log" >&2
+  cat "${OUTPUT_DIR}/SSH-LOGIN-CHECK.txt" >&2
+  echo "Password-based SSH integration test failed." >&2
+  exit 1
+fi
+printf '%s\n' \
+  'username=qbadmin' \
+  'password_authentication=passed' \
+  'sudo_authentication=passed' \
+  >> "${OUTPUT_DIR}/SSH-LOGIN-CHECK.txt"
+stop_sshd_test
+rm -f "${ROOTFS_DIR}"/etc/ssh/ssh_host_*
+rm -f "${ROOTFS_DIR}/run/quantarbridge-sshd-test.pid"
 
 file "${ROOTFS_DIR}/home/quantar/quantarbridge/build/quantarbridge" | tee \
   "${OUTPUT_DIR}/ARM64-FILE-CHECK.txt"

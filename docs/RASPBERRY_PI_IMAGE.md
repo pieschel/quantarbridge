@@ -36,14 +36,14 @@ artifact containing:
 The image contains no station identity, frequencies, network passwords, API
 keys, location, radio activity, or copied production runtime state. It does
 contain the public bootstrap login `qbadmin` / `quantarbridge`; that password
-is expired and must be changed during the first login.
+must be changed immediately after the first login with `passwd`.
 
 ## Install and configure
 
 1. Write and verify the `.img.xz` with Raspberry Pi Imager and connect Ethernet.
 2. Boot and connect with `ssh qbadmin@raspberrypi.local` using the initial
    password `quantarbridge`.
-3. Replace the expired initial password immediately when SSH prompts for it.
+3. Run `passwd` immediately and replace the public initial password.
 4. Attach the Quantar serial interface and run `sudo quantarbridge-setup`.
 5. Enter the assigned station, P25, BrandMeister, and BREW settings.
 6. Verify voice, ARS, TMS, and LRRP in that order before enabling recovery

@@ -27,8 +27,9 @@ and BREW passwords are not returned by the dashboard API.
 
 The Raspberry Pi image publishes the bootstrap operating-system credentials
 `qbadmin` / `quantarbridge`. The account has `sudo` access, but its password is
-expired in the image and must be changed during the first login. Keep a newly
-flashed device on a trusted local network until that change is complete. These
+intentionally active for the first SSH login and must be changed immediately
+with `passwd`. Keep a newly flashed device on a trusted local network until
+that change is complete. These
 bootstrap credentials are not used for the dashboard, BrandMeister, BREW, or
 any radio service.
 
