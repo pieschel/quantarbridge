@@ -45,7 +45,8 @@ must be changed immediately after the first login with `passwd`.
    password `quantarbridge`.
 3. Run `passwd` immediately and replace the public initial password.
 4. Attach the Quantar serial interface and run `sudo quantarbridge-setup`.
-5. Enter the assigned station, P25, BrandMeister, and BREW settings.
+5. Enter the assigned station, P25, and BrandMeister settings. Direct
+   BrandMeister voice and packet data are the default; BREW is not required.
 6. Verify voice, ARS, TMS, and LRRP in that order before enabling recovery
    watchdogs.
 

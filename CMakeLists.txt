@@ -107,6 +107,8 @@ if(BUILD_TESTING)
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tetrapack_brew_audio_test.py")
     add_test(NAME enable_brew_audio
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/enable_brew_audio_test.py")
+    add_test(NAME configure_direct_brandmeister
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/configure_direct_brandmeister_test.py")
     add_test(NAME quantar_dashboard
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dashboard_test.py")
     add_test(NAME bm_static_sync

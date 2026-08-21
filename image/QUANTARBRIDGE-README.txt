@@ -2,7 +2,7 @@ QuantarBridge Raspberry Pi ARM64 image
 ======================================
 
 This image contains prebuilt ARM64 versions of QuantarBridge, the pinned
-DVMHost stack, and tetra-codec. Private radio, BrandMeister, BREW, dashboard,
+DVMHost stack, and optional tetra-codec. Private radio, BrandMeister, dashboard,
 and location settings are deliberately not embedded.
 
 Supported image target
@@ -34,7 +34,8 @@ First configuration
 
        sudo quantarbridge-setup
 
-4. Enter the assigned repeater, frequency, P25, BrandMeister, and BREW values.
+4. Enter the assigned repeater, frequency, P25, and BrandMeister values.
+   Voice, TMS, and LRRP use the direct BrandMeister connection by default.
 5. Verify voice and packet data in both directions before enabling watchdogs.
 
 The setup command stores credentials only under

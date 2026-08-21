@@ -6,10 +6,10 @@
 | --- | --- |
 | `dvmhost` | Terminates Quantar DFSI/V.24 and owns P25 RF, ARS, TMS, and LRRP state |
 | `dvmfne` | Local fixed-network core and peer router |
-| `dvmbridge-p25-to-dmr` | Compatibility unit name for the P25-to-PCM decoder |
-| `dvmbridge-dmr-to-p25` | Compatibility unit name for the PCM-to-P25 encoder |
-| `tetrapack_brew_audio.py` | TETRA codec, BREW group calls, affiliations, mapping, and dynamic routes |
-| `quantarbridge` | Native BrandMeister session for packet data and management; group voice disabled |
+| `dvmbridge-p25-to-dmr` | P25-to-DMR voice transcoder |
+| `dvmbridge-dmr-to-p25` | DMR-to-P25 voice transcoder |
+| `tetrapack_brew_audio.py` | Optional TETRA/BREW migration transport; disabled by default |
+| `quantarbridge` | Native BrandMeister voice, packet-data, routing, and management session |
 | `tetrapack_brew_bridge.py` | TMS queue adapter for local, BrandMeister packet-data, and BREW delivery |
 | `dashboard/app.py` | Read-only operations view plus authenticated administration |
 
@@ -48,20 +48,16 @@ example IDs from tests or documentation on air.
 
 ## Voice Routing
 
-P25 RF calls enter `dvmhost`, traverse `dvmfne`, and are decoded to 8 kHz PCM.
-`tetrapack_brew_audio.py` encodes that PCM with the pinned TETRA codec and sends
-a BREW group call. Downlink follows the reverse route from BREW/TETRA to PCM and
-then through the P25 encoder. No AMBE/DMR codec remains in the group-voice path.
+P25 RF calls enter `dvmhost`, traverse `dvmfne`, and are transcoded to DMR by
+`dvmbridge-p25-to-dmr`. QuantarBridge sends those frames through its authenticated
+BrandMeister master session. Downlink follows the reverse path through
+`dvmbridge-dmr-to-p25`. The default configuration therefore sets
+`brandmeister.voiceEnabled: true` and does not start the BREW audio worker.
 
-The native `quantarbridge` BrandMeister connection stays logged in for private
-packet data, TMS, LRRP/APRS, device metadata, and dashboard integration. Its
-`brandmeister.voiceEnabled` setting is `false`, preventing duplicate group
-audio and loops.
-
-TETRAPACK permits one Basestation session for the configured bridge ISSI. The
-audio worker owns that WebSocket. TMS requests for BREW services are written to
-`sms/brew-audio-outbox` and sent by the audio worker on the same session; the
-standalone TMS adapter must not open a competing BREW connection.
+`scripts/enable_brew_audio.py` remains an explicit migration helper. It changes
+the two transcoders to PCM roles, disables native group voice, and enables the
+single BREW Basestation audio session. Both voice transports must never be
+enabled simultaneously.
 
 `routing.talkgroupMappings` is bidirectional. Example:
 
@@ -77,7 +73,7 @@ call to `262000` is transmitted on P25 TG `101`.
 
 ## Dynamic Talkgroups
 
-An outgoing P25 group call creates a BREW affiliation and dynamic route. The
+An outgoing P25 group call creates a native BrandMeister dynamic route. The
 route expires after `routing.dynamicTimeoutSeconds`. P25 TG `4000` is the
 default disconnect command. Static affiliations are synchronized from the
 configured BrandMeister device profile.
@@ -117,11 +113,11 @@ exactly one matching route when the service reply arrives and delivers it to
 the original requester while keeping the BrandMeister acknowledgement addressed
 to the bridge subscriber.
 
-Only service destinations listed in `brewServiceRids`, such as the weather
-service, use the shared BREW session. Ordinary private subscriber IDs must not
-be added to this list: they are sent through native BrandMeister packet data so
-the network can route them to the addressed radio. The legacy JSON key
-`brewTargetRids` remains accepted for existing runtime files.
+Service destinations listed in `brandmeisterServiceRids`, such as the weather
+service, use native BrandMeister packet data and create an expiring reply route
+for the requesting APX. `brewServiceRids` is empty by default and is used only
+after an explicit BREW migration. A service ID cannot be present in both lists.
+The legacy JSON key `brewTargetRids` remains accepted for existing runtime files.
 
 LRRP requests are sent only after a TMS-capable session is ready. Valid reports
 are forwarded as BrandMeister location packet data. A no-fix response uses the
@@ -143,8 +139,8 @@ under `deploy/examples`; do not run services directly from those templates.
 | Port | Scope | Purpose |
 | --- | --- | --- |
 | `62031/UDP` | loopback + outbound | Local FNE and BrandMeister protocol |
-| `31120/UDP` | loopback | P25 decoder PCM to BREW audio worker |
-| `31121/UDP` | loopback | BREW audio worker PCM to P25 encoder |
+| `31120/UDP` | loopback | Optional P25 PCM monitor/BREW migration path |
+| `31121/UDP` | loopback | Optional BREW-to-P25 PCM migration path |
 | `4005/UDP` | loopback | Host ARS packet-data adapter |
 | `4007/UDP` | loopback | Host TMS packet-data adapter |
 | `4015/UDP` | loopback | QuantarBridge ARS input |

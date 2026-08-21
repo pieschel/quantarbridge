@@ -41,7 +41,7 @@ Required:
   --bm-id ID                 Six-digit BrandMeister repeater ID
   --bm-callsign CALLSIGN     Callsign assigned to the repeater
   --bm-master HOSTNAME       BrandMeister master hostname
-  --brew-username USERNAME   TETRAPACK BREW username assigned to this bridge
+  --brew-username USERNAME   Optional BREW username retained for later opt-in migration
   --rx-frequency HZ          Repeater receive frequency in Hz
   --tx-frequency HZ          Repeater transmit frequency in Hz
 
@@ -105,7 +105,7 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-for value in BM_ID BM_CALLSIGN BM_MASTER BREW_USERNAME RX_FREQUENCY TX_FREQUENCY; do
+for value in BM_ID BM_CALLSIGN BM_MASTER RX_FREQUENCY TX_FREQUENCY; do
   if [[ -z "${!value}" ]]; then
     echo "Missing required option for ${value}." >&2
     usage >&2
@@ -284,7 +284,8 @@ systemctl disable --now \
   quantar-static-recover.path \
   dmr-to-p25-recover.timer \
   bm-to-p25-recover.timer \
-  ensure-static-tg.timer 2>/dev/null || true
+  ensure-static-tg.timer \
+  tetrapack-brew-audio.service 2>/dev/null || true
 CORE_UNITS=(
   dvmfne.service
   dvmhost.service
@@ -292,7 +293,6 @@ CORE_UNITS=(
   dvmbridge-dmr-to-p25.service
   quantarbridge.service
   tetrapack-brew-bridge.service
-  tetrapack-brew-audio.service
   quantar-dashboard.service
 )
 systemctl enable --now "${CORE_UNITS[@]}"

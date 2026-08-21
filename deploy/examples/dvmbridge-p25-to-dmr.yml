@@ -26,17 +26,17 @@ network:
   slot: 2
 
 system:
-  identity: BRIDGE-P25-PCM-ONLY
+  identity: BRIDGE-P25-DMR
   netId: BB800
   sysId: 001
   grantDemand: false
   txMode: 1
-  rxAudioGain: 1.0
-  vocoderDecoderAudioGain: 1.0
+  rxAudioGain: 0.9
+  vocoderDecoderAudioGain: 1.35
   vocoderDecoderAutoGain: false
   vocoderDecoderUvQuality: 12
-  txAudioGain: 2.0
-  vocoderEncoderAudioGain: 0.0
+  txAudioGain: 1.0
+  vocoderEncoderAudioGain: 1.5
   dmrEncodeHighCutHz: 2500
   trace: false
   debug: false
@@ -46,7 +46,7 @@ system:
     tekKeyId: 1
   localAudio: false
   voxSampleLevel: 80.0
-  dropTimeMs: 600
+  dropTimeMs: 450
   detectAnalogMDC1200: false
   preambleLeaderTone: false
   preambleTone: 2175

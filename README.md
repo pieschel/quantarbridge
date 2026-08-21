@@ -1,10 +1,10 @@
 # QuantarBridge
 
-QuantarBridge connects a Motorola Quantar in P25 conventional mode to
-BrandMeister through the TETRAPACK BREW interface. It combines a patched
-DVMHost/DVMFNE stack, two PCM-facing DVMBridge processes, a TETRA speech codec,
-a separate BrandMeister packet-data client, Motorola APX data services, and a
-local operations dashboard.
+QuantarBridge connects a Motorola Quantar in P25 conventional mode directly to
+BrandMeister. It combines a patched DVMHost/DVMFNE stack, two transcoding
+DVMBridge processes, a native BrandMeister voice and packet-data client,
+Motorola APX data services, and a local operations dashboard. TETRAPACK BREW
+remains available as an explicit opt-in migration path.
 
 This repository contains no station credentials, operator data, packet
 captures, radio registrations, or private runtime state. Installation creates
@@ -12,14 +12,15 @@ a separate runtime directory outside Git.
 
 ## Features
 
-- Bidirectional P25/TETRA voice through BREW and a Quantar DFSI/V.24 connection
+- Bidirectional P25/DMR voice directly through BrandMeister and a Quantar DFSI/V.24 connection
 - Configurable P25 to BrandMeister talkgroup mapping
 - Static and dynamic BrandMeister talkgroups with configurable expiry
 - Per-direction audio gain, AGC, and timing controls
 - Motorola APX conventional packet-data registration (ARS/SCEP)
 - APX Text Messaging Service (TMS), local delivery, and BrandMeister routing
 - Motorola LRRP polling and forwarding toward BrandMeister APRS
-- TETRAPACK BREW voice, affiliation, and compatible messaging transport
+- Native BrandMeister TMS/LRRP and service-reply routing
+- Optional TETRAPACK BREW voice and compatible messaging transport
 - Dashboard for registrations, positions, active calls, talkgroups, and service state
 - Authenticated administration for network, mapping, audio, GPS, and timeout settings
 
@@ -36,13 +37,9 @@ Motorola APX / P25 RF
           |
         dvmfne
        /      \
- P25->PCM      PCM->P25
+ P25->DMR      DMR->P25
        \      /
-  BREW audio bridge
-          |
- TETRAPACK / BrandMeister
-
-Native BrandMeister client -------- TMS / LRRP / APRS data only
+ Native BrandMeister client -------- voice / TMS / LRRP / APRS
 ```
 
 The DVMHost modifications are distributed as
@@ -72,7 +69,6 @@ sudo ./scripts/install.sh \
   --bm-id 123456 \
   --bm-callsign N0CALL \
   --bm-master 2622.master.brandmeister.network \
-  --brew-username 123456 \
   --rx-frequency 430800000 \
   --tx-frequency 438800000 \
   --serial-port /dev/ttyUSB0

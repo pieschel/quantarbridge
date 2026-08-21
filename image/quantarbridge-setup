@@ -67,7 +67,6 @@ echo
 prompt_value BM_ID "BrandMeister repeater ID (six digits)"
 prompt_value BM_CALLSIGN "Callsign"
 prompt_value BM_MASTER "BrandMeister master hostname" "2622.master.brandmeister.network"
-prompt_value BREW_USERNAME "TETRAPACK BREW username" "${BM_ID}"
 prompt_value RX_FREQUENCY "Repeater receive frequency in Hz"
 prompt_value TX_FREQUENCY "Repeater transmit frequency in Hz"
 prompt_value SERIAL_PORT "Quantar serial device" "/dev/ttyUSB0"
@@ -113,7 +112,6 @@ CONFIGURE_ARGS=(
   --bm-id "${BM_ID}"
   --bm-callsign "${BM_CALLSIGN}"
   --bm-master "${BM_MASTER}"
-  --brew-username "${BREW_USERNAME}"
   --rx-frequency "${RX_FREQUENCY}"
   --tx-frequency "${TX_FREQUENCY}"
   --serial-port "${SERIAL_PORT}"
@@ -162,14 +160,14 @@ systemctl disable --now \
   quantar-static-recover.path \
   dmr-to-p25-recover.timer \
   bm-to-p25-recover.timer \
-  ensure-static-tg.timer 2>/dev/null || true
+  ensure-static-tg.timer \
+  tetrapack-brew-audio.service 2>/dev/null || true
 
 CORE_UNITS=(
   dvmfne.service
   dvmhost.service
   dvmbridge-p25-to-dmr.service
   dvmbridge-dmr-to-p25.service
-  tetrapack-brew-audio.service
   quantarbridge.service
   tetrapack-brew-bridge.service
   quantar-dashboard.service

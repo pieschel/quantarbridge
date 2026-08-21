@@ -105,7 +105,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bm-id", required=True, type=parse_repeater_id)
     parser.add_argument("--bm-callsign", required=True, type=parse_callsign)
     parser.add_argument("--bm-master", required=True)
-    parser.add_argument("--brew-username", required=True)
+    parser.add_argument(
+        "--brew-username",
+        default="",
+        help="optional TETRAPACK BREW username retained for a later opt-in migration",
+    )
     parser.add_argument("--rx-frequency", required=True, type=parse_frequency)
     parser.add_argument("--tx-frequency", required=True, type=parse_frequency)
     parser.add_argument("--serial-port", default="/dev/ttyUSB0")
@@ -143,7 +147,7 @@ def validate_arguments(args: argparse.Namespace) -> None:
         raise ValueError("runtime and install directories must be absolute")
     if not re.fullmatch(r"[A-Za-z0-9.-]+", args.bm_master) or "." not in args.bm_master:
         raise ValueError("BrandMeister master must be a hostname without a URL scheme")
-    if not re.fullmatch(r"[A-Za-z0-9_.@+-]{1,64}", args.brew_username):
+    if args.brew_username and not re.fullmatch(r"[A-Za-z0-9_.@+-]{1,64}", args.brew_username):
         raise ValueError("BREW username contains unsupported characters")
     if not -90.0 <= args.latitude <= 90.0:
         raise ValueError("latitude must be between -90 and 90")
@@ -217,6 +221,7 @@ def configure(args: argparse.Namespace, brandmeister_password: str) -> None:
             "location": args.location,
         }
     )
+    bm["voiceEnabled"] = True
 
     files["dvmfne-config.yml"]["master"]["password"] = local_fne_password
     host = files["dvmhost-config.yml"]
@@ -272,11 +277,14 @@ def configure(args: argparse.Namespace, brandmeister_password: str) -> None:
     )
     tetrapack["brew"].update(
         {
-            "enabled": True,
+            "enabled": False,
             "username": args.brew_username,
             "password": "",
         }
     )
+    tetrapack.pop("brewAudioOutboxDir", None)
+    tetrapack["brewServiceRids"] = []
+    tetrapack["brandmeisterServiceRids"] = [262993]
     atomic_write(
         runtime_dir / "tetrapack-brew-bridge.json",
         json.dumps(tetrapack, indent=2, ensure_ascii=True) + "\n",
@@ -322,7 +330,8 @@ def configure(args: argparse.Namespace, brandmeister_password: str) -> None:
     print(f"runtime={runtime_dir}")
     print(f"brandmeister_repeater_id={args.bm_id}")
     print(f"ars_server={args.ars_server_ip}")
-    print(f"brew_username={args.brew_username}")
+    print("voice_transport=brandmeister")
+    print(f"brew_username_configured={bool(args.brew_username)}")
     print("credentials_written=true")
 
 

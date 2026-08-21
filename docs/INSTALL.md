@@ -16,7 +16,7 @@ Prepare the following:
 - The serial device path, normally `/dev/ttyUSB0`
 - An assigned six-digit BrandMeister repeater ID and matching callsign
 - The BrandMeister master hostname and device password for that repeater
-- TETRAPACK BREW access and the BREW username assigned to the bridge
+- Optional TETRAPACK BREW access only if the installation will later be migrated away from the direct voice path
 - Licensed frequencies and the P25 NAC, Network ID, and System ID for the site
 - A strong, unique password for the local dashboard administrator
 
@@ -54,7 +54,6 @@ sudo ./scripts/install.sh \
   --bm-id 123456 \
   --bm-callsign N0CALL \
   --bm-master 2622.master.brandmeister.network \
-  --brew-username 123456 \
   --rx-frequency 430800000 \
   --tx-frequency 438800000 \
   --serial-port /dev/ttyUSB0 \
@@ -81,9 +80,8 @@ The installer prompts without echo for:
 No password is accepted as a command-line argument. The installer generates a
 random local FNE password, builds the pinned DVMHost revision with the supplied
 patch, builds the pinned external `tetra-codec` revision, builds QuantarBridge,
-runs the test suite, and installs the `systemd` units. The protected runtime
-uses the BrandMeister device password for BREW unless a separate password is
-set there manually.
+runs the test suite, and installs the `systemd` units. Voice, TMS, LRRP, and
+configured service destinations use the native BrandMeister session by default.
 
 Use `--dashboard-listen 0.0.0.0` only when the management LAN is trusted and a
 host firewall limits TCP port `8088`. The default `127.0.0.1` keeps the
@@ -98,7 +96,7 @@ sudo systemctl enable --now \
   dvmhost-recover.timer
 ```
 
-### Existing direct-BrandMeister installation
+### Optional migration to TETRAPACK BREW
 
 `scripts/enable_brew_audio.py` preserves credentials and makes timestamped
 copies of every private runtime file it changes. It is an in-place migration
@@ -132,7 +130,6 @@ systemctl --no-pager --full status \
   dvmhost.service \
   dvmbridge-p25-to-dmr.service \
   dvmbridge-dmr-to-p25.service \
-  tetrapack-brew-audio.service \
   quantarbridge.service \
   tetrapack-brew-bridge.service \
   quantar-dashboard.service
@@ -143,11 +140,10 @@ journalctl -b -u dvmhost.service -u quantarbridge.service --no-pager
 Expected startup sequence:
 
 1. `dvmfne` listens on the local master port.
-2. `dvmhost`, both PCM-facing DVMBridge directions, and QuantarBridge authenticate as
+2. `dvmhost`, both transcoding DVMBridge directions, and QuantarBridge authenticate as
    local peers.
-3. The BREW audio worker registers local ISSIs and affiliates static groups.
-4. QuantarBridge logs in to BrandMeister for packet data and management.
-5. The dashboard responds on the configured management address.
+3. QuantarBridge logs in directly to BrandMeister for group voice and packet data.
+4. The dashboard responds on the configured management address.
 
 Open `http://<bridge-address>:8088/` and sign in as `admin` with the password
 created during installation. There is no built-in or published default

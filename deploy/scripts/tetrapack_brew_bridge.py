@@ -98,6 +98,7 @@ class BridgeConfig:
     service_route_max_age_seconds: int = 900
     local_loop_enabled: bool = False
     brew_service_rids: set[int] = field(default_factory=lambda: {262993})
+    brandmeister_service_rids: set[int] = field(default_factory=set)
     brew: BrewConfig = field(default_factory=BrewConfig)
 
     def __post_init__(self) -> None:
@@ -447,6 +448,7 @@ def load_config(path: Path) -> BridgeConfig:
         # Backward compatibility for runtime files created before the key made
         # its service-only purpose explicit.
         brew_service_rids = raw.get("brewTargetRids", [262993])
+    brandmeister_service_rids = raw.get("brandmeisterServiceRids", [])
     fallback_runtime = load_runtime_bm_defaults(path)
     outbox_dir = Path(raw.get("outboxDir", "/home/quantar/quantar-runtime/sms/outbox"))
     return BridgeConfig(
@@ -465,6 +467,7 @@ def load_config(path: Path) -> BridgeConfig:
         service_route_max_age_seconds=max(60, int(raw.get("serviceRouteMaxAgeSeconds", 900))),
         local_loop_enabled=bool(raw.get("localLoopEnabled", False)),
         brew_service_rids={int(value) for value in brew_service_rids},
+        brandmeister_service_rids={int(value) for value in brandmeister_service_rids},
         brew=BrewConfig(
             enabled=bool(brew_raw.get("enabled", False)),
             base_url=str(brew_raw.get("baseUrl", "https://core.tetrapack.online")),
@@ -514,6 +517,12 @@ def load_runtime_bm_defaults(config_path: Path) -> dict[str, str]:
 
 
 def ensure_dirs(config: BridgeConfig) -> None:
+    overlap = config.brew_service_rids & config.brandmeister_service_rids
+    if overlap:
+        raise ValueError(
+            "service RIDs cannot use BREW and BrandMeister simultaneously: "
+            + ",".join(str(value) for value in sorted(overlap))
+        )
     config.inbox_dir.mkdir(parents=True, exist_ok=True)
     config.outbox_dir.mkdir(parents=True, exist_ok=True)
     config.processed_dir.mkdir(parents=True, exist_ok=True)
@@ -683,6 +692,24 @@ def flush_pending_text(config: BridgeConfig, brew: BrewClient, pending: PendingT
         result["transport"] = "tetrapack_brew"
         result["fragments"] = pending.fragments
         return result
+
+    if pending.target_rid in config.brandmeister_service_rids:
+        route_path = write_service_route(
+            config, pending.source_rid, pending.target_rid
+        )
+        outbox_path = write_outbox_message(
+            config, synthetic_event, text, local_only=False, route="brandmeister"
+        )
+        return {
+            "status": "queued",
+            "transport": "brandmeister_packet_data",
+            "outboxPath": str(outbox_path),
+            "serviceRoutePath": str(route_path),
+            "sourceRid": pending.source_rid,
+            "targetRid": pending.target_rid,
+            "text": text,
+            "fragments": pending.fragments,
+        }
 
     outbox_path = write_outbox_message(
         config, synthetic_event, text, local_only=False, route="brandmeister"

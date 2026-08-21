@@ -295,6 +295,62 @@ class TetrapackBridgeTest(unittest.TestCase):
             self.assertEqual("Fallback", body["text"])
             self.assertNotIn("sendArsFirst", body)
 
+    def test_native_brandmeister_service_keeps_reply_route(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = BRIDGE.BridgeConfig(
+                inbox_dir=root / "inbox",
+                outbox_dir=root / "outbox",
+                processed_dir=root / "processed",
+                error_dir=root / "error",
+                brew_service_rids=set(),
+                brandmeister_service_rids={262993},
+            )
+            BRIDGE.ensure_dirs(config)
+            now = time.monotonic()
+            pending = BRIDGE.PendingText(
+                source_rid=1000002,
+                target_rid=262993,
+                local_candidate=False,
+                first_seen=now,
+                updated_at=now,
+                fragments=["WX"],
+                event_names=["native-weather"],
+            )
+
+            result = BRIDGE.flush_pending_text(
+                config, FailingBrewClient(), pending
+            )
+
+            self.assertEqual("queued", result["status"])
+            self.assertEqual("brandmeister_packet_data", result["transport"])
+            queued = list(config.outbox_dir.glob("*.json"))
+            routes = list(config.service_route_dir.glob("*.json"))
+            self.assertEqual(1, len(queued))
+            self.assertEqual(1, len(routes))
+            body = json.loads(queued[0].read_text(encoding="utf-8"))
+            route = json.loads(routes[0].read_text(encoding="utf-8"))
+            self.assertEqual("brandmeister", body["route"])
+            self.assertEqual(1000002, body["sourceRid"])
+            self.assertEqual(262993, body["targetRid"])
+            self.assertEqual(1000002, route["requesterRid"])
+            self.assertEqual(262993, route["serviceRid"])
+            self.assertEqual(str(routes[0]), result["serviceRoutePath"])
+
+    def test_service_rid_cannot_use_brew_and_native_simultaneously(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = BRIDGE.BridgeConfig(
+                inbox_dir=root / "inbox",
+                outbox_dir=root / "outbox",
+                processed_dir=root / "processed",
+                error_dir=root / "error",
+                brew_service_rids={262993},
+                brandmeister_service_rids={262993},
+            )
+            with self.assertRaises(ValueError):
+                BRIDGE.ensure_dirs(config)
+
     def test_weather_service_stays_on_brew_transport(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
