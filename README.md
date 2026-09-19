@@ -1,9 +1,11 @@
 # QuantarBridge
 
 QuantarBridge connects a Motorola Quantar in P25 conventional mode directly to
-BrandMeister. It combines a patched DVMHost/DVMFNE stack, two transcoding
-DVMBridge processes, a native BrandMeister voice and packet-data client,
-Motorola APX data services, and a local operations dashboard. TETRAPACK BREW
+BrandMeister, with direct IMBE/AMBE speech-parameter conversion in both
+directions. It combines a patched DVMHost/DVMFNE stack, two DVMBridge
+processes, a native BrandMeister voice and packet-data client, Motorola APX
+data services, and a local operations dashboard. A prebuilt Raspberry Pi
+ARM64 image provides the complete stack. TETRAPACK BREW
 remains available as an explicit opt-in migration path.
 
 This repository contains no station credentials, operator data, packet
@@ -15,7 +17,8 @@ a separate runtime directory outside Git.
 - Bidirectional P25/DMR voice directly through BrandMeister and a Quantar DFSI/V.24 connection
 - Configurable P25 to BrandMeister talkgroup mapping
 - Static and dynamic BrandMeister talkgroups with configurable expiry
-- Per-direction audio gain, AGC, and timing controls
+- Direct IMBE-to-AMBE and AMBE-to-IMBE conversion with per-call codec reset
+- Calibrated direct-audio defaults; optional legacy PCM gain/AGC controls
 - Motorola APX conventional packet-data registration (ARS/SCEP)
 - APX Text Messaging Service (TMS), local delivery, and BrandMeister routing
 - Motorola LRRP polling and forwarding toward BrandMeister APRS
@@ -23,6 +26,28 @@ a separate runtime directory outside Git.
 - Optional TETRAPACK BREW voice and compatible messaging transport
 - Dashboard for registrations, positions, active calls, talkgroups, and service state
 - Authenticated administration for network, mapping, audio, GPS, and timeout settings
+- Persistent station settings with guarded updates and configuration backups
+- Raspberry Pi ARM64 image with automated codec, SSH/sudo and storage checks
+
+## Version 0.1.4
+
+- **Audio:** both directions use the direct conversion settings confirmed in
+  live listening tests on 19 September 2026. Tests cover call-state reset,
+  codec boundaries and damaged frames.
+- **Saved settings:** the native BrandMeister dashboard no longer tries to
+  restart an absent BREW audio target. That old error rolled back changes to
+  passwords, talkgroup mappings and timeouts, making settings appear lost
+  when the dashboard was loaded again.
+- **Raspberry Pi image:** setup rejects volatile/read-only storage, writes
+  are flushed to disk, and the SSH welcome text no longer incorrectly says
+  that an already configured installation needs setup. The image build
+  compares configuration/authentication files across an unmount/remount.
+
+See the [release notes](release-notes/v0.1.4.md) and the
+[GitHub releases](https://github.com/pieschel/quantarbridge/releases) for
+the image, checksum and validation reports. A physical Raspberry Pi reboot
+test of the new image remains to be confirmed; the storage test is not a
+hardware boot test.
 
 ## Architecture
 
@@ -43,8 +68,9 @@ Motorola APX / P25 RF
 ```
 
 The DVMHost modifications are distributed as
-[`patches/dvmhost.patch`](patches/dvmhost.patch) and
-[`patches/dvmhost-quantar-rssi.patch`](patches/dvmhost-quantar-rssi.patch)
+[`patches/dvmhost.patch`](patches/dvmhost.patch),
+[`patches/dvmhost-quantar-rssi.patch`](patches/dvmhost-quantar-rssi.patch) and
+[`patches/dvmhost-direct-audio.patch`](patches/dvmhost-direct-audio.patch)
 against commit
 `01979084df9fc6a5737fac9efb213430268377c9`. Subscriber radio IDs are learned
 from registrations; packet-data addresses are read from the private runtime
