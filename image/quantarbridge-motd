@@ -1,4 +1,4 @@
-
-QuantarBridge ARM64 is preinstalled but intentionally not configured.
-Run: sudo quantarbridge-setup
-Run passwd immediately if the public initial qbadmin password is still active.
+QuantarBridge ARM64. Existing settings are retained across normal reboots.
+First setup only: sudo quantarbridge-setup
+Check an existing installation: systemctl --failed
+Change the public initial qbadmin password with passwd.

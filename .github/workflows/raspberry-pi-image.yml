@@ -70,7 +70,8 @@ jobs:
             "${checksum_path}:text/plain" \
             "dist/BUILD-INFO.txt:text/plain" \
             "dist/ARM64-FILE-CHECK.txt:text/plain" \
-            "dist/SSH-LOGIN-CHECK.txt:text/plain" | tee dist/OCI-MANIFEST.json
+            "dist/SSH-LOGIN-CHECK.txt:text/plain" \
+            "dist/PERSISTENCE-CHECK.txt:text/plain" | tee dist/OCI-MANIFEST.json
 
       - name: Create GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -89,6 +90,7 @@ jobs:
             dist/BUILD-INFO.txt \
             dist/ARM64-FILE-CHECK.txt \
             dist/SSH-LOGIN-CHECK.txt \
+            dist/PERSISTENCE-CHECK.txt \
             dist/OCI-MANIFEST.json \
             --verify-tag \
             --latest \

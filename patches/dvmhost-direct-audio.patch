@@ -1,0 +1,429 @@
+diff --git a/src/bridge/DirectAmbeImbe.cpp b/src/bridge/DirectAmbeImbe.cpp
+new file mode 100644
+index 00000000..776cfd8d
+--- /dev/null
++++ b/src/bridge/DirectAmbeImbe.cpp
+@@ -0,0 +1,83 @@
++#include "DirectAmbeImbe.h"
++#include "vocoder/imbe/imbe.h"
++#include "vocoder/imbe/ch_encode.h"
++#include "vocoder/imbe/ch_decode.h"
++#include "vocoder/imbe/imbe_vocoder.h"
++#include "vocoder/MBEDecoder.h"
++#include <memory>
++#include <cmath>
++#include <algorithm>
++#include <stdexcept>
++#include <cstring>
++namespace quantar_reverse {
++namespace {
++bool active=false;
++float spectralScale=4.0f, gainAdjust=1.0f;
++struct State {
++ vocoder::MBEDecoder unpack;
++ mbe_parms cur,prev,enh;
++ imbe_vocoder encoder;
++ IMBE_PARAM last{};
++ bool hasLast=false;
++ unsigned losses=0;
++ State():unpack(vocoder::DECODE_DMR_AMBE){mbe_initMbeParms(&cur,&prev,&enh);encoder.set_gain_adjust(gainAdjust);}
++};
++thread_local std::unique_ptr<State> state;
++IMBE_PARAM quiet(){
++ int16_t v[8]={};const int pitch=100;v[0]=(pitch&0xFC)<<4;v[7]=(pitch&3)<<1;
++ IMBE_PARAM p{};decode_frame_vector(&p,v);p.ref_pitch=(2*pitch+79)*64;p.l_uv=p.num_harms;
++ for(int h=0;h<p.num_harms;h++)p.sa[h]=1;
++ return p;
++}
++bool map(const mbe_parms& cur,IMBE_PARAM& p){
++ if(!std::isfinite(cur.w0)||cur.w0<=0||cur.L<9||cur.L>56)return false;
++ double pitchValue=4*M_PI/cur.w0-39.5;
++ if(!std::isfinite(pitchValue))return false;
++ int pitch=(int)std::lround(std::max(0.,std::min(207.,pitchValue)));
++ int16_t vec[8]={};vec[0]=(pitch&0xFC)<<4;vec[7]=(pitch&3)<<1;
++ decode_frame_vector(&p,vec);
++ if(p.num_harms<9||p.num_harms>56||p.num_bands<3||p.num_bands>12)return false;
++ p.ref_pitch=(2*pitch+79)*64;double omega=4*M_PI/(pitch+39.5);
++ double power[56]={};bool voiced[56]={};
++ for(int h=0;h<p.num_harms;h++){
++  double at=std::max(1.,std::min((double)cur.L,(h+1)*omega/cur.w0));
++  int lo=(int)at,hi=std::min(cur.L,lo+1);double f=at-lo;
++  double amp=((1-f)*cur.Ml[lo]+f*cur.Ml[hi])*spectralScale;
++  if(!std::isfinite(amp)||amp<0)return false;
++  amp=std::min(30000.,amp);p.sa[h]=std::max(1,(int)std::lround(amp));
++  power[h]=amp*amp;voiced[h]=cur.Vl[std::max(1,std::min(cur.L,(int)std::lround(at)))];
++ }
++ int bandBits=0,unvoiced=0;
++ for(int band=0;band<p.num_bands;band++){
++  int start=band*3,end=(band==p.num_bands-1)?p.num_harms:std::min(start+3,(int)p.num_harms);
++  double v=0,u=0;for(int h=start;h<end;h++)(voiced[h]?v:u)+=power[h];
++  bool decision=v>u;bandBits=(bandBits<<1)|decision;
++  for(int h=start;h<end;h++){p.v_uv_dsn[h]=decision;if(!decision)unvoiced++;}
++ }
++ p.b_vec[1]=bandBits;p.l_uv=unvoiced;return true;
++}
++}
++void configure(bool on,float scale,float gain){
++ if(!std::isfinite(scale)||scale<=0||scale>16||!std::isfinite(gain)||gain<0||gain>4)
++  throw std::invalid_argument("Invalid direct AMBE-to-IMBE scale/gain");
++ active=on;spectralScale=scale;gainAdjust=gain;
++}
++bool enabled(){return active;}
++void reset(){state.reset(new State());}
++bool convert(const uint8_t* ambe,uint8_t* imbe){
++ if(!ambe||!imbe)return false;if(!state)reset();
++ uint8_t input[9];std::memcpy(input,ambe,9);char bits[49]={};
++ int errors=state->unpack.decodeBits(input,bits);
++ int bad=errors>3?2:mbe_decodeAmbe2450Parms(bits,&state->cur,&state->prev);
++ IMBE_PARAM p{};bool valid=bad==0&&map(state->cur,p);
++ if(valid){mbe_moveMbeParms(&state->cur,&state->prev);state->last=p;state->hasLast=true;state->losses=0;}
++ else {
++  state->losses=std::min(4U,state->losses+1);
++  if(state->hasLast&&state->losses<=3){p=state->last;for(int h=0;h<p.num_harms;h++)p.sa[h]=std::max(1,p.sa[h]>>state->losses);}
++  else {p=quiet();mbe_initMbeParms(&state->cur,&state->prev,&state->enh);state->hasLast=false;}
++ }
++ int16_t vec[8]={};state->encoder.encode_parameters(&p,vec);std::memset(imbe,0,11);unsigned bit=0;
++ for(int v=0;v<8;v++){int width=v<4?12:(v<7?11:7);for(int j=width-1;j>=0;j--,bit++)imbe[bit/8]|=((vec[v]>>j)&1)<<(7-bit%8);}
++ return valid;
++}
++}
+diff --git a/src/bridge/DirectAmbeImbe.h b/src/bridge/DirectAmbeImbe.h
+new file mode 100644
+index 00000000..35272dc8
+--- /dev/null
++++ b/src/bridge/DirectAmbeImbe.h
+@@ -0,0 +1,9 @@
++#pragma once
++#include <cstdint>
++namespace quantar_reverse {
++void configure(bool enabled, float scale, float gain);
++bool enabled();
++void reset();
++// Always writes an IMBE word. False means an invalid/unsupported word was concealed.
++bool convert(const uint8_t* ambe, uint8_t* imbe);
++}
+diff --git a/src/bridge/DirectImbeAmbe.cpp b/src/bridge/DirectImbeAmbe.cpp
+new file mode 100644
+index 00000000..c6e36e65
+--- /dev/null
++++ b/src/bridge/DirectImbeAmbe.cpp
+@@ -0,0 +1,65 @@
++// Isolated implementation: shares the existing AMBE parameter quantizer.
++#include "vocoder/MBEEncoder.cpp"
++#include "DirectImbeAmbe.h"
++#include <memory>
++#include <cmath>
++#include <stdexcept>
++namespace quantar_direct {
++namespace {
++bool active = false;
++float adjustment = 1.58f;
++struct State {
++    imbe_vocoder decoder;
++    mbe_parms current, previous, enhanced;
++    State() { mbe_initMbeParms(&current, &previous, &enhanced); }
++};
++thread_local std::unique_ptr<State> state;
++void silence(uint8_t* word) {
++    static const uint8_t quiet[9] = {0xB9,0xE8,0x81,0x52,0x61,0x73,0x00,0x2A,0x6B};
++    std::memcpy(word, quiet, sizeof(quiet));
++}
++}
++void configure(bool on, float value) {
++    if (!std::isfinite(value) || value < 0.0f || value > 4.0f)
++        throw std::invalid_argument("directImbeGainAdjust must be finite and between 0 and 4");
++    active = on; adjustment = value;
++}
++bool enabled() { return active; }
++float gain() { return adjustment; }
++void reset() { state.reset(new State()); }
++bool convert(const uint8_t* imbe, uint8_t* ambe) {
++    if (!imbe || !ambe) return false;
++    int16_t vector[8] = {}, discarded[160];
++    unsigned bit = 0;
++    for (int v = 0; v < 8; ++v) {
++        const int width = v < 4 ? 12 : (v < 7 ? 11 : 7);
++        for (int b = 0; b < width; ++b, ++bit)
++            vector[v] = (vector[v] << 1) | ((imbe[bit / 8] >> (7 - bit % 8)) & 1);
++    }
++    // Validate pitch before the legacy decoder can reuse stale parameters.
++    const int pitchCode = ((vector[0] >> 4) & 0xFC) | ((vector[7] >> 1) & 3);
++    if (pitchCode > 207) { silence(ambe); return false; }
++    if (!state) reset();
++    state->decoder.imbe_decode(vector, discarded);
++    IMBE_PARAM parameters = *state->decoder.param();
++    if (parameters.num_harms < 9 || parameters.num_harms > 56) { silence(ambe); return false; }
++    parameters.ref_pitch = std::max(159 * 32, std::min(985 * 32, (2 * pitchCode + 79) * 64));
++    // Prove the lookup can find this harmonic count before calling the legacy quantizer.
++    const int count = sizeof(b0_lookup) / sizeof(b0_lookup[0]);
++    int index = (parameters.ref_pitch >> 5) - 159;
++    bool found = false;
++    for (int steps = 0; steps < count && index >= 0 && index < count; ++steps) {
++        const int harmonics = static_cast<int>(AmbeLtable[b0_lookup[index]]);
++        if (harmonics == parameters.num_harms) { found = true; break; }
++        index += harmonics < parameters.num_harms ? 1 : -1;
++    }
++    if (!found) { silence(ambe); return false; }
++    int quantized[9] = {};
++    encodeAMBE(&parameters, quantized, &state->current, &state->previous, adjustment);
++    uint8_t bits[49] = {}, raw[9] = {};
++    encode49bit(bits, quantized);
++    for (int i = 0; i < 49; ++i) raw[i / 8] |= bits[i] << (7 - i % 8);
++    encodeDmrAMBE(raw, ambe);
++    return true;
++}
++}
+diff --git a/src/bridge/DirectImbeAmbe.h b/src/bridge/DirectImbeAmbe.h
+new file mode 100644
+index 00000000..0fbf5b32
+--- /dev/null
++++ b/src/bridge/DirectImbeAmbe.h
+@@ -0,0 +1,10 @@
++#pragma once
++#include <cstdint>
++namespace quantar_direct {
++void configure(bool enabled, float gain);
++bool enabled();
++float gain();
++void reset();
++// Always fills a valid AMBE word. False means invalid input was concealed.
++bool convert(const uint8_t* imbe, uint8_t* ambe);
++}
+diff --git a/src/bridge/HostBridge.DMR.cpp b/src/bridge/HostBridge.DMR.cpp
+index c1d22921..8926be9f 100644
+--- a/src/bridge/HostBridge.DMR.cpp
++++ b/src/bridge/HostBridge.DMR.cpp
+@@ -1,3 +1,4 @@
++#include "DirectAmbeImbe.h"
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+  * Digital Voice Modem - Bridge
+@@ -213,6 +214,7 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+         }
+     }
+ 
++
+     // Direct BM downlink may legitimately arrive with SWITCH_OVER/control markers and with
+     // the originating talker source ID. Be conservative here: dropping or ignoring those
+     // frames causes audible holes on long runs. Loop prevention is handled elsewhere.
+@@ -246,6 +248,10 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+             m_callInProgress = true;
+             m_callAlgoId = 0U;
+             if (dmrToP25Bridge) {
++                if (quantar_reverse::enabled()) {
++                    quantar_reverse::reset();
++                    LogInfoEx(LOG_HOST, "Direct AMBE-to-IMBE call state reset, srcId = %u, dstId = %u", srcId, dstId);
++                }
+                 m_ignoreCall = false;
+                 m_p25SeqNo = 0U;
+                 m_p25N = 0U;
+@@ -417,6 +423,14 @@ void HostBridge::decodeDMRAudioFrame(uint8_t* ambe, uint32_t srcId, uint32_t dst
+         for (uint32_t i = 0; i < RAW_AMBE_LENGTH_BYTES; i++)
+             ambePartial[i] = ambe[i + (n * 9)];
+ 
++        if (quantar_reverse::enabled() && m_txMode == TX_MODE_P25) {
++            uint8_t word[11];
++            const bool valid = quantar_reverse::convert(ambePartial, word);
++            if (!valid && m_debug)
++                LogWarning(LOG_HOST, "Direct AMBE-to-IMBE concealed invalid or unsupported word, srcId = %u", srcId);
++            encodeP25AudioFrame(nullptr, srcId, dstId, word);
++            continue;
++        }
+         short samples[AUDIO_SAMPLES_LENGTH];
+         int errs = 0;
+ #if defined(_WIN32)
+@@ -478,7 +492,12 @@ void HostBridge::decodeDMRAudioFrame(uint8_t* ambe, uint32_t srcId, uint32_t dst
+ 
+ void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId)
+ {
+-    assert(pcm != nullptr);
++    encodeDMRAudioFrame(pcm, forcedSrcId, forcedDstId, nullptr);
++}
++
++void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId, const uint8_t* directAmbe)
++{
++    assert(pcm != nullptr || directAmbe != nullptr);
+     using namespace dmr;
+     using namespace dmr::defines;
+     using namespace dmr::data;
+@@ -604,6 +623,12 @@ void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+         m_ambeCount = 0U;
+     }
+ 
++    if (directAmbe != nullptr) {
++        ::memcpy(m_ambeBuffer + (m_ambeCount * 9U), directAmbe, RAW_AMBE_LENGTH_BYTES);
++        m_ambeCount++;
++        return;
++    }
++
+     int smpIdx = 0;
+     short samples[AUDIO_SAMPLES_LENGTH];
+     for (uint32_t pcmIdx = 0; pcmIdx < (AUDIO_SAMPLES_LENGTH * 2U); pcmIdx += 2) {
+diff --git a/src/bridge/HostBridge.P25.cpp b/src/bridge/HostBridge.P25.cpp
+index 11af4ee0..3eb94d9e 100644
+--- a/src/bridge/HostBridge.P25.cpp
++++ b/src/bridge/HostBridge.P25.cpp
+@@ -1,3 +1,4 @@
++#include "DirectImbeAmbe.h"
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+  * Digital Voice Modem - Bridge
+@@ -336,6 +337,10 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+         // is this a new call stream?
+         uint16_t callKID = 0U;
+         if (currentStreamId != m_rxStreamId && ((duid != DUID::TDU) && (duid != DUID::TDULC)) && !m_callInProgress) {
++            if (quantar_direct::enabled()) {
++                quantar_direct::reset();
++                LogInfoEx(LOG_HOST, "Direct IMBE-to-AMBE call state reset, srcId = %u, dstId = %u", srcId, dstId);
++            }
+             if (p25PcmOnlyBridge) {
+                 delete m_decoder;
+                 m_decoder = new vocoder::MBEDecoder(vocoder::DECODE_88BIT_IMBE);
+@@ -665,6 +670,18 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
+ 
+         // Utils::dump(1U, "HostBridge::decodeP25AudioFrame(), Decrypted IMBE", imbe, RAW_IMBE_LENGTH_BYTES);
+ 
++        if (quantar_direct::enabled() && m_txMode == TX_MODE_DMR && !p25PcmOnlyBridge) {
++            uint8_t directAmbe[9];
++            const bool valid = quantar_direct::convert(imbe, directAmbe);
++            if (!valid && m_debug)
++                LogWarning(LOG_HOST, "Direct IMBE-to-AMBE concealed invalid input, srcId = %u, dstId = %u", srcId, dstId);
++            encodeDMRAudioFrame(nullptr, srcId, dstId, directAmbe);
++            if (!m_localAudio && (n % 3) == 2 && n < 8)
++                Thread::sleep(60U);
++            continue;
++        }
++
++
+         short samples[AUDIO_SAMPLES_LENGTH];
+         int errs = 0;
+ #if defined(_WIN32)
+@@ -733,7 +750,12 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
+ 
+ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId)
+ {
+-    assert(pcm != nullptr);
++    encodeP25AudioFrame(pcm, forcedSrcId, forcedDstId, nullptr);
++}
++
++void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId, const uint8_t* directImbe)
++{
++    assert(pcm != nullptr || directImbe != nullptr);
+     using namespace p25;
+     using namespace p25::defines;
+     using namespace p25::data;
+@@ -745,6 +767,10 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+     if (m_p25N == 9)
+         ::memset(m_netLDU2, 0x00U, 9U * 25U);
+ 
++    uint8_t imbe[RAW_IMBE_LENGTH_BYTES] = {};
++    if (directImbe != nullptr) {
++        ::memcpy(imbe, directImbe, RAW_IMBE_LENGTH_BYTES);
++    } else {
+     int smpIdx = 0;
+     short samples[AUDIO_SAMPLES_LENGTH];
+     for (uint32_t pcmIdx = 0; pcmIdx < (AUDIO_SAMPLES_LENGTH * 2U); pcmIdx += 2) {
+@@ -762,8 +788,6 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+         m_p25EncodeAgcPeakLimit, m_p25EncodeLimiterScale, m_p25EncodeLimiterFrames);
+ 
+     // encode PCM samples into IMBE codewords
+-    uint8_t imbe[RAW_IMBE_LENGTH_BYTES];
+-    ::memset(imbe, 0x00U, RAW_IMBE_LENGTH_BYTES);
+ #if defined(_WIN32)
+     if (m_useExternalVocoder) {
+         ambeEncode(samples, AUDIO_SAMPLES_LENGTH, imbe);
+@@ -775,6 +799,8 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+     }
+ #endif // defined(_WIN32)
+ 
++    }
++
+     // Utils::dump(1U, "HostBridge::encodeP25AudioFrame(), Encoded IMBE", imbe, RAW_IMBE_LENGTH_BYTES);
+ 
+     if (m_tekAlgoId != P25DEF::ALGO_UNENCRYPT && m_tekKeyId > 0U && m_p25Crypto->getTEKLength() > 0U) {
+diff --git a/src/bridge/HostBridge.cpp b/src/bridge/HostBridge.cpp
+index 77f46801..f9e5fb60 100644
+--- a/src/bridge/HostBridge.cpp
++++ b/src/bridge/HostBridge.cpp
+@@ -1,3 +1,5 @@
++#include "DirectAmbeImbe.h"
++#include "DirectImbeAmbe.h"
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+  * Digital Voice Modem - Bridge
+@@ -1050,6 +1052,12 @@ bool HostBridge::readParams()
+         m_vocoderDecoderUvQuality = 64U;
+     m_txAudioGain = systemConf["txAudioGain"].as<float>(1.0f);
+     m_vocoderEncoderAudioGain = systemConf["vocoderEncoderAudioGain"].as<float>(3.0f);
++    quantar_direct::configure(systemConf["directImbeToAmbe"].as<bool>(false) && m_identity == "BRIDGE-P25-DMR",
++        systemConf["directImbeGainAdjust"].as<float>(1.58f));
++    LogInfo("    Direct IMBE-to-AMBE: %s, gain adjustment: %.3f", quantar_direct::enabled() ? "enabled" : "disabled", quantar_direct::gain());
++    quantar_reverse::configure(systemConf["directAmbeToImbe"].as<bool>(false) && m_identity == "BRIDGE-DMR-P25",
++        systemConf["directAmbeSpectralScale"].as<float>(4.0f), systemConf["directAmbeGainAdjust"].as<float>(1.0f));
++    LogInfo("    Direct AMBE-to-IMBE: %s", quantar_reverse::enabled() ? "enabled" : "disabled");
+     m_dmrEncodeHighCutHz = systemConf["dmrEncodeHighCutHz"].as<float>(0.0f);
+     if (m_dmrEncodeHighCutHz < 0.0f)
+         m_dmrEncodeHighCutHz = 0.0f;
+diff --git a/src/bridge/HostBridge.h b/src/bridge/HostBridge.h
+index ec146e31..a1f4bd05 100644
+--- a/src/bridge/HostBridge.h
++++ b/src/bridge/HostBridge.h
+@@ -610,6 +610,7 @@ private:
+      * @param forcedDstId 
+      */
+     void encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId = 0U, uint32_t forcedDstId = 0U);
++    void encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId, const uint8_t* directAmbe);
+ 
+     // Project 25 (HostBridge.P25.cpp)
+     /**
+@@ -633,6 +634,7 @@ private:
+      * @param forcedDstId 
+      */
+     void encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId = 0U, uint32_t forcedDstId = 0U);
++    void encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId, const uint8_t* directImbe);
+ 
+     // Analog (HostBridge.Analog.cpp)
+     /**
+diff --git a/src/vocoder/MBEEncoder.cpp b/src/vocoder/MBEEncoder.cpp
+index de5152ff..fdd33d60 100644
+--- a/src/vocoder/MBEEncoder.cpp
++++ b/src/vocoder/MBEEncoder.cpp
+@@ -181,7 +181,7 @@ static void encodeAMBE(const IMBE_PARAM* imbe_param, int b[], mbe_parms* cur_mp,
+ 
+     // ref_pitch is Q8_8 in range 19.875 - 123.125
+     int b0_i = (imbe_param->ref_pitch >> 5) - 159;
+-    if (b0_i < 0 || b0_i > b0_lmax) {
++    if (b0_i < 0 || b0_i >= b0_lmax) {
+         fprintf(stderr, "encode error b0_i %d\n", b0_i);
+         return;
+     }
+@@ -195,7 +195,7 @@ static void encodeAMBE(const IMBE_PARAM* imbe_param, int b[], mbe_parms* cur_mp,
+             b0_i++;
+         else if (L > imbe_param->num_harms)
+             b0_i--;
+-        if (b0_i < 0 || b0_i > b0_lmax) {
++        if (b0_i < 0 || b0_i >= b0_lmax) {
+             fprintf(stderr, "encode error2 b0_i %d\n", b0_i);
+             return;
+         }
+diff --git a/src/vocoder/imbe/imbe_vocoder.h b/src/vocoder/imbe/imbe_vocoder.h
+index fc43ab62..faec62d5 100644
+--- a/src/vocoder/imbe/imbe_vocoder.h
++++ b/src/vocoder/imbe/imbe_vocoder.h
+@@ -29,6 +29,7 @@
+ #include <string.h>
+ 
+ #include "vocoder/imbe/imbe.h"
++#include "vocoder/imbe/ch_encode.h"
+ #include "vocoder/imbe/basic_op.h"
+ #include "vocoder/imbe/math_sub.h"
+ 
+@@ -60,6 +61,8 @@ public:
+     const IMBE_PARAM* param(void) { return &my_imbe_param; }
+     void set_gain_adjust(float gain_adjust) { d_gain_adjust = gain_adjust; }
+ 
++    void encode_parameters(IMBE_PARAM* p, int16_t* vector) { sa_encode(p); encode_frame_vector(p, vector); }
++
+ private:
+     IMBE_PARAM my_imbe_param;
+ 

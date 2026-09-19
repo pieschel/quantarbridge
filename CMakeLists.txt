@@ -38,6 +38,20 @@ target_link_libraries(quantarbridge PRIVATE "${DVMHOST_COMMON_LIBRARY}" yaml-cpp
 
 include(CTest)
 if(BUILD_TESTING)
+  get_filename_component(DVMHOST_BUILD_DIR "${DVMHOST_COMMON_LIBRARY}" DIRECTORY)
+  foreach(direction IN ITEMS ImbeAmbe AmbeImbe)
+    add_executable(direct_${direction}_test
+      tests/direct-audio/Direct${direction}Test.cpp
+      "${DVMHOST_SOURCE_DIR}/src/bridge/DirectImbeAmbe.cpp"
+      "${DVMHOST_SOURCE_DIR}/src/bridge/DirectAmbeImbe.cpp")
+    target_include_directories(direct_${direction}_test PRIVATE
+      "${DVMHOST_SOURCE_DIR}/src" "${DVMHOST_SOURCE_DIR}/src/bridge")
+    target_compile_options(direct_${direction}_test PRIVATE -UNDEBUG)
+    target_link_libraries(direct_${direction}_test PRIVATE
+      "${DVMHOST_BUILD_DIR}/libvocoder.a" "${DVMHOST_COMMON_LIBRARY}"
+      OpenSSL::SSL OpenSSL::Crypto Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME direct_${direction} COMMAND direct_${direction}_test)
+  endforeach()
   add_executable(bm_packet_data_reassembler_test
     tests/BmPacketDataReassemblerTest.cpp
     src/BmPacketDataReassembler.cpp
@@ -121,6 +135,8 @@ if(BUILD_TESTING)
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantar_static_recover_test.py")
     add_test(NAME bm_to_p25_recover
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/bm_to_p25_recover_test.py")
+    add_test(NAME image_persistence
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/image_persistence_test.py")
     add_test(NAME dvmhost_patch
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dvmhost_patch_test.py")
   endif()

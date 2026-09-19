@@ -8,7 +8,7 @@ Tagged builds are also published as GitHub release assets and as an OCI
 artifact in the GitHub Container Registry. Pull a packaged release with ORAS:
 
 ```bash
-oras pull ghcr.io/pieschel/quantarbridge-rpi-image:v0.1.0
+oras pull ghcr.io/pieschel/quantarbridge-rpi-image:v0.1.4
 ```
 
 ## Target
@@ -53,6 +53,37 @@ must be changed immediately after the first login with `passwd`.
 Services remain disabled until `quantarbridge-setup` completes. A failed
 hardware start does not delete the generated configuration; inspect
 `systemctl --failed` and the boot journal after connecting the serial adapter.
+
+## Persistence and reboot troubleshooting
+
+Station configuration, dashboard authentication and setup state are stored
+under `/home/quantar/quantar-runtime` on the writable root filesystem.
+Do not enable Raspberry Pi OS overlay/read-only mode after setup if you
+want later configuration changes to survive reboot. Setup checks the
+filesystem before accepting credentials.
+
+In v0.1.3, changing the BM password, talkgroup mappings or dynamic timeout
+could fail because the native profile still tried to restart the absent
+BREW audio target. That error rolled settings back while leaving the
+separately managed dashboard login password intact. v0.1.4 fixes this path.
+After saving, reload the settings page and confirm the saved values.
+
+The old SSH welcome text always said "not configured" and was not a test
+of saved settings. Do not rerun setup with `--reconfigure` merely because
+of that old text. Ordinary setup refuses to overwrite existing files.
+
+The image build validates configuration and login-file hashes across an
+unmount/remount and reads settings in a fresh process. These tests do not
+replace a physical Pi reboot test. If settings still disappear, preserve
+the runtime files and dashboard journal before reconfiguration, then check
+`findmnt -T /home/quantar/quantar-runtime` and
+`journalctl -b -u quantar-dashboard.service`. Do not publish runtime files:
+they contain station credentials.
+
+Direct audio defaults are `directImbeToAmbe: true` with
+`directImbeGainAdjust: 1.58` on P25 to DMR and `directAmbeToImbe: true` with
+`directAmbeSpectralScale: 4.0`, `directAmbeGainAdjust: 1.0` on DMR to P25.
+The dashboard's PCM gain controls apply to the older PCM conversion path.
 
 ## Boundary
 

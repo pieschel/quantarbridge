@@ -39,6 +39,8 @@ if [[ -e "${RUNTIME_DIR}/.configured" && "${RECONFIGURE}" -ne 1 ]]; then
   exit 1
 fi
 
+python3 "${INSTALL_DIR}/image/check-persistence.py" "${RUNTIME_DIR}" /etc
+
 prompt_value() {
   local variable_name="$1"
   local label="$2"
@@ -155,6 +157,7 @@ touch "${RUNTIME_DIR}/.configured"
 chown quantar:quantar "${RUNTIME_DIR}/.configured"
 chmod 0600 "${RUNTIME_DIR}/.configured"
 
+sync
 systemctl daemon-reload
 systemctl disable --now \
   quantar-static-recover.path \
@@ -184,6 +187,7 @@ for unit in "${CORE_UNITS[@]}"; do
   fi
 done
 
+sync
 unset BM_PASSWORD DASHBOARD_PASSWORD DASHBOARD_PASSWORD_CONFIRM BM_API_KEY
 echo
 echo "Configuration complete. Dashboard: http://${DASHBOARD_LISTEN}:${DASHBOARD_PORT}/"

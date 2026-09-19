@@ -130,6 +130,12 @@ def atomic_write(path: Path, payload: bytes, mode: int | None = None) -> None:
             os.fsync(stream.fileno())
         os.chmod(temp_path, target_mode)
         os.replace(temp_path, path)
+        if os.name == "posix":
+            directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
         try:
             temp_path.unlink()
@@ -2621,7 +2627,9 @@ class SettingsManager:
                 targets.append("dmr-to-p25")
             if p25_to_dmr_changed:
                 targets.append("p25-to-dmr")
-            if password_changed or brew_routing_changed or brew_uplink_gain_changed:
+            if self.config.brew_audio_config.exists() and (
+                password_changed or brew_routing_changed or brew_uplink_gain_changed
+            ):
                 targets.append("brew-audio")
 
             guard_remaining = self.state.restart_guard_remaining()

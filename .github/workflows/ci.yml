@@ -46,7 +46,7 @@ jobs:
         run: |
           git clone https://github.com/DVMProject/dvmhost.git "$RUNNER_TEMP/dvmhost"
           git -C "$RUNNER_TEMP/dvmhost" checkout --detach 01979084df9fc6a5737fac9efb213430268377c9
-          for patch in dvmhost.patch dvmhost-quantar-rssi.patch; do
+          for patch in dvmhost.patch dvmhost-quantar-rssi.patch dvmhost-direct-audio.patch; do
             git -C "$RUNNER_TEMP/dvmhost" apply --check "$GITHUB_WORKSPACE/patches/$patch"
             git -C "$RUNNER_TEMP/dvmhost" apply "$GITHUB_WORKSPACE/patches/$patch"
           done

@@ -10,3 +10,5 @@
 *.timer text eol=lf
 *.path text eol=lf
 *.patch text eol=lf
+image/quantarbridge-setup text eol=lf
+image/quantarbridge-motd text eol=lf

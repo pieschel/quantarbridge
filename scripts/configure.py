@@ -62,9 +62,18 @@ def parse_hex(value: str, digits: int, label: str) -> str:
 def atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
-    temporary.write_text(content, encoding="utf-8", newline="\n")
+    with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
     os.chmod(temporary, 0o600)
     os.replace(temporary, path)
+    if os.name == "posix":
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
 
 def replace_paths(value: Any, runtime_dir: Path, install_dir: Path) -> Any:
@@ -77,8 +86,8 @@ def replace_paths(value: Any, runtime_dir: Path, install_dir: Path) -> Any:
         return [replace_paths(item, runtime_dir, install_dir) for item in value]
     if isinstance(value, str):
         return value.replace(
-            str(DEFAULT_RUNTIME_DIR), str(runtime_dir)
-        ).replace(str(DEFAULT_INSTALL_DIR), str(install_dir))
+            DEFAULT_RUNTIME_DIR.as_posix(), runtime_dir.as_posix()
+        ).replace(DEFAULT_INSTALL_DIR.as_posix(), install_dir.as_posix())
     return value
 
 

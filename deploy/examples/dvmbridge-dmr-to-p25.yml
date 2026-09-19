@@ -26,6 +26,9 @@ network:
   slot: 2
 
 system:
+  directAmbeToImbe: true
+  directAmbeSpectralScale: 4.0
+  directAmbeGainAdjust: 1.0
   identity: BRIDGE-DMR-P25
   netId: BB800
   sysId: 001

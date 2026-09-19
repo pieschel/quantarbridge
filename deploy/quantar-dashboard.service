@@ -12,7 +12,9 @@ Restart=on-failure
 RestartSec=3
 KillMode=process
 Environment=PYTHONUNBUFFERED=1
-NoNewPrivileges=true
+# The dashboard uses the exact systemctl commands allowed by its sudoers file.
+# NoNewPrivileges would block sudo and force the process-kill fallback.
+NoNewPrivileges=false
 PrivateTmp=true
 UMask=0077
 

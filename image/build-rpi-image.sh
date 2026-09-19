@@ -157,6 +157,14 @@ file "${ROOTFS_DIR}/home/quantar/src/tetra-codec/build/libtetra-codec.so" | tee 
   "${OUTPUT_DIR}/ARM64-FILE-CHECK.txt"
 grep -q 'ARM aarch64' "${OUTPUT_DIR}/ARM64-FILE-CHECK.txt"
 
+# Exercise real generated configuration/auth files on the image's ext4 volume.
+chroot "${ROOTFS_DIR}" python3 /home/quantar/quantarbridge/image/test-persistence.py prepare
+unmount_image
+e2fsck -f -y "${LOOP_DEVICE}p2"
+mount "${LOOP_DEVICE}p2" "${ROOTFS_DIR}"
+chroot "${ROOTFS_DIR}" python3 /home/quantar/quantarbridge/image/test-persistence.py verify \
+  | tee "${OUTPUT_DIR}/PERSISTENCE-CHECK.txt"
+sync
 unmount_image
 e2fsck -f -y "${LOOP_DEVICE}p2"
 zerofree "${LOOP_DEVICE}p2"
@@ -174,7 +182,7 @@ FINAL_IMAGE="${OUTPUT_DIR}/quantarbridge-rpios-trixie-arm64-${IMAGE_VERSION}.img
 mv "${IMAGE_PATH}" "${FINAL_IMAGE}"
 xz --threads=0 --compress --keep --force "${FINAL_IMAGE}"
 rm -f "${FINAL_IMAGE}"
-sha256sum "${FINAL_IMAGE}.xz" > "${FINAL_IMAGE}.xz.sha256"
+(cd "${OUTPUT_DIR}" && sha256sum "$(basename "${FINAL_IMAGE}.xz")") > "${FINAL_IMAGE}.xz.sha256"
 
 cat > "${OUTPUT_DIR}/BUILD-INFO.txt" <<EOF
 QuantarBridge Raspberry Pi image

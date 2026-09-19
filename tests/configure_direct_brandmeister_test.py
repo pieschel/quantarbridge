@@ -53,6 +53,11 @@ class ConfigureDirectBrandmeisterTest(unittest.TestCase):
             dashboard = json.loads((runtime / "quantar-dashboard.json").read_text())
 
             self.assertTrue(bridge["brandmeister"]["voiceEnabled"])
+            self.assertTrue(uplink["system"]["directImbeToAmbe"])
+            self.assertEqual(1.58, uplink["system"]["directImbeGainAdjust"])
+            self.assertTrue(downlink["system"]["directAmbeToImbe"])
+            self.assertEqual(4.0, downlink["system"]["directAmbeSpectralScale"])
+            self.assertEqual(1.0, downlink["system"]["directAmbeGainAdjust"])
             self.assertEqual("BRIDGE-P25-DMR", uplink["system"]["identity"])
             self.assertEqual(1.5, uplink["system"]["vocoderEncoderAudioGain"])
             self.assertEqual("BRIDGE-DMR-P25", downlink["system"]["identity"])

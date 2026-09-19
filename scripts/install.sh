@@ -205,7 +205,7 @@ if [[ -e "${DVMHOST_DIR}" ]]; then
 fi
 runuser -u "${SERVICE_USER}" -- git clone https://github.com/DVMProject/dvmhost.git "${DVMHOST_DIR}"
 runuser -u "${SERVICE_USER}" -- git -C "${DVMHOST_DIR}" checkout --detach "${DVMHOST_COMMIT}"
-for patch in dvmhost.patch dvmhost-quantar-rssi.patch; do
+for patch in dvmhost.patch dvmhost-quantar-rssi.patch dvmhost-direct-audio.patch; do
   runuser -u "${SERVICE_USER}" -- git -C "${DVMHOST_DIR}" apply --check "${INSTALL_DIR}/patches/${patch}"
   runuser -u "${SERVICE_USER}" -- git -C "${DVMHOST_DIR}" apply "${INSTALL_DIR}/patches/${patch}"
 done
