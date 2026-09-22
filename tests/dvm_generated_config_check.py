@@ -40,6 +40,7 @@ with tempfile.TemporaryDirectory() as directory:
     assert settings["staticTalkgroups"] == []
     settings["gps"]["updateIntervalSeconds"] = 600
     settings["dynamicTimeoutSeconds"] = 900
+    settings["talkgroupMappings"] = [{"p25": 91, "brandmeister": 91}]
     assert manager.update(settings)["changed"]
     subprocess.run([str(PARSER), *(str(runtime / f) for f in FILES)], check=True)
     reread = SettingsManager(config, RuntimeState(), NoServiceRestarter()).read()
