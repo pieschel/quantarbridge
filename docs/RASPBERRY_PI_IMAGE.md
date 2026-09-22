@@ -8,7 +8,7 @@ Tagged builds are also published as GitHub release assets and as an OCI
 artifact in the GitHub Container Registry. Pull a packaged release with ORAS:
 
 ```bash
-oras pull ghcr.io/pieschel/quantarbridge-rpi-image:v0.1.4
+oras pull ghcr.io/pieschel/quantarbridge-rpi-image:v0.1.5
 ```
 
 ## Target
@@ -90,3 +90,12 @@ The dashboard's PCM gain controls apply to the older PCM conversion path.
 This image packages the existing Quantar V.24/DFSI topology. It does not turn
 an MMDVM_HS GPIO Hat into a drop-in Quantar replacement. That path needs a
 different modem configuration and separate bidirectional RF validation.
+
+## v0.1.5 startup repair
+
+Setup now emits DVM-compatible list indentation and omits empty optional key
+fields. Static-talkgroup synchronization keeps empty lists as `[]`; the
+dashboard accepts older null lists. The ARM64 build validates generated and
+remounted configuration with the actual DVM parser. See
+[the release notes](../release-notes/v0.1.5.md) for verification boundaries and
+existing-installation guidance.

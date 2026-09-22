@@ -29,25 +29,24 @@ a separate runtime directory outside Git.
 - Persistent station settings with guarded updates and configuration backups
 - Raspberry Pi ARM64 image with automated codec, SSH/sudo and storage checks
 
-## Version 0.1.4
+## Version 0.1.5
 
-- **Audio:** both directions use the direct conversion settings confirmed in
-  live listening tests on 19 September 2026. Tests cover call-state reset,
-  codec boundaries and damaged frames.
-- **Saved settings:** the native BrandMeister dashboard no longer tries to
-  restart an absent BREW audio target. That old error rolled back changes to
-  passwords, talkgroup mappings and timeouts, making settings appear lost
-  when the dashboard was loaded again.
-- **Raspberry Pi image:** setup rejects volatile/read-only storage, writes
-  are flushed to disk, and the SSH welcome text no longer incorrectly says
-  that an already configured installation needs setup. The image build
-  compares configuration/authentication files across an unmount/remount.
+- **Startup after reboot:** generated DVM configuration now uses compatible
+  list indentation and omits empty optional keys rejected by the DVM parser.
+- **Dashboard:** an empty BrandMeister static-talkgroup list is saved as `[]`;
+  legacy null lists no longer prevent the dashboard from starting.
+- **Image checks:** the real DVM parser validates generated configuration,
+  dashboard save/read round trips and configuration after filesystem remount.
+- Direct-audio and persistence improvements from v0.1.4 are retained.
 
-See the [release notes](release-notes/v0.1.4.md) and the
+The corresponding fixes passed a physical Pi reboot with dashboard login,
+retained settings, V.24 modem recognition and BrandMeister login. Quantar RF
+and audio testing remains pending; the newly packaged image has not itself
+been physically boot-tested.
+
+See the [release notes](release-notes/v0.1.5.md) and the
 [GitHub releases](https://github.com/pieschel/quantarbridge/releases) for
-the image, checksum and validation reports. A physical Raspberry Pi reboot
-test of the new image remains to be confirmed; the storage test is not a
-hardware boot test.
+the image, checksum, validation reports and existing-installation caveats.
 
 ## Architecture
 

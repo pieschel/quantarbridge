@@ -2114,7 +2114,7 @@ class SettingsManager:
                     routing.get("dynamicTimeoutSeconds", 600)
                 ),
                 "talkgroupMappings": mappings,
-                "staticTalkgroups": [int(value) for value in routing.get("staticTalkgroups", [])],
+                "staticTalkgroups": [int(value) for value in (routing.get("staticTalkgroups") or [])],
                 "gps": {
                     "initialDelaySeconds": int(location.get("initialDelaySeconds", 5)),
                     "updateIntervalSeconds": int(location.get("updateIntervalSeconds", 300)),

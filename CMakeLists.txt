@@ -115,6 +115,13 @@ if(BUILD_TESTING)
 
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
+    add_executable(dvm_yaml_config_test tests/DvmYamlConfigTest.cpp)
+    target_include_directories(dvm_yaml_config_test PRIVATE "${DVMHOST_SOURCE_DIR}/src")
+    target_link_libraries(dvm_yaml_config_test PRIVATE
+      "${DVMHOST_COMMON_LIBRARY}" OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+    add_test(NAME dvm_generated_config
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dvm_generated_config_check.py"
+        "$<TARGET_FILE:dvm_yaml_config_test>")
     add_test(NAME tetrapack_brew_bridge
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tetrapack_brew_bridge_test.py")
     add_test(NAME tetrapack_brew_audio

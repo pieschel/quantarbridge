@@ -137,6 +137,9 @@ def write_text_if_changed(path: Path, new_text: str) -> bool:
 
 
 def format_static_talkgroups_block(static_talkgroups: Iterable[int]) -> str:
+    static_talkgroups = list(static_talkgroups)
+    if not static_talkgroups:
+        return "  staticTalkgroups: []\n"
     lines = ["  staticTalkgroups:"]
     for tg in static_talkgroups:
         lines.append(f"    - {tg}")

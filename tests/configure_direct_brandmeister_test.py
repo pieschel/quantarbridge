@@ -12,6 +12,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConfigureDirectBrandmeisterTest(unittest.TestCase):
+    def test_dvm_writer_preserves_nonempty_secrets_and_non_dvm_yaml(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("configure_test", ROOT / "scripts/configure.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        payload = {"network": {"presharedKey": "EXAMPLE_KEY", "rpcPassword": "EXAMPLE_PASSWORD"},
+                   "system": {"secure": {"key": "EXAMPLE_KEY"}}}
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ("dvmhost-config.yml", "quantarbridge.yml"):
+                path = Path(directory) / name
+                module.write_yaml(path, payload)
+                self.assertEqual(payload, yaml.safe_load(path.read_text()))
+            empty = {"network": {"presharedKey": "", "rpcPassword": ""}}
+            path = Path(directory) / "quantarbridge.yml"
+            module.write_yaml(path, empty)
+            self.assertEqual(empty, yaml.safe_load(path.read_text()))
+
     def test_default_runtime_uses_direct_voice_and_native_services(self):
         with tempfile.TemporaryDirectory() as directory:
             runtime = Path(directory) / "runtime"

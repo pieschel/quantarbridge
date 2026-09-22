@@ -45,6 +45,10 @@ elif sys.argv[1] == "verify":
     assert settings["brandmeisterCallsign"] == "N0CALL"
     assert settings["brandmeisterPasswordConfigured"]
     assert not config.brew_audio_config.exists()
+    subprocess.run([str(INSTALL / "build/dvm_yaml_config_test"),
+                    *(str(RUNTIME / name) for name in (
+                        "dvmhost-config.yml", "dvmfne-config.yml",
+                        "dvmbridge-p25-to-dmr.yml", "dvmbridge-dmr-to-p25.yml"))], check=True)
     # Fixtures belong only to this build-time test, never to a published image.
     for path in RUNTIME.iterdir():
         if path.is_dir():
@@ -55,6 +59,7 @@ elif sys.argv[1] == "verify":
     assert not any(RUNTIME.iterdir())
     print("runtime_and_auth_hashes_after_unmount_remount=passed")
     print("fresh_dashboard_settings_read=passed")
+    print("dvm_parser_after_unmount_remount=passed")
     print("test_configuration_removed=passed")
     print("physical_raspberry_pi_reboot=not_tested")
 else:

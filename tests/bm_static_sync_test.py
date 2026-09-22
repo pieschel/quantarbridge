@@ -23,6 +23,19 @@ GUARD_SPEC.loader.exec_module(GUARD)
 
 
 class BrandmeisterStaticSyncTest(unittest.TestCase):
+    def test_empty_static_groups_remain_a_list_after_repeated_sync(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "quantarbridge.yml"
+            path.write_text("routing:\n  staticTalkgroups:\n    - 91\n  talkgroupMappings: []\nsms:\n  enabled: true\n")
+            SYNC.update_quantarbridge_config(path, [])
+            for groups in ([], [91], []):
+                SYNC.update_quantarbridge_config(path, groups)
+                payload = yaml.safe_load(path.read_text())
+                self.assertEqual(groups, payload["routing"]["staticTalkgroups"])
+                self.assertEqual([], payload["routing"]["talkgroupMappings"])
+                self.assertTrue(payload["sms"]["enabled"])
+
     def test_runtime_mapping_is_preserved_while_static_tgs_change(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "quantarbridge.yml"

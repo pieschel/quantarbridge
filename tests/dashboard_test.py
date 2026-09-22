@@ -743,6 +743,16 @@ class IdentityDirectoryTest(unittest.TestCase):
 
 
 class SettingsManagerTest(unittest.TestCase):
+    def test_legacy_null_static_talkgroups_does_not_prevent_dashboard_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = make_config(Path(directory))
+            write_runtime(config)
+            bridge = yaml.safe_load(config.quantarbridge_config.read_text())
+            bridge["routing"]["staticTalkgroups"] = None
+            config.quantarbridge_config.write_text(yaml.safe_dump(bridge))
+            manager = SettingsManager(config, RuntimeState(), RecordingRestarter())
+            self.assertEqual([], manager.read()["staticTalkgroups"])
+
     @staticmethod
     def remove_packet_data_config(config):
         host = yaml.safe_load(config.dvmhost_config.read_text(encoding="utf-8"))

@@ -98,11 +98,37 @@ def load_yaml(name: str) -> dict[str, Any]:
     return raw
 
 
+class _DvmDumper(yaml.SafeDumper):
+    """DVM's YAML reader requires sequence items below their parent key."""
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, False)
+
+
+def _dvm_payload(value):
+    # The pinned DVM reader rejects quoted empty strings. These optional
+    # fields use the same defaults when absent; never remove nonempty secrets.
+    if isinstance(value, list):
+        return [_dvm_payload(item) for item in value]
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            if key in ("presharedKey", "rpcPassword", "key") and item == "":
+                continue
+            result[key] = _dvm_payload(item)
+        if result.get("secure") == {}:
+            del result["secure"]
+        return result
+    return value
+
+
 def write_yaml(path: Path, payload: dict[str, Any]) -> None:
-    atomic_write(
-        path,
-        yaml.safe_dump(payload, sort_keys=False, default_flow_style=False),
-    )
+    if path.name in ("dvmhost-config.yml", "dvmfne-config.yml",
+                     "dvmbridge-p25-to-dmr.yml", "dvmbridge-dmr-to-p25.yml"):
+        content = yaml.dump(_dvm_payload(payload), Dumper=_DvmDumper,
+                            sort_keys=False, default_flow_style=False)
+    else:
+        content = yaml.safe_dump(payload, sort_keys=False, default_flow_style=False)
+    atomic_write(path, content)
 
 
 def build_parser() -> argparse.ArgumentParser:
