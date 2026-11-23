@@ -35,7 +35,8 @@ void verifyAmbe(const Output& word)
     decoder.setAutoGain(false);
     decoder.setGainAdjust(1);
     float samples[160];
-    assert(decoder.decodeF(word.data(), samples) == 0);
+    auto input = word;
+    assert(decoder.decodeF(input.data(), samples) == 0);
     for (float sample : samples) assert(std::isfinite(sample));
 }
 

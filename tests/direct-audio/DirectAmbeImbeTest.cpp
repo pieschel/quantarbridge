@@ -54,7 +54,8 @@ void verifyWord(const Output& word)
     decoder.setAutoGain(false);
     decoder.setGainAdjust(1);
     float pcm[160];
-    decoder.decodeF(word.data(), pcm);
+    auto input = word;
+    decoder.decodeF(input.data(), pcm);
     for (float sample : pcm) assert(std::isfinite(sample));
 }
 
