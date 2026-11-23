@@ -1234,19 +1234,29 @@ class RuntimeState:
                 self._dynamic_activity.clear()
                 self._finish_call("downlink", timestamp, reason="disconnect")
 
-        state: str | None = None
+        state = self._brandmeister_connection_state(line)
+        if state is not None:
+            with self._lock:
+                self._bm_state = state
+                self._bm_last_change = timestamp
+
+    @staticmethod
+    def _brandmeister_connection_state(line: str) -> str | None:
         if "BrandMeister login complete" in line:
-            state = "connected"
+            return "connected"
         elif "Opened BrandMeister socket" in line or "waiting for acknowledgement" in line:
-            state = "connecting"
+            return "connecting"
         elif re.search(
             r"BrandMeister (?:login rejected|closed the session|connection timed out)|"
             r"Unable to (?:open|resolve).*BrandMeister|BrandMeister socket read failed",
             line,
         ):
-            state = "disconnected"
-        if state is not None:
-            with self._lock:
+            return "disconnected"
+        return None
+
+    def restore_brandmeister_connection(self, state: str, timestamp: float) -> None:
+        with self._lock:
+            if self._bm_state == "unknown":
                 self._bm_state = state
                 self._bm_last_change = timestamp
 
@@ -1477,6 +1487,8 @@ class LogMonitor:
             files = sorted(self.config.log_dir.glob(pattern), key=lambda path: path.name)
             for path in files[-2:]:
                 self._scan(path, callback)
+            if pattern == "quantarbridge-20??-??-??.log":
+                self._restore_brandmeister_connection(files[:-2])
             current = files[-1] if files else None
             offset = current.stat().st_size if current else 0
             thread = threading.Thread(
@@ -1487,6 +1499,30 @@ class LogMonitor:
             )
             thread.start()
             self._threads.append(thread)
+
+    def _restore_brandmeister_connection(self, older_files: Iterable[Path]) -> None:
+        if self.state.snapshot({})["brandmeister"]["state"] != "unknown":
+            return
+        # A long-lived link may have no state change in the two recent logs.
+        # Restore only its latest observed state, without replaying old calls.
+        for path in reversed(list(older_files)):
+            last_event: tuple[str, float] | None = None
+            try:
+                with path.open("r", encoding="utf-8", errors="replace") as stream:
+                    for line in stream:
+                        state = self.state._brandmeister_connection_state(line)
+                        if state is None or not self.state._time_re.search(line):
+                            continue
+                        try:
+                            last_event = state, self.state._timestamp(line)
+                        except (ValueError, OverflowError):
+                            continue
+            except OSError as exc:
+                LOG.warning("Cannot restore connection state from %s: %s", path, exc)
+                continue
+            if last_event is not None:
+                self.state.restore_brandmeister_connection(*last_event)
+                return
 
     def stop(self) -> None:
         self._stop.set()

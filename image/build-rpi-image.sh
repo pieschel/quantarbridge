@@ -149,13 +149,17 @@ stop_sshd_test
 rm -f "${ROOTFS_DIR}"/etc/ssh/ssh_host_*
 rm -f "${ROOTFS_DIR}/run/quantarbridge-sshd-test.pid"
 
-file "${ROOTFS_DIR}/home/quantar/quantarbridge/build/quantarbridge" | tee \
-  "${OUTPUT_DIR}/ARM64-FILE-CHECK.txt"
-file "${ROOTFS_DIR}/home/quantar/src/dvmhost/build/dvmhost" | tee -a \
-  "${OUTPUT_DIR}/ARM64-FILE-CHECK.txt"
-file "${ROOTFS_DIR}/home/quantar/src/tetra-codec/build/libtetra-codec.so" | tee -a \
-  "${OUTPUT_DIR}/ARM64-FILE-CHECK.txt"
-grep -q 'ARM aarch64' "${OUTPUT_DIR}/ARM64-FILE-CHECK.txt"
+: > "${OUTPUT_DIR}/ARM64-FILE-CHECK.txt"
+for binary in \
+  /home/quantar/quantarbridge/build/quantarbridge \
+  /home/quantar/src/dvmhost/build/dvmhost \
+  /home/quantar/src/dvmhost/build/dvmfne \
+  /home/quantar/src/dvmhost/build/dvmbridge \
+  /home/quantar/src/tetra-codec/build/libtetra-codec.so; do
+  description="$(file "${ROOTFS_DIR}${binary}")"
+  printf '%s\n' "${description}" | tee -a "${OUTPUT_DIR}/ARM64-FILE-CHECK.txt"
+  grep -q 'ARM aarch64' <<< "${description}"
+done
 
 # Exercise real generated configuration/auth files on the image's ext4 volume.
 chroot "${ROOTFS_DIR}" python3 /home/quantar/quantarbridge/image/test-persistence.py prepare

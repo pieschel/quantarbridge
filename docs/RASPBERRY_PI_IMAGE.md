@@ -8,7 +8,7 @@ Tagged builds are also published as GitHub release assets and as an OCI
 artifact in the GitHub Container Registry. Pull a packaged release with ORAS:
 
 ```bash
-oras pull ghcr.io/pieschel/quantarbridge-rpi-image:v0.1.5
+oras pull ghcr.io/pieschel/quantarbridge-rpi-image:v0.1.6
 ```
 
 ## Target
@@ -31,12 +31,18 @@ artifact containing:
 - the flashable `.img.xz` file;
 - the image SHA-256 file;
 - base and QuantarBridge revision metadata;
-- architecture checks for QuantarBridge, DVMHost, and `tetra-codec`.
+- architecture checks for QuantarBridge, DVMHost, and `tetra-codec`;
+- SSH password and sudo authentication checks;
+- generated-configuration parsing and persistence checks after unmount/remount.
 
 The image contains no station identity, frequencies, network passwords, API
 keys, location, radio activity, or copied production runtime state. It does
 contain the public bootstrap login `qbadmin` / `quantarbridge`; that password
 must be changed immediately after the first login with `passwd`.
+
+This is a reusable installation image, not an image of the running station or
+a substitute for its private backup. Flashing replaces the target card;
+preserve existing station settings separately before flashing.
 
 ## Install and configure
 
@@ -80,10 +86,44 @@ the runtime files and dashboard journal before reconfiguration, then check
 `journalctl -b -u quantar-dashboard.service`. Do not publish runtime files:
 they contain station credentials.
 
-Direct audio defaults are `directImbeToAmbe: true` with
-`directImbeGainAdjust: 1.58` on P25 to DMR and `directAmbeToImbe: true` with
-`directAmbeSpectralScale: 4.0`, `directAmbeGainAdjust: 1.0` on DMR to P25.
-The dashboard's PCM gain controls apply to the older PCM conversion path.
+## v0.1.6 direct audio and dashboard
+
+The image includes the corrected direct converters and the audio settings
+accepted on the running Quantar system. These replace the older v0.1.4/v0.1.5
+direct-converter flags. P25 to DMR uses `directP25ToAmbe: true`,
+`directForwardGain: 1.5` and `directForwardScale: 0.9`, with the optional
+high-cut and de-esser disabled. DMR to P25 uses `directAmbeToP25: true`,
+`directReverseScale: 4.0` and `directReverseGain: -0.15956886662028558`.
+
+Incoming DMR level adjustment is enabled with:
+
+```yaml
+directReverseLeveler: true
+directReverseLevelerTargetDbfs: -29.5
+directReverseLevelerMaxBoostDb: 12.0
+directReverseLevelerMaxCutDb: 18.0
+```
+
+The leveler adjusts each call's speech level and limits peaks. It avoids
+increasing gain during non-speech and does not repair distorted source audio
+or guarantee identical sound from every radio. The dashboard's legacy PCM
+gain controls do not tune this direct parameter-conversion path.
+
+The direct BrandMeister dashboard profile requires DVMHost, DVMFNE, both
+DVMBridge directions and QuantarBridge. An unused DMR Gateway is not a health
+dependency. Connection status is based on actual BrandMeister log events;
+the dashboard may restore the latest older connection event, retaining its
+timestamp, without replaying older calls or subscriptions.
+
+Existing installations need the matching DVMHost patch and converter settings
+together; copying only the new flags into an older binary is insufficient.
+Do not overwrite a private runtime configuration with a public example or
+rerun setup with guessed station values. See the
+[v0.1.6 release notes](../release-notes/v0.1.6.md).
+
+The build checks do not constitute a physical boot or RF/audio test of the
+new image. Verify both voice directions and packet-data services on the
+target Raspberry Pi after setup.
 
 ## Boundary
 

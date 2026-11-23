@@ -1,44 +1,204 @@
-#include "DirectAmbeImbe.h"
-#include "vocoder/MBEDecoder.h"
+// SPDX-License-Identifier: GPL-2.0-only
+#include "vocoder/AmbeToP25Float.h"
 #include "vocoder/MBEEncoder.h"
+#include "vocoder/MBEDecoder.h"
 #include "common/p25/Audio.h"
+#include "common/p25/P25Defines.h"
+#include "P25ImbeSync.h"
 #include <array>
-#include <vector>
-#include <cstdio>
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <limits>
-#include <stdexcept>
-using Input=std::array<uint8_t,9>;using Output=std::array<uint8_t,11>;
-void verifyWord(const Output&word){
- p25::Audio audio;uint8_t ldu[216]={};for(unsigned n=0;n<9;n++)audio.encode(ldu,word.data(),n);
- assert(audio.process(ldu)==0);for(unsigned n=0;n<9;n++){uint8_t decoded[11];audio.decode(ldu,decoded,n);assert(std::memcmp(word.data(),decoded,11)==0);}
+#include <vector>
+
+using Codec = vocoder::AmbeToP25Float;
+using Input = std::array<uint8_t, 9>;
+using Output = std::array<uint8_t, 11>;
+
+template<std::size_t N>
+void field(uint8_t* bits, const int (&positions)[N], unsigned value)
+{
+    for (unsigned i = 0; i < N; ++i) bits[positions[i]] = (value >> (N - i - 1)) & 1U;
 }
-std::vector<Output> run(const std::vector<Input>&input,FILE*out,unsigned&concealed){
- quantar_reverse::reset();vocoder::MBEDecoder decoder(vocoder::DECODE_88BIT_IMBE);
- decoder.setAutoGain(false);decoder.setGainAdjust(1);decoder.setUvQuality(12);std::vector<Output> result;
- for(auto&w:input){Output coded{};if(!quantar_reverse::convert(w.data(),coded.data()))concealed++;verifyWord(coded);
-  float samples[160];decoder.decodeF(coded.data(),samples);for(float s:samples)assert(std::isfinite(s));if(out)fwrite(samples,4,160,out);result.push_back(coded);
- }return result;
+
+// Synthetic legal parameter words. No recorded speech or firmware is required.
+Input makeAmbe(unsigned pitch, unsigned voicing = 0, unsigned gain = 16)
+{
+    uint8_t bits[49] = {};
+    const int pitchBits[] = {0, 1, 2, 3, 37, 38, 39};
+    const int voicingBits[] = {4, 5, 6, 7, 35};
+    const int gainBits[] = {8, 9, 10, 11, 36};
+    field(bits, pitchBits, pitch);
+    field(bits, voicingBits, voicing);
+    field(bits, gainBits, gain);
+    Input encoded{};
+    vocoder::MBEEncoder fec(vocoder::ENCODE_DMR_AMBE);
+    fec.encodeBits(bits, encoded.data());
+    return encoded;
 }
-int main(int argc,char**argv){
- assert(argc==1 || argc==3);quantar_reverse::configure(false,4,1);assert(!quantar_reverse::enabled());bool bad=false;
- try{quantar_reverse::configure(true,std::numeric_limits<float>::quiet_NaN(),1);}catch(const std::invalid_argument&){bad=true;}assert(bad);
- quantar_reverse::configure(true,4,1);assert(quantar_reverse::enabled());
- FILE*in=argc==3 ? fopen(argv[1],"rb") : tmpfile();assert(in);
- if(argc==1){const uint8_t quiet[9]={0xB9,0xE8,0x81,0x52,0x61,0x73,0x00,0x2A,0x6B};for(unsigned n=0;n<27;n++)fwrite(quiet,1,9,in);rewind(in);}std::vector<Input> inputs;Input word;while(fread(word.data(),1,9,in)==9)inputs.push_back(word);fclose(in);assert(!inputs.empty());
- FILE*out=argc==3 ? fopen(argv[2],"wb") : tmpfile();assert(out);unsigned concealed=0,secondCount=0;auto first=run(inputs,out,concealed);fclose(out);auto second=run(inputs,nullptr,secondCount);assert(first==second);
- vocoder::MBEEncoder fec(vocoder::ENCODE_DMR_AMBE);unsigned special=0;
- for(unsigned pitch=0;pitch<128;pitch++){
-  uint8_t bits[72]={};int pos[7]={0,1,2,3,37,38,39};for(int i=0;i<7;i++)bits[pos[i]]=(pitch>>(6-i))&1;
-  Input frame{};fec.encodeBits(bits,frame.data());Output result{};bool valid=quantar_reverse::convert(frame.data(),result.data());
-  if((pitch>=120&&pitch<=123)||pitch>=126){assert(!valid);special++;}verifyWord(result);
- }
- unsigned seed=0x5025;for(unsigned i=0;i<1500;i++){Input frame{};for(auto&b:frame){seed=seed*1664525u+1013904223u;b=seed>>24;}Output result{};quantar_reverse::convert(frame.data(),result.data());verifyWord(result);}
- // A prolonged erasure burst must end in stable valid silence, then reset cleanly.
- uint8_t bits[72]={};bits[0]=bits[1]=bits[2]=bits[3]=1;Input erased{};fec.encodeBits(bits,erased.data());
- for(int i=0;i<30;i++){Output result{};assert(!quantar_reverse::convert(erased.data(),result.data()));verifyWord(result);}
- unsigned recovered=0;auto third=run(inputs,nullptr,recovered);assert(first==third);
- printf("PASS frames=%zu concealed=%u reset_deterministic=yes pitch_cases=128 special_cases=%u corrupted_words=1500 long_erasure=30 P25_FEC=valid\n",inputs.size(),concealed,special);
+
+void verifyWord(const Output& word)
+{
+    p25::Audio fec;
+    uint8_t ldu[216] = {};
+    for (unsigned i = 0; i < 9; ++i) fec.encode(ldu, word.data(), i);
+    assert(fec.process(ldu) == 0);
+    for (unsigned i = 0; i < 9; ++i) {
+        Output extracted{};
+        fec.decode(ldu, extracted.data(), i);
+        assert(extracted == word);
+    }
+    vocoder::MBEDecoder decoder(vocoder::DECODE_88BIT_IMBE);
+    decoder.setAutoGain(false);
+    decoder.setGainAdjust(1);
+    float pcm[160];
+    decoder.decodeF(word.data(), pcm);
+    for (float sample : pcm) assert(std::isfinite(sample));
+}
+
+std::vector<Output> run(Codec& codec, const std::vector<Input>& inputs)
+{
+    codec.reset();
+    std::vector<Output> result;
+    for (const auto& input : inputs) {
+        Output output{};
+        codec.convert(input.data(), output.data());
+        verifyWord(output);
+        result.push_back(output);
+    }
+    return result;
+}
+
+void checkSyncBits()
+{
+    const unsigned offsets[9] = {10, 26, 55, 80, 105, 130, 155, 180, 204};
+    for (bool ldu1 : {false, true}) {
+        std::array<uint8_t, 225> original;
+        original.fill(0xA6);
+        for (bool direct : {false, true}) for (bool clear : {false, true}) {
+            auto actual = original, expected = original;
+            if (direct && clear) for (unsigned i = 0; i < 9; ++i)
+                expected[offsets[i] + 10] = (expected[offsets[i] + 10] & 0xFEU) |
+                    (((ldu1 ? 0U : 1U) + i) & 1U);
+            bridge::stampP25ImbeSync(actual.data(), ldu1, direct, clear);
+            assert(actual == expected);
+        }
+    }
+    bridge::stampP25ImbeSync(nullptr, true, true, true);
+}
+
+int main()
+{
+    Codec codec;
+    assert(codec.setLevel(4, -0.15956886662028558f));
+    assert(codec.setDeessDb(0));
+    assert(!codec.setLevel(0, 0));
+    assert(!codec.setLevel(4, std::numeric_limits<float>::quiet_NaN()));
+    assert(!codec.setDeessDb(3));
+    std::vector<Input> inputs;
+    for (unsigned pitch = 0; pitch < 128; ++pitch) {
+        for (unsigned v : {0U, 16U, 18U, 31U}) inputs.push_back(makeAmbe(pitch, v));
+    }
+    const auto first = run(codec, inputs);
+    assert(first == run(codec, inputs));
+
+    Output output{};
+    for (unsigned pitch = 0; pitch < 128; ++pitch) {
+        codec.reset();
+        const auto input = makeAmbe(pitch);
+        const auto result = codec.convert(input.data(), output.data());
+        assert(result.fecCorrections == 0);
+        if (pitch >= 120 && pitch <= 123) {
+            assert(!result.sourceAccepted);
+            assert(result.status == Codec::Status::Muted);
+        } else if (pitch >= 126) {
+            assert(!result.sourceAccepted);
+            assert(result.status == Codec::Status::ToneMuted);
+        } else {
+            assert(result.sourceAccepted);
+            assert(result.status == (pitch >= 124 ? Codec::Status::CodedSilence : Codec::Status::Voice));
+        }
+        verifyWord(output);
+    }
+
+    // Correctable input damage must produce the same word and freeze learning.
+    auto voice = makeAmbe(50);
+    codec.reset();
+    Output pristine{};
+    codec.convert(voice.data(), pristine.data());
+    auto damaged = voice;
+    damaged[0] ^= 0x80;
+    codec.reset();
+    const auto corrected = codec.convert(damaged.data(), output.data());
+    assert(corrected.fecCorrections == 1 && corrected.sourceAccepted);
+    assert(pristine == output);
+
+    codec.reset();
+    assert(codec.convert(voice.data(), output.data()).sourceAccepted);
+    for (unsigned i = 0; i < 8; ++i) {
+        const auto missing = codec.convert(nullptr, output.data());
+        assert(missing.status == (i < 3 ? Codec::Status::Concealed : Codec::Status::Muted));
+        verifyWord(output);
+    }
+    assert(codec.convert(voice.data(), output.data(), true).status == Codec::Status::EncryptedMuted);
+    assert(std::memcmp(output.data(), p25::defines::NULL_IMBE, output.size()) == 0);
+    assert(first == run(codec, inputs));
+
+    // The public enabled API must learn ordinary voiced frames, keep a bounded
+    // correction, and never learn station loudness from UV, extra-grid or CN.
+    Codec::LevelerConfig config;
+    config.enabled = true;
+    assert(codec.setLevelerConfig(config));
+    auto bad = config;
+    bad.targetDbfs = -19;
+    assert(!codec.setLevelerConfig(bad));
+    bad = config; bad.maxBoostDb = 13; assert(!codec.setLevelerConfig(bad));
+    bad = config; bad.maxCutDb = 19; assert(!codec.setLevelerConfig(bad));
+
+    unsigned trainedGain = 32;
+    for (unsigned gain = 0; gain < 32; ++gain) {
+        codec.reset();
+        voice = makeAmbe(50, 0, gain);
+        for (unsigned i = 0; i < 40; ++i) codec.convert(voice.data(), output.data());
+        if (codec.getLevelerDiagnostics().estimateReady) { trainedGain = gain; break; }
+    }
+    assert(trainedGain < 32);
+    voice = makeAmbe(50, 0, trainedGain);
+    for (unsigned i = 0; i < 160; ++i) {
+        assert(codec.convert(voice.data(), output.data()).sourceAccepted);
+        const auto d = codec.getLevelerDiagnostics();
+        assert(d.enabled && d.estimateReady);
+        assert(d.levelGainDb >= -18.00001 && d.levelGainDb <= 12.00001);
+        assert(d.appliedGainDb >= -42.00001 && d.appliedGainDb <= 12.00001);
+        assert(std::isfinite(d.predictedPeakBound) && d.predictedPeakBound >= 0);
+        assert(std::isfinite(d.peakCapDb));
+    }
+    assert(codec.getLevelerDiagnostics().learnedWindows > 0);
+    for (unsigned v : {16U, 18U, 31U}) {
+        const auto noise = makeAmbe(50, v, trainedGain);
+        for (unsigned i = 0; i < 36; ++i) {
+            const auto before = codec.getLevelerDiagnostics();
+            codec.convert(noise.data(), output.data());
+            const auto after = codec.getLevelerDiagnostics();
+            assert(after.learnedWindows == before.learnedWindows);
+            assert(after.appliedGainDb <= before.appliedGainDb + 1.0e-5);
+            verifyWord(output);
+        }
+    }
+    for (unsigned pitch : {124U, 125U}) {
+        const auto silence = makeAmbe(pitch);
+        codec.convert(silence.data(), output.data());
+        const auto d = codec.getLevelerDiagnostics();
+        assert(!d.learnedThisFrame && d.appliedGainDb <= 0.00001);
+    }
+    const auto generation = codec.getLevelerDiagnostics().resetGeneration;
+    codec.reset();
+    const auto reset = codec.getLevelerDiagnostics();
+    assert(reset.resetGeneration > generation);
+    assert(!reset.estimateReady && reset.confirmedVoiceFrames == 0 && reset.appliedGainDb == 0);
+    assert(run(codec, inputs) == run(codec, inputs));
+    checkSyncBits();
+    std::printf("PASS active AmbeToP25Float: pitch/SourceGrid sweep, FEC repair, reset, concealment, encryption, leveler learning/noise bounds, P25 sync/FEC\n");
 }

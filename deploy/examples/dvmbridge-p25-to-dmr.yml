@@ -26,8 +26,10 @@ network:
   slot: 2
 
 system:
-  directImbeToAmbe: true
-  directImbeGainAdjust: 1.58
+  directP25ToAmbe: true
+  directForwardGain: 1.5
+  directForwardScale: 0.9
+  directForwardDeessDb: 0.0
   identity: BRIDGE-P25-DMR
   netId: BB800
   sysId: 001
@@ -39,7 +41,7 @@ system:
   vocoderDecoderUvQuality: 12
   txAudioGain: 1.0
   vocoderEncoderAudioGain: 1.5
-  dmrEncodeHighCutHz: 2500
+  dmrEncodeHighCutHz: 0.0
   trace: false
   debug: false
   tek:
@@ -53,7 +55,7 @@ system:
   preambleLeaderTone: false
   preambleTone: 2175
   preambleLength: 200
-  udpAudio: true
+  udpAudio: false
   udpMetadata: true
   udpSendPort: 31120
   udpSendAddress: "127.0.0.1"

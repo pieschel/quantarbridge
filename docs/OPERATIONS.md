@@ -16,6 +16,13 @@ The dashboard shows:
 - Last LRRP position for each radio
 - Public ARS server address and bidirectional talkgroup mappings
 
+The direct BrandMeister profile has five required services: DVMHost, DVMFNE,
+both DVMBridge directions and QuantarBridge. It does not require a separate
+DMR Gateway. Optional services keep their own status without degrading the
+core-service summary. BrandMeister connection status follows actual log events;
+when recent logs contain none, startup can restore the latest timestamped
+event from an older log without replaying historical calls or subscriptions.
+
 The ARS address is read from `protocols.p25.motorolaPacketData.arsServerAddress`
 when that key exists. Installations whose DVMHost configuration does not expose
 that key should set `publicArsServerAddress` in the private
@@ -61,9 +68,49 @@ from the runtime YAML files and then reconnects both DVMBridge directions.
 Do not tune gain while a recovery timer is restarting services. Fix service
 stability first, then compare the same source audio in both directions.
 
-## Audio Controls
+## Direct Audio and Automatic Level Adjustment
 
-The dashboard exposes separate settings for P25-to-DMR and DMR-to-P25.
+The default native BrandMeister profile converts speech parameters directly.
+Its settings are under `system` in the two `dvmbridge-*.yml` files:
+
+| Direction | Setting | Shipped value |
+| --- | --- | --- |
+| P25 to DMR | `directP25ToAmbe` | `true` |
+| P25 to DMR | `directForwardGain` | `1.5` |
+| P25 to DMR | `directForwardScale` | `0.9` |
+| P25 to DMR | `dmrEncodeHighCutHz` | `0.0` |
+| DMR to P25 | `directAmbeToP25` | `true` |
+| DMR to P25 | `directReverseScale` | `4.0` |
+| DMR to P25 | `directReverseGain` | `-0.15956886662028558` |
+| DMR to P25 | `directReverseLeveler` | `true` |
+| DMR to P25 | `directReverseLevelerTargetDbfs` | `-29.5` |
+| DMR to P25 | `directReverseLevelerMaxBoostDb` | `12.0` |
+| DMR to P25 | `directReverseLevelerMaxCutDb` | `18.0` |
+
+Both direct de-essers are disabled. Keep the `BRIDGE-P25-DMR` and
+`BRIDGE-DMR-P25` identities paired with their direction. The new direct flags
+replace the `directImbeToAmbe` and `directAmbeToImbe` flags from older releases;
+they require the matching patched DVMHost binary.
+
+The incoming DMR leveler reduces loudness differences between stations using
+speech activity and signal confidence. Gain does not rise in non-speech;
+noise and peak limits reduce unwanted gain and clipping. It resets for each
+call. The target is the converter's internal level reference, not a promise
+of a particular radio speaker volume. Source clipping and codec artifacts can
+remain audible even when the output level is controlled.
+
+`directReverseGain` is a codec model parameter, not a dB-valued microphone
+slider. Preserve the supplied baseline while assessing the leveler. Setting
+`directReverseLeveler: false` disables automatic adjustment and retains the
+fixed direct gain. Changing these files requires restarting only the affected
+DVMBridge direction when the channel is idle; do not restart DVMHost or
+DVMFNE merely to apply a converter setting.
+
+## Optional PCM Audio Controls
+
+The dashboard exposes separate legacy PCM settings for P25-to-DMR and
+DMR-to-P25. They apply when that direction's direct converter is disabled;
+they do not adjust the direct path above.
 Changes that require a service restart are accepted only after 15 seconds of
 continuous radio-channel idle time. This prevents a short gap within a QSO from
 being mistaken for a safe restart window. Audio changes restart only the
@@ -88,7 +135,7 @@ correct, reduce the last gain before the encoder and use a smaller upstream
 increase. Different subscriber microphones can still produce different peak
 levels.
 
-The shipped direct DMR-to-P25 baseline is `rxAudioGain: 0.65`,
+The legacy PCM DMR-to-P25 baseline is `rxAudioGain: 0.65`,
 `vocoderDecoderAudioGain: 0.8`, `txAudioGain: 1.0`, and
 `vocoderEncoderAudioGain: 1.0`. The P25-to-DMR baseline is `rxAudioGain: 0.9`,
 `vocoderDecoderAudioGain: 1.35`, `txAudioGain: 1.0`, and

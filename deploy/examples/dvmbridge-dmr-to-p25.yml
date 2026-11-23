@@ -26,9 +26,14 @@ network:
   slot: 2
 
 system:
-  directAmbeToImbe: true
-  directAmbeSpectralScale: 4.0
-  directAmbeGainAdjust: 1.0
+  directAmbeToP25: true
+  directReverseScale: 4.0
+  directReverseGain: -0.15956886662028558
+  directReverseDeessDb: 0.0
+  directReverseLeveler: true
+  directReverseLevelerTargetDbfs: -29.5
+  directReverseLevelerMaxBoostDb: 12.0
+  directReverseLevelerMaxCutDb: 18.0
   identity: BRIDGE-DMR-P25
   netId: BB800
   sysId: 001

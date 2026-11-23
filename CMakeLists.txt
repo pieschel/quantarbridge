@@ -41,9 +41,7 @@ if(BUILD_TESTING)
   get_filename_component(DVMHOST_BUILD_DIR "${DVMHOST_COMMON_LIBRARY}" DIRECTORY)
   foreach(direction IN ITEMS ImbeAmbe AmbeImbe)
     add_executable(direct_${direction}_test
-      tests/direct-audio/Direct${direction}Test.cpp
-      "${DVMHOST_SOURCE_DIR}/src/bridge/DirectImbeAmbe.cpp"
-      "${DVMHOST_SOURCE_DIR}/src/bridge/DirectAmbeImbe.cpp")
+      tests/direct-audio/Direct${direction}Test.cpp)
     target_include_directories(direct_${direction}_test PRIVATE
       "${DVMHOST_SOURCE_DIR}/src" "${DVMHOST_SOURCE_DIR}/src/bridge")
     target_compile_options(direct_${direction}_test PRIVATE -UNDEBUG)

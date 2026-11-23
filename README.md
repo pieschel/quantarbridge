@@ -18,7 +18,8 @@ a separate runtime directory outside Git.
 - Configurable P25 to BrandMeister talkgroup mapping
 - Static and dynamic BrandMeister talkgroups with configurable expiry
 - Direct IMBE-to-AMBE and AMBE-to-IMBE conversion with per-call codec reset
-- Calibrated direct-audio defaults; optional legacy PCM gain/AGC controls
+- Corrected direct-codec quantization, spectral mapping and call-state handling
+- Automatic incoming DMR-to-P25 level adjustment with speech/noise gating and peak protection
 - Motorola APX conventional packet-data registration (ARS/SCEP)
 - APX Text Messaging Service (TMS), local delivery, and BrandMeister routing
 - Motorola LRRP polling and forwarding toward BrandMeister APRS
@@ -29,22 +30,26 @@ a separate runtime directory outside Git.
 - Persistent station settings with guarded updates and configuration backups
 - Raspberry Pi ARM64 image with automated codec, SSH/sudo and storage checks
 
-## Version 0.1.5
+## Version 0.1.6
 
-- **Startup after reboot:** generated DVM configuration now uses compatible
-  list indentation and omits empty optional keys rejected by the DVM parser.
-- **Dashboard:** an empty BrandMeister static-talkgroup list is saved as `[]`;
-  legacy null lists no longer prevent the dashboard from starting.
-- **Image checks:** the real DVM parser validates generated configuration,
-  dashboard save/read round trips and configuration after filesystem remount.
-- Direct-audio and persistence improvements from v0.1.4 are retained.
+- **P25 to DMR:** corrected gain quantization, spectral bit packing and silence
+  handling in the direct converter.
+- **DMR to P25:** corrected source-model mapping and stream state, with the
+  accepted audio tuning and automatic level adjustment for stations with
+  different microphone levels. Noise gating and peak protection limit unwanted
+  gain changes and clipping.
+- **Dashboard:** the direct BrandMeister profile monitors its five required
+  services without requiring the unused DMR Gateway. On dashboard startup,
+  BrandMeister status can recover the latest timestamped connection event
+  from older logs without replaying historical calls.
+- The Raspberry Pi image retains the configuration-parser, SSH/sudo and
+  filesystem-persistence checks from the previous releases.
 
-The corresponding fixes passed a physical Pi reboot with dashboard login,
-retained settings, V.24 modem recognition and BrandMeister login. Quantar RF
-and audio testing remains pending; the newly packaged image has not itself
-been physically boot-tested.
+The audio settings were evaluated on the running Quantar system. The newly
+packaged Raspberry Pi image requires its own station setup and RF checks;
+it has not been physically boot-tested on a Raspberry Pi.
 
-See the [release notes](release-notes/v0.1.5.md) and the
+See the [release notes](release-notes/v0.1.6.md) and the
 [GitHub releases](https://github.com/pieschel/quantarbridge/releases) for
 the image, checksum, validation reports and existing-installation caveats.
 

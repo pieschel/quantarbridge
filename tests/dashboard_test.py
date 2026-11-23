@@ -20,6 +20,7 @@ from dashboard.app import (
     DashboardHandler,
     IdentityDirectory,
     LoginLimiter,
+    LogMonitor,
     RestartCoordinator,
     RuntimeState,
     SettingsBusyError,
@@ -704,6 +705,80 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual([], snapshot["activeCalls"])
         self.assertEqual("timeout", snapshot["recentCalls"][0]["endReason"])
         self.assertEqual(76.0, snapshot["recentCalls"][0]["durationSeconds"])
+
+
+class LogMonitorConnectionRestoreTest(unittest.TestCase):
+    def test_start_restores_connection_from_older_log_without_old_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "quantarbridge-2026-11-21.log").write_text(
+                "I: 2026-11-21 21:23:54.652 (BM) BrandMeister login complete; "
+                "Forwarding BrandMeister DMR to FNE srcId=123 dstId=91\n"
+                "I: 2026-11-21 21:24:00.000 (HOST) Forwarding BrandMeister DMR to FNE srcId=123 dstId=91\n",
+                encoding="utf-8",
+            )
+            for day in (22, 23):
+                (root / f"quantarbridge-2026-11-{day}.log").write_text(
+                    "I: 2026-11-23 10:00:00.000 (HOST) Routine activity\n",
+                    encoding="utf-8",
+                )
+            state = RuntimeState()
+            monitor = LogMonitor(type("Config", (), {"log_dir": root})(), state)
+            with patch("dashboard.app.threading.Thread"):
+                monitor.start()
+            snapshot = state.snapshot({})
+            self.assertEqual("connected", snapshot["brandmeister"]["state"])
+            self.assertIsNotNone(snapshot["brandmeister"]["lastChange"])
+            self.assertEqual([], snapshot["recentCalls"])
+            self.assertEqual([], snapshot["activeCalls"])
+            self.assertEqual([], snapshot["talkgroups"]["dynamic"])
+
+    def test_recent_disconnect_is_not_overridden_by_old_login(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "quantarbridge-2026-11-21.log"
+            path.write_text("I: 2026-11-21 21:23:54.652 (BM) BrandMeister login complete\n", encoding="utf-8")
+            state = RuntimeState()
+            state.process_brandmeister_line("I: 2026-11-23 10:00:00.000 (BM) BrandMeister connection timed out")
+            monitor = LogMonitor(type("Config", (), {})(), state)
+            monitor._restore_brandmeister_connection([path])
+            self.assertEqual("disconnected", state.snapshot({})["brandmeister"]["state"])
+
+    def test_latest_actual_older_event_wins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, last = [root / f"quantarbridge-2026-11-{day}.log" for day in (20, 21)]
+            first.write_text("I: 2026-11-20 10:00:00.000 (BM) BrandMeister login complete\n", encoding="utf-8")
+            last.write_text(
+                "I: 2026-11-21 10:00:00.000 (BM) BrandMeister login complete\n"
+                "I: 2026-11-21 11:00:00.000 (BM) BrandMeister closed the session\n",
+                encoding="utf-8",
+            )
+            state = RuntimeState()
+            LogMonitor(type("Config", (), {})(), state)._restore_brandmeister_connection([first, last])
+            self.assertEqual("disconnected", state.snapshot({})["brandmeister"]["state"])
+
+    def test_absent_connection_event_remains_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "quantarbridge-2026-11-21.log"
+            path.write_text("I: 2026-11-21 10:00:00.000 (HOST) Routine activity\n", encoding="utf-8")
+            state = RuntimeState()
+            LogMonitor(type("Config", (), {})(), state)._restore_brandmeister_connection([path])
+            self.assertEqual("unknown", state.snapshot({})["brandmeister"]["state"])
+
+    def test_malformed_archived_events_do_not_fabricate_current_timestamp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "quantarbridge-2026-11-21.log"
+            path.write_text(
+                "BrandMeister login complete\n"
+                "I: 2026-99-99 10:00:00.000 (BM) BrandMeister login complete\n",
+                encoding="utf-8",
+            )
+            state = RuntimeState()
+            LogMonitor(type("Config", (), {})(), state)._restore_brandmeister_connection([path])
+            self.assertEqual("unknown", state.snapshot({})["brandmeister"]["state"])
+            self.assertIsNone(state.snapshot({})["brandmeister"]["lastChange"])
+            state.process_brandmeister_line("I: 2026-11-23 10:00:00.000 (BM) BrandMeister login complete")
+            self.assertEqual("connected", state.snapshot({})["brandmeister"]["state"])
 
 
 class IdentityDirectoryTest(unittest.TestCase):

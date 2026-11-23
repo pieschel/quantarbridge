@@ -1,429 +1,4333 @@
-diff --git a/src/bridge/DirectAmbeImbe.cpp b/src/bridge/DirectAmbeImbe.cpp
-new file mode 100644
-index 00000000..776cfd8d
---- /dev/null
-+++ b/src/bridge/DirectAmbeImbe.cpp
-@@ -0,0 +1,83 @@
-+#include "DirectAmbeImbe.h"
-+#include "vocoder/imbe/imbe.h"
-+#include "vocoder/imbe/ch_encode.h"
-+#include "vocoder/imbe/ch_decode.h"
-+#include "vocoder/imbe/imbe_vocoder.h"
-+#include "vocoder/MBEDecoder.h"
-+#include <memory>
-+#include <cmath>
-+#include <algorithm>
-+#include <stdexcept>
-+#include <cstring>
-+namespace quantar_reverse {
-+namespace {
-+bool active=false;
-+float spectralScale=4.0f, gainAdjust=1.0f;
-+struct State {
-+ vocoder::MBEDecoder unpack;
-+ mbe_parms cur,prev,enh;
-+ imbe_vocoder encoder;
-+ IMBE_PARAM last{};
-+ bool hasLast=false;
-+ unsigned losses=0;
-+ State():unpack(vocoder::DECODE_DMR_AMBE){mbe_initMbeParms(&cur,&prev,&enh);encoder.set_gain_adjust(gainAdjust);}
-+};
-+thread_local std::unique_ptr<State> state;
-+IMBE_PARAM quiet(){
-+ int16_t v[8]={};const int pitch=100;v[0]=(pitch&0xFC)<<4;v[7]=(pitch&3)<<1;
-+ IMBE_PARAM p{};decode_frame_vector(&p,v);p.ref_pitch=(2*pitch+79)*64;p.l_uv=p.num_harms;
-+ for(int h=0;h<p.num_harms;h++)p.sa[h]=1;
-+ return p;
-+}
-+bool map(const mbe_parms& cur,IMBE_PARAM& p){
-+ if(!std::isfinite(cur.w0)||cur.w0<=0||cur.L<9||cur.L>56)return false;
-+ double pitchValue=4*M_PI/cur.w0-39.5;
-+ if(!std::isfinite(pitchValue))return false;
-+ int pitch=(int)std::lround(std::max(0.,std::min(207.,pitchValue)));
-+ int16_t vec[8]={};vec[0]=(pitch&0xFC)<<4;vec[7]=(pitch&3)<<1;
-+ decode_frame_vector(&p,vec);
-+ if(p.num_harms<9||p.num_harms>56||p.num_bands<3||p.num_bands>12)return false;
-+ p.ref_pitch=(2*pitch+79)*64;double omega=4*M_PI/(pitch+39.5);
-+ double power[56]={};bool voiced[56]={};
-+ for(int h=0;h<p.num_harms;h++){
-+  double at=std::max(1.,std::min((double)cur.L,(h+1)*omega/cur.w0));
-+  int lo=(int)at,hi=std::min(cur.L,lo+1);double f=at-lo;
-+  double amp=((1-f)*cur.Ml[lo]+f*cur.Ml[hi])*spectralScale;
-+  if(!std::isfinite(amp)||amp<0)return false;
-+  amp=std::min(30000.,amp);p.sa[h]=std::max(1,(int)std::lround(amp));
-+  power[h]=amp*amp;voiced[h]=cur.Vl[std::max(1,std::min(cur.L,(int)std::lround(at)))];
-+ }
-+ int bandBits=0,unvoiced=0;
-+ for(int band=0;band<p.num_bands;band++){
-+  int start=band*3,end=(band==p.num_bands-1)?p.num_harms:std::min(start+3,(int)p.num_harms);
-+  double v=0,u=0;for(int h=start;h<end;h++)(voiced[h]?v:u)+=power[h];
-+  bool decision=v>u;bandBits=(bandBits<<1)|decision;
-+  for(int h=start;h<end;h++){p.v_uv_dsn[h]=decision;if(!decision)unvoiced++;}
-+ }
-+ p.b_vec[1]=bandBits;p.l_uv=unvoiced;return true;
-+}
-+}
-+void configure(bool on,float scale,float gain){
-+ if(!std::isfinite(scale)||scale<=0||scale>16||!std::isfinite(gain)||gain<0||gain>4)
-+  throw std::invalid_argument("Invalid direct AMBE-to-IMBE scale/gain");
-+ active=on;spectralScale=scale;gainAdjust=gain;
-+}
-+bool enabled(){return active;}
-+void reset(){state.reset(new State());}
-+bool convert(const uint8_t* ambe,uint8_t* imbe){
-+ if(!ambe||!imbe)return false;if(!state)reset();
-+ uint8_t input[9];std::memcpy(input,ambe,9);char bits[49]={};
-+ int errors=state->unpack.decodeBits(input,bits);
-+ int bad=errors>3?2:mbe_decodeAmbe2450Parms(bits,&state->cur,&state->prev);
-+ IMBE_PARAM p{};bool valid=bad==0&&map(state->cur,p);
-+ if(valid){mbe_moveMbeParms(&state->cur,&state->prev);state->last=p;state->hasLast=true;state->losses=0;}
-+ else {
-+  state->losses=std::min(4U,state->losses+1);
-+  if(state->hasLast&&state->losses<=3){p=state->last;for(int h=0;h<p.num_harms;h++)p.sa[h]=std::max(1,p.sa[h]>>state->losses);}
-+  else {p=quiet();mbe_initMbeParms(&state->cur,&state->prev,&state->enh);state->hasLast=false;}
-+ }
-+ int16_t vec[8]={};state->encoder.encode_parameters(&p,vec);std::memset(imbe,0,11);unsigned bit=0;
-+ for(int v=0;v<8;v++){int width=v<4?12:(v<7?11:7);for(int j=width-1;j>=0;j--,bit++)imbe[bit/8]|=((vec[v]>>j)&1)<<(7-bit%8);}
-+ return valid;
-+}
-+}
-diff --git a/src/bridge/DirectAmbeImbe.h b/src/bridge/DirectAmbeImbe.h
-new file mode 100644
-index 00000000..35272dc8
---- /dev/null
-+++ b/src/bridge/DirectAmbeImbe.h
-@@ -0,0 +1,9 @@
-+#pragma once
-+#include <cstdint>
-+namespace quantar_reverse {
-+void configure(bool enabled, float scale, float gain);
-+bool enabled();
-+void reset();
-+// Always writes an IMBE word. False means an invalid/unsupported word was concealed.
-+bool convert(const uint8_t* ambe, uint8_t* imbe);
-+}
-diff --git a/src/bridge/DirectImbeAmbe.cpp b/src/bridge/DirectImbeAmbe.cpp
-new file mode 100644
-index 00000000..c6e36e65
---- /dev/null
-+++ b/src/bridge/DirectImbeAmbe.cpp
-@@ -0,0 +1,65 @@
-+// Isolated implementation: shares the existing AMBE parameter quantizer.
-+#include "vocoder/MBEEncoder.cpp"
-+#include "DirectImbeAmbe.h"
-+#include <memory>
-+#include <cmath>
-+#include <stdexcept>
-+namespace quantar_direct {
-+namespace {
-+bool active = false;
-+float adjustment = 1.58f;
-+struct State {
-+    imbe_vocoder decoder;
-+    mbe_parms current, previous, enhanced;
-+    State() { mbe_initMbeParms(&current, &previous, &enhanced); }
-+};
-+thread_local std::unique_ptr<State> state;
-+void silence(uint8_t* word) {
-+    static const uint8_t quiet[9] = {0xB9,0xE8,0x81,0x52,0x61,0x73,0x00,0x2A,0x6B};
-+    std::memcpy(word, quiet, sizeof(quiet));
-+}
-+}
-+void configure(bool on, float value) {
-+    if (!std::isfinite(value) || value < 0.0f || value > 4.0f)
-+        throw std::invalid_argument("directImbeGainAdjust must be finite and between 0 and 4");
-+    active = on; adjustment = value;
-+}
-+bool enabled() { return active; }
-+float gain() { return adjustment; }
-+void reset() { state.reset(new State()); }
-+bool convert(const uint8_t* imbe, uint8_t* ambe) {
-+    if (!imbe || !ambe) return false;
-+    int16_t vector[8] = {}, discarded[160];
-+    unsigned bit = 0;
-+    for (int v = 0; v < 8; ++v) {
-+        const int width = v < 4 ? 12 : (v < 7 ? 11 : 7);
-+        for (int b = 0; b < width; ++b, ++bit)
-+            vector[v] = (vector[v] << 1) | ((imbe[bit / 8] >> (7 - bit % 8)) & 1);
-+    }
-+    // Validate pitch before the legacy decoder can reuse stale parameters.
-+    const int pitchCode = ((vector[0] >> 4) & 0xFC) | ((vector[7] >> 1) & 3);
-+    if (pitchCode > 207) { silence(ambe); return false; }
-+    if (!state) reset();
-+    state->decoder.imbe_decode(vector, discarded);
-+    IMBE_PARAM parameters = *state->decoder.param();
-+    if (parameters.num_harms < 9 || parameters.num_harms > 56) { silence(ambe); return false; }
-+    parameters.ref_pitch = std::max(159 * 32, std::min(985 * 32, (2 * pitchCode + 79) * 64));
-+    // Prove the lookup can find this harmonic count before calling the legacy quantizer.
-+    const int count = sizeof(b0_lookup) / sizeof(b0_lookup[0]);
-+    int index = (parameters.ref_pitch >> 5) - 159;
-+    bool found = false;
-+    for (int steps = 0; steps < count && index >= 0 && index < count; ++steps) {
-+        const int harmonics = static_cast<int>(AmbeLtable[b0_lookup[index]]);
-+        if (harmonics == parameters.num_harms) { found = true; break; }
-+        index += harmonics < parameters.num_harms ? 1 : -1;
-+    }
-+    if (!found) { silence(ambe); return false; }
-+    int quantized[9] = {};
-+    encodeAMBE(&parameters, quantized, &state->current, &state->previous, adjustment);
-+    uint8_t bits[49] = {}, raw[9] = {};
-+    encode49bit(bits, quantized);
-+    for (int i = 0; i < 49; ++i) raw[i / 8] |= bits[i] << (7 - i % 8);
-+    encodeDmrAMBE(raw, ambe);
-+    return true;
-+}
-+}
-diff --git a/src/bridge/DirectImbeAmbe.h b/src/bridge/DirectImbeAmbe.h
-new file mode 100644
-index 00000000..0fbf5b32
---- /dev/null
-+++ b/src/bridge/DirectImbeAmbe.h
-@@ -0,0 +1,10 @@
-+#pragma once
-+#include <cstdint>
-+namespace quantar_direct {
-+void configure(bool enabled, float gain);
-+bool enabled();
-+float gain();
-+void reset();
-+// Always fills a valid AMBE word. False means invalid input was concealed.
-+bool convert(const uint8_t* imbe, uint8_t* ambe);
-+}
 diff --git a/src/bridge/HostBridge.DMR.cpp b/src/bridge/HostBridge.DMR.cpp
-index c1d22921..8926be9f 100644
+index c1d22921..959b297b 100644
 --- a/src/bridge/HostBridge.DMR.cpp
 +++ b/src/bridge/HostBridge.DMR.cpp
-@@ -1,3 +1,4 @@
-+#include "DirectAmbeImbe.h"
- // SPDX-License-Identifier: GPL-2.0-only
- /*
-  * Digital Voice Modem - Bridge
-@@ -213,6 +214,7 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+@@ -95,15 +95,26 @@ namespace
+ 
+ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+ {
++    std::unique_lock<std::recursive_mutex> directLock(m_directCodecMutex, std::defer_lock);
++    if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled)
++        directLock.lock();
++    if (m_directAmbeToP25Enabled && (buffer == nullptr || length < 53U)) {
++        LogWarning(LOG_HOST, "Direct AMBE->P25 rejected a short DMR network frame");
++        return;
++    }
+     assert(buffer != nullptr);
+     using namespace dmr;
+     using namespace dmr::defines;
++    const auto discardDMRFrame = [this](uint32_t slot) {
++        if (!m_directP25ToAmbeEnabled && !m_directAmbeToP25Enabled)
++            m_network->resetDMR(slot);
++    };
+ 
+     const bool p25ToDmrBridge = m_identity.find("P25-DMR") != std::string::npos;
+     const bool dmrToP25Bridge = m_identity.find("DMR-P25") != std::string::npos;
+     if (m_txMode != TX_MODE_DMR && !dmrToP25Bridge) {
+-        m_network->resetDMR(1U);
+-        m_network->resetDMR(2U);
++        discardDMRFrame(1U);
++        discardDMRFrame(2U);
+         return;
+     }
+ 
+@@ -111,8 +122,8 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+     // DMR->P25 path, and letting it through here pollutes the uplink bridge state with BM
+     // downlink traffic and sequence warnings.
+     if (p25ToDmrBridge) {
+-        m_network->resetDMR(1U);
+-        m_network->resetDMR(2U);
++        discardDMRFrame(1U);
++        discardDMRFrame(2U);
+         return;
+     }
+ 
+@@ -128,27 +139,27 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+ 
+     if (slotNo > 3U) {
+         LogError(LOG_DMR, "DMR, invalid slot, slotNo = %u", slotNo);
+-        m_network->resetDMR(1U);
+-        m_network->resetDMR(2U);
++        discardDMRFrame(1U);
++        discardDMRFrame(2U);
+         return;
+     }
+ 
+     // DMO mode slot disabling
+     if (slotNo == 1U && !m_network->getDuplex()) {
+         LogError(LOG_DMR, "DMR/DMO, invalid slot, slotNo = %u", slotNo);
+-        m_network->resetDMR(1U);
++        discardDMRFrame(1U);
+         return;
+     }
+ 
+     // Individual slot disabling
+     if (slotNo == 1U && !m_network->getSlot1()) {
+         LogError(LOG_DMR, "DMR, invalid slot, slot 1 disabled, slotNo = %u", slotNo);
+-        m_network->resetDMR(1U);
++        discardDMRFrame(1U);
+         return;
+     }
+     if (slotNo == 2U && !m_network->getSlot2()) {
+         LogError(LOG_DMR, "DMR, invalid slot, slot 2 disabled, slotNo = %u", slotNo);
+-        m_network->resetDMR(2U);
++        discardDMRFrame(2U);
+         return;
+     }
+ 
+@@ -157,7 +168,10 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+     bool voiceSync = (rawType & 0x10U) == 0x10U;
+     bool switchOver = (buffer[14U] & network::NET_CTRL_SWITCH_OVER) == network::NET_CTRL_SWITCH_OVER;
+ 
+-    const uint32_t currentStreamId = m_network->getDMRStreamId(slotNo);
++    const uint32_t currentStreamId = m_directAmbeToP25Enabled ?
++        m_network->getLastReadDMRStreamId() : m_network->getDMRStreamId(slotNo);
++    if (m_directAmbeToP25Enabled && currentStreamId == 0U)
++        return;
+ 
+     if (m_debug) {
+         LogDebug(LOG_NET, "DMR, seqNo = %u, srcId = %u, dstId = %u, flco = $%02X, slotNo = %u, len = %u", seqNo, srcId, dstId, flco, slotNo, length);
+@@ -213,6 +227,11 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
          }
      }
  
++    if (m_directAmbeToP25Enabled && dataSync && dataType == DataType::TERMINATOR_WITH_LC &&
++        currentStreamId != m_rxStreamId)
++        return;
++
 +
      // Direct BM downlink may legitimately arrive with SWITCH_OVER/control markers and with
      // the originating talker source ID. Be conservative here: dropping or ignoring those
      // frames causes audible holes on long runs. Loop prevention is handled elsewhere.
-@@ -246,6 +248,10 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+@@ -225,26 +244,51 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+ 
+     if (flco == FLCO::GROUP) {
+         if (srcId == 0) {
+-            m_network->resetDMR(slotNo);
++            discardDMRFrame(slotNo);
+             return;
+         }
+ 
+         // ensure destination ID matches and slot matches
+         if (m_dstId != 0U && dstId != m_dstId) {
+-            m_network->resetDMR(slotNo);
++            discardDMRFrame(slotNo);
+             return;
+         }
+         if (slotNo != m_slot) {
+-            m_network->resetDMR(slotNo);
++            discardDMRFrame(slotNo);
+             return;
+         }
+ 
++        if (m_directAmbeToP25Enabled && m_callInProgress &&
++            ((m_rxStreamId != 0U && currentStreamId != 0U && currentStreamId != m_rxStreamId) ||
++             (m_rxDMRLC.getSrcId() != 0U &&
++              (m_rxDMRLC.getSrcId() != srcId || m_rxDMRLC.getDstId() != dstId)))) {
++            // A lost terminator must not make another talker/stream inherit
++            // either side of a differential vocoder model.
++            if (m_txStreamId != 0U || m_p25N != 0U)
++                callEnd(m_rxDMRLC.getSrcId(), m_rxDMRLC.getDstId());
++            if (m_ambeToP25Float != nullptr)
++                m_ambeToP25Float->reset();
++            m_callInProgress = false;
++            m_ignoreCall = false;
++            m_callAlgoId = 0U;
++            m_rxStreamId = 0U;
++            m_p25N = 0U;
++            m_p25SeqNo = 0U;
++            ::memset(m_netLDU1, 0x00U, 9U * 25U);
++            ::memset(m_netLDU2, 0x00U, 9U * 25U);
++        }
+         m_networkWatchdog.start();
+ 
++        if (m_directAmbeToP25Enabled && m_ignoreCall && m_callAlgoId != 0U &&
++            currentStreamId == m_rxStreamId && dataType != DataType::TERMINATOR_WITH_LC)
++            return;
++
+         // is this a new call stream?
+         if (currentStreamId != m_rxStreamId && !m_callInProgress) {
              m_callInProgress = true;
              m_callAlgoId = 0U;
++            if (m_directAmbeToP25Enabled && m_ambeToP25Float != nullptr)
++                m_ambeToP25Float->reset();
              if (dmrToP25Bridge) {
-+                if (quantar_reverse::enabled()) {
-+                    quantar_reverse::reset();
-+                    LogInfoEx(LOG_HOST, "Direct AMBE-to-IMBE call state reset, srcId = %u, dstId = %u", srcId, dstId);
-+                }
                  m_ignoreCall = false;
                  m_p25SeqNo = 0U;
-                 m_p25N = 0U;
-@@ -417,6 +423,14 @@ void HostBridge::decodeDMRAudioFrame(uint8_t* ambe, uint32_t srcId, uint32_t dst
-         for (uint32_t i = 0; i < RAW_AMBE_LENGTH_BYTES; i++)
-             ambePartial[i] = ambe[i + (n * 9)];
+@@ -287,6 +331,8 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+             }
  
-+        if (quantar_reverse::enabled() && m_txMode == TX_MODE_P25) {
-+            uint8_t word[11];
-+            const bool valid = quantar_reverse::convert(ambePartial, word);
-+            if (!valid && m_debug)
-+                LogWarning(LOG_HOST, "Direct AMBE-to-IMBE concealed invalid or unsupported word, srcId = %u", srcId);
-+            encodeP25AudioFrame(nullptr, srcId, dstId, word);
-+            continue;
+             m_rxDMRPILC = lc::PrivacyLC();
++            if (m_directAmbeToP25Enabled && m_rxDMRLC.getEncrypted())
++                m_callAlgoId = 0xFFU; // LC declares privacy before any PI arrives.
+         }
+ 
+         // BM downlink into the DMR->P25 bridge is clear voice. Some routed network
+@@ -294,29 +340,55 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+         // call, and treating those as real PI headers causes the bridge to mark the
+         // whole call as encrypted and drop all subsequent voice. Keep the DMR->P25
+         // path in clear-voice mode and only honor PI headers on the other paths.
+-        if (!dmrToP25Bridge && dataSync && (dataType == DataType::VOICE_PI_HEADER)) {
+-            lc::PrivacyLC lc = lc::PrivacyLC();
+-            lc::FullLC fullLC = lc::FullLC();
+-            lc = *fullLC.decodePI(data.get());
+-
+-            m_rxDMRPILC = lc;
+-            m_callAlgoId = lc.getAlgId();
++        if ((!dmrToP25Bridge || m_directAmbeToP25Enabled) && dataSync && (dataType == DataType::VOICE_PI_HEADER)) {
++            lc::FullLC fullLC;
++            auto privacy = fullLC.decodePI(data.get());
++            if (privacy != nullptr) {
++                m_rxDMRPILC = *privacy;
++                m_callAlgoId = privacy->getAlgId();
++                if (m_directAmbeToP25Enabled &&
++                    (privacy->getKId() != 0U || m_rxDMRLC.getEncrypted()) && m_callAlgoId == 0U)
++                    m_callAlgoId = 0xFFU;
++            } else if (m_directAmbeToP25Enabled) {
++                // An invalid PI is control garbage, never voice. Do not turn a
++                // CRC-invalid PI-like BM marker into an encrypted whole call.
++                LogWarning(LOG_HOST, "Direct AMBE->P25 rejected invalid privacy header");
++            }
+         }
+ 
+-        if (dmrToP25Bridge) {
++        if (dmrToP25Bridge && !m_directAmbeToP25Enabled) {
+             m_callAlgoId = 0U;
+             m_ignoreCall = false;
+         }
+ 
++        if (m_directAmbeToP25Enabled && m_callAlgoId != 0U && dataType != DataType::TERMINATOR_WITH_LC) {
++            const uint8_t algorithm = m_callAlgoId;
++            if (m_txStreamId != 0U && m_callInProgress)
++                callEnd(srcId, dstId);
++            if (m_ambeToP25Float != nullptr)
++                m_ambeToP25Float->reset();
++            m_p25SeqNo = 0U;
++            m_p25N = 0U;
++            ::memset(m_netLDU1, 0x00U, 9U * 25U);
++            ::memset(m_netLDU2, 0x00U, 9U * 25U);
++            m_callAlgoId = algorithm;
++            m_ignoreCall = true;
++            m_callInProgress = false;
++            m_rxStreamId = currentStreamId;
++            return;
 +        }
-         short samples[AUDIO_SAMPLES_LENGTH];
-         int errs = 0;
- #if defined(_WIN32)
-@@ -478,7 +492,12 @@ void HostBridge::decodeDMRAudioFrame(uint8_t* ambe, uint32_t srcId, uint32_t dst
++
+         // process call termination
+         if (dataSync && (dataType == DataType::TERMINATOR_WITH_LC)) {
+             // Direct DMR->P25 transcoding must explicitly close the generated P25
+             // stream. Otherwise the RF host keeps the network call keyed until its
+             // watchdog expires even though the DMR terminator already arrived.
+-            if (dmrToP25Bridge)
++            if (dmrToP25Bridge && (!m_directAmbeToP25Enabled || m_txStreamId != 0U || m_p25N != 0U))
+                 callEnd(srcId, dstId);
+             else
+                 m_callInProgress = false;
++            if (m_directAmbeToP25Enabled && m_ambeToP25Float != nullptr)
++                m_ambeToP25Float->reset();
+             m_networkWatchdog.stop();
+             m_ignoreCall = false;
+             m_callAlgoId = 0U;
+@@ -344,7 +416,7 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+                 m_rtpSeqNo = 0U;
+             }
+             m_rtpTimestamp = INVALID_TS;
+-            m_network->resetDMR(slotNo);
++            discardDMRFrame(slotNo);
+             return;
+         }
  
- void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId)
+@@ -353,7 +425,7 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+                 if (!dmrToP25Bridge && dataSync && (dataType == DataType::TERMINATOR_WITH_LC)) {
+                     m_ignoreCall = false;
+                     m_rxStreamId = 0U;
+-                    m_network->resetDMR(slotNo);
++                    discardDMRFrame(slotNo);
+                 }
+                 return;
+             }
+@@ -384,7 +456,7 @@ void HostBridge::processDMRNetwork(uint8_t* buffer, uint32_t length)
+                 ::memset(m_netLDU1, 0x00U, 9U * 25U);
+                 ::memset(m_netLDU2, 0x00U, 9U * 25U);
+             }
+-            m_network->resetDMR(slotNo);
++            discardDMRFrame(slotNo);
+             return;
+         }
+ 
+@@ -412,6 +484,28 @@ void HostBridge::decodeDMRAudioFrame(uint8_t* ambe, uint32_t srcId, uint32_t dst
+     using namespace dmr;
+     using namespace dmr::defines;
+ 
++    if (m_directAmbeToP25Enabled && m_txMode == TX_MODE_P25) {
++        // Mode selection is call-wide: never fall back to an independent PCM
++        // encoder for one frame, which would desynchronize the receiver model.
++        if (m_ambeToP25Float == nullptr) {
++            LogError(LOG_HOST, "Direct AMBE->P25 converter is unavailable");
++            return;
++        }
++        const bool encrypted = m_callAlgoId != 0U || m_rxDMRLC.getEncrypted() ||
++            m_rxDMRPILC.getAlgId() != 0U || m_rxDMRPILC.getKId() != 0U;
++        for (uint32_t n = 0; n < AMBE_PER_SLOT; ++n) {
++            uint8_t imbe[p25::defines::RAW_IMBE_LENGTH_BYTES];
++            const auto result = m_ambeToP25Float->convert(ambe + n * RAW_AMBE_LENGTH_BYTES, imbe, encrypted);
++            if (m_debug && result.status != vocoder::AmbeToP25Float::Status::Voice &&
++                result.status != vocoder::AmbeToP25Float::Status::CodedSilence) {
++                LogDebug(LOG_HOST, "Direct AMBE->P25 guarded frame status=%u fec=%u erasures=%u",
++                    static_cast<unsigned>(result.status), result.fecCorrections, result.consecutiveErasures);
++            }
++            encodeP25AudioFrame(nullptr, srcId, dstId, imbe);
++        }
++        return;
++    }
++
+     for (uint32_t n = 0; n < AMBE_PER_SLOT; n++) {
+         uint8_t ambePartial[RAW_AMBE_LENGTH_BYTES];
+         for (uint32_t i = 0; i < RAW_AMBE_LENGTH_BYTES; i++)
+@@ -476,13 +570,16 @@ void HostBridge::decodeDMRAudioFrame(uint8_t* ambe, uint32_t srcId, uint32_t dst
+ 
+ /* Helper to encode DMR network traffic audio frames. */
+ 
+-void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId)
++bool HostBridge::flushPendingDMRFrame(uint32_t forcedSrcId, uint32_t forcedDstId)
  {
 -    assert(pcm != nullptr);
-+    encodeDMRAudioFrame(pcm, forcedSrcId, forcedDstId, nullptr);
-+}
-+
-+void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId, const uint8_t* directAmbe)
-+{
-+    assert(pcm != nullptr || directAmbe != nullptr);
++    std::unique_lock<std::recursive_mutex> directLock(m_directCodecMutex, std::defer_lock);
++    if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled)
++        directLock.lock();
      using namespace dmr;
      using namespace dmr::defines;
      using namespace dmr::data;
-@@ -604,6 +623,12 @@ void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
-         m_ambeCount = 0U;
+-
++    if (m_ambeCount != AMBE_PER_SLOT)
++        return false;
+     uint32_t srcId = m_srcId;
+     if (m_srcIdOverride != 0 && (m_overrideSrcIdFromMDC))
+         srcId = m_srcIdOverride;
+@@ -499,96 +596,43 @@ void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+         srcId = m_srcId;
+ 
+     uint8_t* data = nullptr;
+-    m_dmrN = (uint8_t)(m_dmrSeqNo % 6);
+-    if (m_ambeCount == AMBE_PER_SLOT) {
+-        // is this the intitial sequence?
+-        if (m_dmrSeqNo == 0) {
+-            // send DMR voice header
+-            data = new uint8_t[DMR_FRAME_LENGTH_BYTES];
+-
+-            // generate DMR LC
+-            lc::LC dmrLC = lc::LC();
+-            dmrLC.setFLCO(FLCO::GROUP);
+-            dmrLC.setSrcId(srcId);
+-            dmrLC.setDstId(dstId);
+-            m_dmrEmbeddedData.setLC(dmrLC);
+-
+-            // generate the Slot TYpe
+-            SlotType slotType = SlotType();
+-            slotType.setDataType(DataType::VOICE_LC_HEADER);
+-            slotType.encode(data);
+-
+-            lc::FullLC fullLC = lc::FullLC();
+-            fullLC.encode(dmrLC, data, DataType::VOICE_LC_HEADER);
+-
+-            // generate DMR network frame
+-            NetData dmrData;
+-            dmrData.setSlotNo(m_slot);
+-            dmrData.setDataType(DataType::VOICE_LC_HEADER);
+-            dmrData.setSrcId(srcId);
+-            dmrData.setDstId(dstId);
+-            dmrData.setFLCO(FLCO::GROUP);
+-
+-            uint8_t controlByte = 0U;
+-            if (m_grantDemand)
+-                controlByte = network::NET_CTRL_GRANT_DEMAND;                       // Grant Demand Flag
+-            controlByte |= network::NET_CTRL_SWITCH_OVER;
+-            dmrData.setControl(controlByte);
+-
+-            dmrData.setN(m_dmrN);
+-            dmrData.setSeqNo(m_dmrSeqNo);
+-            dmrData.setBER(0U);
+-            dmrData.setRSSI(0U);
+-
+-            dmrData.setData(data);
+-
+-            LogInfoEx(LOG_HOST, DMR_DT_VOICE_LC_HEADER ", slot = %u, srcId = %u, dstId = %u, FLCO = $%02X", m_slot,
+-                dmrLC.getSrcId(), dmrLC.getDstId(), dmrData.getFLCO());
+-
+-            m_network->writeDMR(dmrData, false);
+-            m_txStreamId = m_network->getDMRStreamId(m_slot);
+-
+-            m_dmrSeqNo++;
+-            m_dmrN = (uint8_t)(m_dmrSeqNo % 6);
+-            delete[] data;
+-
+-            if (!m_localAudio) {
+-                Thread::sleep(60U);
+-            }
+-        }
++    // Direct calls start voice phase 0 after the sequence-0 LC header.
++    m_dmrN = (uint8_t)((m_directP25ToAmbeEnabled && m_dmrSeqNo > 0U ? m_dmrSeqNo - 1U : m_dmrSeqNo) % 6U);
+ 
+-        // send DMR voice
++    // is this the intitial sequence?
++    if (m_dmrSeqNo == 0) {
++        // send DMR voice header
+         data = new uint8_t[DMR_FRAME_LENGTH_BYTES];
+ 
+-        ::memcpy(data, m_ambeBuffer, 13U);
+-        data[13U] = (uint8_t)(m_ambeBuffer[13U] & 0xF0);
+-        data[19U] = (uint8_t)(m_ambeBuffer[13U] & 0x0F);
+-        ::memcpy(data + 20U, m_ambeBuffer + 14U, 13U);
+-
+-        DataType::E dataType = DataType::VOICE_SYNC;
+-        if (m_dmrN == 0)
+-            dataType = DataType::VOICE_SYNC;
+-        else {
+-            dataType = DataType::VOICE;
+-
+-            uint8_t lcss = m_dmrEmbeddedData.getData(data, m_dmrN);
++        // generate DMR LC
++        lc::LC dmrLC = lc::LC();
++        dmrLC.setFLCO(FLCO::GROUP);
++        dmrLC.setSrcId(srcId);
++        dmrLC.setDstId(dstId);
++        m_dmrEmbeddedData.setLC(dmrLC);
+ 
+-            // generated embedded signalling
+-            EMB emb = EMB();
+-            emb.setColorCode(0U);
+-            emb.setLCSS(lcss);
+-            emb.encode(data);
+-        }
++        // generate the Slot TYpe
++        SlotType slotType = SlotType();
++        slotType.setDataType(DataType::VOICE_LC_HEADER);
++        slotType.encode(data);
+ 
+-        LogInfoEx(LOG_HOST, DMR_DT_VOICE ", srcId = %u, dstId = %u, slot = %u, seqNo = %u", srcId, dstId, m_slot, m_dmrN);
++        lc::FullLC fullLC = lc::FullLC();
++        fullLC.encode(dmrLC, data, DataType::VOICE_LC_HEADER);
+ 
+         // generate DMR network frame
+         NetData dmrData;
+         dmrData.setSlotNo(m_slot);
+-        dmrData.setDataType(dataType);
++        dmrData.setDataType(DataType::VOICE_LC_HEADER);
+         dmrData.setSrcId(srcId);
+         dmrData.setDstId(dstId);
+         dmrData.setFLCO(FLCO::GROUP);
++
++        uint8_t controlByte = 0U;
++        if (m_grantDemand)
++            controlByte = network::NET_CTRL_GRANT_DEMAND;                       // Grant Demand Flag
++        controlByte |= network::NET_CTRL_SWITCH_OVER;
++        dmrData.setControl(controlByte);
++
+         dmrData.setN(m_dmrN);
+         dmrData.setSeqNo(m_dmrSeqNo);
+         dmrData.setBER(0U);
+@@ -596,14 +640,89 @@ void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+ 
+         dmrData.setData(data);
+ 
++        LogInfoEx(LOG_HOST, DMR_DT_VOICE_LC_HEADER ", slot = %u, srcId = %u, dstId = %u, FLCO = $%02X", m_slot,
++            dmrLC.getSrcId(), dmrLC.getDstId(), dmrData.getFLCO());
++
+         m_network->writeDMR(dmrData, false);
+         m_txStreamId = m_network->getDMRStreamId(m_slot);
+ 
+         m_dmrSeqNo++;
+-        ::memset(m_ambeBuffer, 0x00U, 27U);
+-        m_ambeCount = 0U;
++        m_dmrN = (uint8_t)((m_directP25ToAmbeEnabled && m_dmrSeqNo > 0U ? m_dmrSeqNo - 1U : m_dmrSeqNo) % 6U);
++        delete[] data;
++
++        if (!m_localAudio) {
++            Thread::sleep(60U);
++        }
++    }
++
++    // send DMR voice
++    data = new uint8_t[DMR_FRAME_LENGTH_BYTES];
++
++    ::memcpy(data, m_ambeBuffer, 13U);
++    data[13U] = (uint8_t)(m_ambeBuffer[13U] & 0xF0);
++    data[19U] = (uint8_t)(m_ambeBuffer[13U] & 0x0F);
++    ::memcpy(data + 20U, m_ambeBuffer + 14U, 13U);
++
++    DataType::E dataType = DataType::VOICE_SYNC;
++    if (m_dmrN == 0)
++        dataType = DataType::VOICE_SYNC;
++    else {
++        dataType = DataType::VOICE;
++
++        uint8_t lcss = m_dmrEmbeddedData.getData(data, m_dmrN);
++
++        // generated embedded signalling
++        EMB emb = EMB();
++        emb.setColorCode(0U);
++        emb.setLCSS(lcss);
++        emb.encode(data);
++    }
++
++    LogInfoEx(LOG_HOST, DMR_DT_VOICE ", srcId = %u, dstId = %u, slot = %u, seqNo = %u", srcId, dstId, m_slot, m_dmrN);
++
++    // generate DMR network frame
++    NetData dmrData;
++    dmrData.setSlotNo(m_slot);
++    dmrData.setDataType(dataType);
++    dmrData.setSrcId(srcId);
++    dmrData.setDstId(dstId);
++    dmrData.setFLCO(FLCO::GROUP);
++    dmrData.setN(m_dmrN);
++    dmrData.setSeqNo(m_dmrSeqNo);
++    dmrData.setBER(0U);
++    dmrData.setRSSI(0U);
++
++    dmrData.setData(data);
++
++    m_network->writeDMR(dmrData, false);
++    m_txStreamId = m_network->getDMRStreamId(m_slot);
++
++    m_dmrSeqNo++;
++    ::memset(m_ambeBuffer, 0x00U, 27U);
++    m_ambeCount = 0U;
++
++    return true;
++}
++
++void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId, const uint8_t* encodedAmbe)
++{
++    std::unique_lock<std::recursive_mutex> directLock(m_directCodecMutex, std::defer_lock);
++    if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled)
++        directLock.lock();
++    assert(pcm != nullptr || encodedAmbe != nullptr);
++    using namespace dmr;
++    using namespace dmr::defines;
++    using namespace dmr::data;
++    m_dmrN = (uint8_t)((m_directP25ToAmbeEnabled && m_dmrSeqNo > 0U ? m_dmrSeqNo - 1U : m_dmrSeqNo) % 6U);
++    if (m_ambeCount == AMBE_PER_SLOT)
++        flushPendingDMRFrame(forcedSrcId, forcedDstId);
++    if (encodedAmbe != nullptr) {
++        ::memcpy(m_ambeBuffer + m_ambeCount * RAW_AMBE_LENGTH_BYTES, encodedAmbe, RAW_AMBE_LENGTH_BYTES);
++        ++m_ambeCount;
++        return;
      }
  
-+    if (directAmbe != nullptr) {
-+        ::memcpy(m_ambeBuffer + (m_ambeCount * 9U), directAmbe, RAW_AMBE_LENGTH_BYTES);
-+        m_ambeCount++;
-+        return;
-+    }
 +
      int smpIdx = 0;
      short samples[AUDIO_SAMPLES_LENGTH];
      for (uint32_t pcmIdx = 0; pcmIdx < (AUDIO_SAMPLES_LENGTH * 2U); pcmIdx += 2) {
 diff --git a/src/bridge/HostBridge.P25.cpp b/src/bridge/HostBridge.P25.cpp
-index 11af4ee0..3eb94d9e 100644
+index 11af4ee0..1432114d 100644
 --- a/src/bridge/HostBridge.P25.cpp
 +++ b/src/bridge/HostBridge.P25.cpp
-@@ -1,3 +1,4 @@
-+#include "DirectImbeAmbe.h"
- // SPDX-License-Identifier: GPL-2.0-only
- /*
-  * Digital Voice Modem - Bridge
-@@ -336,6 +337,10 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
-         // is this a new call stream?
-         uint16_t callKID = 0U;
-         if (currentStreamId != m_rxStreamId && ((duid != DUID::TDU) && (duid != DUID::TDULC)) && !m_callInProgress) {
-+            if (quantar_direct::enabled()) {
-+                quantar_direct::reset();
-+                LogInfoEx(LOG_HOST, "Direct IMBE-to-AMBE call state reset, srcId = %u, dstId = %u", srcId, dstId);
+@@ -22,6 +22,7 @@
+ #include "common/Utils.h"
+ #include "bridge/ActivityLog.h"
+ #include "HostBridge.h"
++#include "bridge/P25ImbeSync.h"
+ #include "BridgeMain.h"
+ 
+ using namespace analog;
+@@ -214,6 +215,11 @@ namespace
+ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+ {
+     assert(buffer != nullptr);
++    std::unique_lock<std::recursive_mutex> directLock(m_directCodecMutex, std::defer_lock);
++    if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled)
++        directLock.lock();
++    if (length < 24U)
++        return;
+     using namespace p25;
+     using namespace p25::defines;
+     using namespace p25::dfsi::defines;
+@@ -225,20 +231,26 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+     const bool p25ToDmrBridge = m_identity.find("P25-DMR") != std::string::npos;
+     const bool dmrToP25Bridge = m_identity.find("DMR-P25") != std::string::npos;
+     const bool p25PcmOnlyBridge = m_identity.find("P25-PCM-ONLY") != std::string::npos;
++    const bool directReceive = m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled;
++    const bool directForward = m_directP25ToAmbeEnabled && m_p25ToAmbeFloat != nullptr &&
++        m_txMode == TX_MODE_DMR && !p25PcmOnlyBridge && !dmrToP25Bridge;
+ 
+     if (!p25ToDmrBridge && !p25PcmOnlyBridge && m_txMode != TX_MODE_P25) {
+-        m_network->resetP25();
++        if (!directReceive)
++            m_network->resetP25();
+         return;
+     }
+ 
+     if (dmrToP25Bridge) {
+-        m_network->resetP25();
++        if (!directReceive)
++            m_network->resetP25();
+         return;
+     }
+ 
+     bool grantDemand = (buffer[14U] & network::NET_CTRL_GRANT_DEMAND) == network::NET_CTRL_GRANT_DEMAND;
+     bool switchOver = (buffer[14U] & network::NET_CTRL_SWITCH_OVER) == network::NET_CTRL_SWITCH_OVER;
+-    const uint32_t currentStreamId = m_network->getP25StreamId();
++    const uint32_t currentStreamId = directReceive ? m_network->getLastReadP25StreamId() :
++        m_network->getP25StreamId();
+ 
+     // process network message header
+     DUID::E duid = (DUID::E)buffer[22U];
+@@ -249,7 +261,19 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+ 
+     // process raw P25 data bytes
+     UInt8Array data;
+-    uint8_t frameLength = buffer[23U];
++    const bool isVoiceLdu = duid == DUID::LDU1 || duid == DUID::LDU2;
++    uint32_t frameLength = buffer[23U];
++    // The P25D length field includes its 24-byte header; it is not a payload length.
++    if (isVoiceLdu) {
++        if (frameLength < 24U)
++            return;
++        frameLength -= 24U;
++        if (frameLength > length - 24U)
++            return;
++    }
++    else if (frameLength > 24U && frameLength > length - 24U) {
++        return;
++    }
+     if (duid == DUID::PDU) {
+         frameLength = length;
+         data = std::unique_ptr<uint8_t[]>(new uint8_t[length]);
+@@ -268,18 +292,42 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+         }
+     }
+ 
++    // A direct source word is accepted only from a complete, correctly framed LDU.
++    if (directForward && !isVoiceLdu && duid != DUID::TDU && duid != DUID::TDULC)
++        return;
++    if (directForward && isVoiceLdu) {
++        if (frameLength < 154U || currentStreamId == 0U)
++            return;
++        const uint32_t starts[9] = {0U,22U,36U,53U,70U,87U,104U,121U,138U};
++        const uint8_t first = duid == DUID::LDU1 ?
++            (uint8_t)DFSIFrameType::LDU1_VOICE1 : (uint8_t)DFSIFrameType::LDU2_VOICE10;
++        for (uint32_t i = 0U; i < 9U; ++i) {
++            if (data[starts[i]] != first + i)
++                return;
++        }
++    }
++
+     // handle LDU, TDU or TSDU frame
+     uint8_t lco = buffer[4U];
+ 
+     uint32_t srcId = GET_UINT24(buffer, 5U);
+     uint32_t dstId = GET_UINT24(buffer, 8U);
+ 
++    // Only an end record for the exact active RX stream may end this call.
++    if (directForward && (duid == DUID::TDU || duid == DUID::TDULC) &&
++        (currentStreamId == 0U || currentStreamId != m_rxStreamId))
++        return;
++
+     // Bridge-generated P25 carries SWITCH_OVER. The P25->DMR uplink bridge must ignore
+     // the whole bridged stream so BM downlink audio does not feed straight back into BM.
+     if ((p25ToDmrBridge || p25PcmOnlyBridge) && switchOver) {
+-        m_ignoreCall = true;
+-        m_rxStreamId = currentStreamId;
+-        m_network->resetP25();
++        // Ignored reflected traffic must not replace the active direct call's history.
++        if (!directForward) {
++            m_ignoreCall = true;
++            m_rxStreamId = currentStreamId;
++        }
++        if (!directReceive)
++            m_network->resetP25();
+         return;
+     }
+ 
+@@ -315,22 +363,66 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+         if ((duid == DUID::TDU) || (duid == DUID::TDULC)) {
+             // ignore TDU's that are grant demands
+             if (grantDemand) {
+-                m_network->resetP25();
++                if (!directReceive)
++                    m_network->resetP25();
+                 return;
+             }
+         }
+ 
+         if (srcId == 0) {
+-            m_network->resetP25();
++            if (!directReceive)
++                m_network->resetP25();
+             return;
+         }
+ 
+         // ensure destination ID matches unless the bridge is configured for dynamic TG passthrough
+         if (m_dstId != 0U && dstId != m_dstId) {
+-            m_network->resetP25();
++            if (!directReceive)
++                m_network->resetP25();
+             return;
+         }
+ 
++        // Direct predictors and partial output belong to one accepted source call.
++        if (directForward && isVoiceLdu && m_callInProgress &&
++            (currentStreamId != m_rxStreamId || m_rxP25LC.getSrcId() != srcId || m_rxP25LC.getDstId() != dstId)) {
++            const uint32_t oldSrc = m_rxP25LC.getSrcId() != 0U ? m_rxP25LC.getSrcId() : m_srcId;
++            const uint32_t oldDst = m_rxP25LC.getDstId();
++            callEnd(oldSrc, oldDst);
++            m_callInProgress = false;
++            m_rxStreamId = 0U;
++            m_rxStartTime = 0U;
++            m_ignoreCall = false;
++            m_callAlgoId = ALGO_UNENCRYPT;
++        }
++
++        // Clear-only direct mode: inspect the first LDU's service flag as well as
++        // explicit HDU/LDU2 algorithm fields, before any AMBE target word is emitted.
++        if (directForward && isVoiceLdu) {
++            const bool hduPresent = length > 180U && buffer[180U] == FrameType::HDU_VALID;
++            if (hduPresent && length < 182U)
++                return;
++            const bool cipher = (duid == DUID::LDU1 && (data[39U] & 0x40U) != 0U) ||
++                (duid == DUID::LDU2 && data[88U] != ALGO_UNENCRYPT) ||
++                (hduPresent && buffer[181U] != ALGO_UNENCRYPT);
++            if (cipher) {
++                if (m_callInProgress) {
++                    const uint32_t oldSrc = m_rxP25LC.getSrcId() != 0U ? m_rxP25LC.getSrcId() : srcId;
++                    callEnd(oldSrc, m_rxP25LC.getDstId());
++                }
++                m_p25ToAmbeFloat->resetCall();
++                m_ambeCount = 0U;
++                ::memset(m_ambeBuffer, 0x00U, 27U);
++                m_callInProgress = false;
++                m_ignoreCall = true;
++                m_callAlgoId = 0xFFU;
++                m_rxStreamId = currentStreamId;
++                m_networkWatchdog.stop();
++                if (!directReceive)
++                    m_network->resetP25();
++                return;
 +            }
-             if (p25PcmOnlyBridge) {
-                 delete m_decoder;
-                 m_decoder = new vocoder::MBEDecoder(vocoder::DECODE_88BIT_IMBE);
-@@ -665,6 +670,18 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
++        }
++
+         m_networkWatchdog.start();
  
-         // Utils::dump(1U, "HostBridge::decodeP25AudioFrame(), Decrypted IMBE", imbe, RAW_IMBE_LENGTH_BYTES);
+         // is this a new call stream?
+@@ -344,14 +436,34 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+                 m_decoder->setUvQuality((int)m_vocoderDecoderUvQuality);
+             }
  
-+        if (quantar_direct::enabled() && m_txMode == TX_MODE_DMR && !p25PcmOnlyBridge) {
-+            uint8_t directAmbe[9];
-+            const bool valid = quantar_direct::convert(imbe, directAmbe);
-+            if (!valid && m_debug)
-+                LogWarning(LOG_HOST, "Direct IMBE-to-AMBE concealed invalid input, srcId = %u, dstId = %u", srcId, dstId);
-+            encodeDMRAudioFrame(nullptr, srcId, dstId, directAmbe);
++            if (directForward) {
++                m_p25ToAmbeFloat->resetCall();
++                m_ambeCount = 0U;
++                ::memset(m_ambeBuffer, 0x00U, 27U);
++                m_rxP25LC = control;
++            }
+             m_callInProgress = true;
+             m_callAlgoId = ALGO_UNENCRYPT;
+ 
+             // if this is the beginning of a call and we have a valid HDU frame, extract the algo ID
+-            uint8_t frameType = buffer[180U];
++            uint8_t frameType = length > 180U ? buffer[180U] : 0U;
+             if (frameType == FrameType::HDU_VALID) {
++                if (length < 182U) {
++                    m_callInProgress = false;
++                    m_ignoreCall = true;
++                    if (!directReceive)
++                        m_network->resetP25();
++                    return;
++                }
+                 m_callAlgoId = buffer[181U];
+                 if (m_callAlgoId != ALGO_UNENCRYPT) {
++                    if (length < 184U) {
++                        m_callInProgress = false;
++                        m_ignoreCall = true;
++                        if (!directReceive)
++                            m_network->resetP25();
++                        return;
++                    }
+                     callKID = GET_UINT16(buffer, 182U);
+ 
+                     if (m_callAlgoId != m_tekAlgoId && callKID != m_tekKeyId) {
+@@ -360,9 +472,17 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+                         m_ignoreCall = true;
+ 
+                         LogWarning(LOG_HOST, "P25, call ignored, using different encryption parameters, callAlgoId = $%02X, callKID = $%04X, tekAlgoId = $%02X, tekKID = $%04X", m_callAlgoId, callKID, m_tekAlgoId, m_tekKeyId);
+-                        m_network->resetP25();
++                        if (!directReceive)
++                            m_network->resetP25();
+                         return;
+                     } else {
++                        if (length < 193U) {
++                            m_callInProgress = false;
++                            m_ignoreCall = true;
++                            if (!directReceive)
++                                m_network->resetP25();
++                            return;
++                        }
+                         uint8_t mi[MI_LENGTH_BYTES];
+                         ::memset(mi, 0x00U, MI_LENGTH_BYTES);
+                         for (uint8_t i = 0; i < MI_LENGTH_BYTES; i++) {
+@@ -385,6 +505,7 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+ 
+         // process call termination
+         if ((duid == DUID::TDU) || (duid == DUID::TDULC)) {
++            const bool hadDirectCall = m_callInProgress;
+             m_callInProgress = false;
+             m_networkWatchdog.stop();
+             m_ignoreCall = false;
+@@ -401,9 +522,14 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+                 LogInfoEx(LOG_HOST, "P25, call end, srcId = %u, dstId = %u, dur = %us", srcId, dstId, diff / 1000U);
+             }
+ 
+-            if (m_txMode == TX_MODE_DMR && !p25PcmOnlyBridge) {
++            if (m_txMode == TX_MODE_DMR && !p25PcmOnlyBridge && (!directForward || hadDirectCall)) {
+                 callEnd(srcId, dstId);
+             }
++            if (directForward) {
++                m_p25ToAmbeFloat->resetCall();
++                m_ambeCount = 0U;
++                ::memset(m_ambeBuffer, 0x00U, 27U);
++            }
+ 
+             m_rxP25LC = lc::LC();
+             m_rxStartTime = 0U;
+@@ -414,7 +540,8 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+                 m_rtpSeqNo = 0U;
+             }
+             m_rtpTimestamp = INVALID_TS;
+-            m_network->resetP25();
++            if (!directReceive)
++                m_network->resetP25();
+             return;
+         }
+ 
+@@ -436,7 +563,8 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+         }
+ 
+         if (m_ignoreCall) {
+-            m_network->resetP25();
++            if (!directReceive)
++                m_network->resetP25();
+             return;
+         }
+ 
+@@ -456,7 +584,8 @@ void HostBridge::processP25Network(uint8_t* buffer, uint32_t length)
+             }
+ 
+             m_ignoreCall = true;
+-            m_network->resetP25();
++            if (!directReceive)
++                m_network->resetP25();
+             return;
+         }
+ 
+@@ -601,6 +730,8 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
+     using namespace p25;
+     using namespace p25::defines;
+     const bool p25PcmOnlyBridge = m_identity.find("P25-PCM-ONLY") != std::string::npos;
++    const bool directForward = m_directP25ToAmbeEnabled && m_p25ToAmbeFloat != nullptr &&
++        m_txMode == TX_MODE_DMR && !p25PcmOnlyBridge;
+ 
+     if (m_debug) {
+         uint8_t mi[MI_LENGTH_BYTES];
+@@ -646,6 +777,23 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
+ 
+         // Utils::dump(1U, "HostBridge::decodeP25AudioFrame(), IMBE", imbe, RAW_IMBE_LENGTH_BYTES);
+ 
++        if (directForward) {
++            vocoder::P25ToAmbeFloat::Frame frame;
++            const auto status = m_p25ToAmbeFloat->convert(imbe, RAW_IMBE_LENGTH_BYTES,
++                m_callAlgoId != ALGO_UNENCRYPT, frame);
++            if (status == vocoder::P25ToAmbeFloat::Status::RejectedPitch ||
++                status == vocoder::P25ToAmbeFloat::Status::RejectedModel ||
++                status == vocoder::P25ToAmbeFloat::Status::RejectedSize) {
++                m_p25ToAmbeFloat->concealErasure(frame);
++            }
++            if (!frame.hasFrame())
++                return; // Fail closed, never switch to an unrelated PCM predictor.
++            encodeDMRAudioFrame(nullptr, srcId, dstId, frame.bytes.data());
 +            if (!m_localAudio && (n % 3) == 2 && n < 8)
 +                Thread::sleep(60U);
 +            continue;
 +        }
 +
-+
-         short samples[AUDIO_SAMPLES_LENGTH];
-         int errs = 0;
- #if defined(_WIN32)
-@@ -733,7 +750,12 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
+         if (m_tekAlgoId != P25DEF::ALGO_UNENCRYPT && m_tekKeyId > 0U && m_p25Crypto->getTEKLength() > 0U) {
+             switch (m_tekAlgoId) {
+             case P25DEF::ALGO_AES_256:
+@@ -731,9 +879,12 @@ void HostBridge::decodeP25AudioFrame(uint8_t* ldu, uint32_t srcId, uint32_t dstI
  
- void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId)
+ /* Helper to encode P25 network traffic audio frames. */
+ 
+-void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId)
++void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId, const uint8_t* encodedImbe)
  {
 -    assert(pcm != nullptr);
-+    encodeP25AudioFrame(pcm, forcedSrcId, forcedDstId, nullptr);
-+}
-+
-+void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId, const uint8_t* directImbe)
-+{
-+    assert(pcm != nullptr || directImbe != nullptr);
++    std::unique_lock<std::recursive_mutex> directLock(m_directCodecMutex, std::defer_lock);
++    if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled)
++        directLock.lock();
++    assert(pcm != nullptr || encodedImbe != nullptr);
      using namespace p25;
      using namespace p25::defines;
      using namespace p25::data;
-@@ -745,6 +767,10 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+@@ -745,35 +896,40 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
      if (m_p25N == 9)
          ::memset(m_netLDU2, 0x00U, 9U * 25U);
  
-+    uint8_t imbe[RAW_IMBE_LENGTH_BYTES] = {};
-+    if (directImbe != nullptr) {
-+        ::memcpy(imbe, directImbe, RAW_IMBE_LENGTH_BYTES);
-+    } else {
-     int smpIdx = 0;
-     short samples[AUDIO_SAMPLES_LENGTH];
-     for (uint32_t pcmIdx = 0; pcmIdx < (AUDIO_SAMPLES_LENGTH * 2U); pcmIdx += 2) {
-@@ -762,8 +788,6 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
-         m_p25EncodeAgcPeakLimit, m_p25EncodeLimiterScale, m_p25EncodeLimiterFrames);
- 
-     // encode PCM samples into IMBE codewords
+-    int smpIdx = 0;
+-    short samples[AUDIO_SAMPLES_LENGTH];
+-    for (uint32_t pcmIdx = 0; pcmIdx < (AUDIO_SAMPLES_LENGTH * 2U); pcmIdx += 2) {
+-        samples[smpIdx] = (short)((pcm[pcmIdx + 1] << 8) + pcm[pcmIdx + 0]);
+-        smpIdx++;
+-    }
+-
+-    // Shape the signal first, then apply the requested level with peak protection last.
+-    applyP25EncodeAgc(samples, AUDIO_SAMPLES_LENGTH, m_p25EncodeAgcEnabled, m_p25EncodeAgcCurrentGain,
+-        m_p25EncodeAgcTargetRms, m_p25EncodeAgcMinGain, m_p25EncodeAgcMaxGain, m_p25EncodeAgcAttack, m_p25EncodeAgcRelease, m_p25EncodeAgcPeakLimit);
+-    applyP25EncodePresence(samples, AUDIO_SAMPLES_LENGTH, m_p25EncodePresenceGain);
+-    applyP25EncodeHighCut(samples, AUDIO_SAMPLES_LENGTH, m_p25EncodeHighCutHz,
+-        m_p25EncodeLowPassState1, m_p25EncodeLowPassState2);
+-    applyP25PeakProtectedGain(samples, AUDIO_SAMPLES_LENGTH, m_txAudioGain,
+-        m_p25EncodeAgcPeakLimit, m_p25EncodeLimiterScale, m_p25EncodeLimiterFrames);
+-
+-    // encode PCM samples into IMBE codewords
 -    uint8_t imbe[RAW_IMBE_LENGTH_BYTES];
 -    ::memset(imbe, 0x00U, RAW_IMBE_LENGTH_BYTES);
- #if defined(_WIN32)
-     if (m_useExternalVocoder) {
-         ambeEncode(samples, AUDIO_SAMPLES_LENGTH, imbe);
-@@ -775,6 +799,8 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+-#if defined(_WIN32)
+-    if (m_useExternalVocoder) {
+-        ambeEncode(samples, AUDIO_SAMPLES_LENGTH, imbe);
++    uint8_t imbe[RAW_IMBE_LENGTH_BYTES] = {0U};
++    if (encodedImbe != nullptr) {
++        ::memcpy(imbe, encodedImbe, RAW_IMBE_LENGTH_BYTES);
      }
- #endif // defined(_WIN32)
- 
-+    }
+     else {
+-#endif // defined(_WIN32)
+-        m_encoder->encode(samples, imbe);
+-#if defined(_WIN32)
++        int smpIdx = 0;
++        short samples[AUDIO_SAMPLES_LENGTH];
++        for (uint32_t pcmIdx = 0; pcmIdx < (AUDIO_SAMPLES_LENGTH * 2U); pcmIdx += 2) {
++            samples[smpIdx] = (short)((pcm[pcmIdx + 1] << 8) + pcm[pcmIdx + 0]);
++            smpIdx++;
++        }
 +
++        // Shape the signal first, then apply the requested level with peak protection last.
++        applyP25EncodeAgc(samples, AUDIO_SAMPLES_LENGTH, m_p25EncodeAgcEnabled, m_p25EncodeAgcCurrentGain,
++            m_p25EncodeAgcTargetRms, m_p25EncodeAgcMinGain, m_p25EncodeAgcMaxGain, m_p25EncodeAgcAttack, m_p25EncodeAgcRelease, m_p25EncodeAgcPeakLimit);
++        applyP25EncodePresence(samples, AUDIO_SAMPLES_LENGTH, m_p25EncodePresenceGain);
++        applyP25EncodeHighCut(samples, AUDIO_SAMPLES_LENGTH, m_p25EncodeHighCutHz,
++            m_p25EncodeLowPassState1, m_p25EncodeLowPassState2);
++        applyP25PeakProtectedGain(samples, AUDIO_SAMPLES_LENGTH, m_txAudioGain,
++            m_p25EncodeAgcPeakLimit, m_p25EncodeLimiterScale, m_p25EncodeLimiterFrames);
++
++        // encode PCM samples into IMBE codewords
++    #if defined(_WIN32)
++        if (m_useExternalVocoder) {
++            ambeEncode(samples, AUDIO_SAMPLES_LENGTH, imbe);
++        }
++        else {
++    #endif // defined(_WIN32)
++            m_encoder->encode(samples, imbe);
++    #if defined(_WIN32)
++        }
++    #endif // defined(_WIN32)
++
+     }
+-#endif // defined(_WIN32)
+ 
      // Utils::dump(1U, "HostBridge::encodeP25AudioFrame(), Encoded IMBE", imbe, RAW_IMBE_LENGTH_BYTES);
  
-     if (m_tekAlgoId != P25DEF::ALGO_UNENCRYPT && m_tekKeyId > 0U && m_p25Crypto->getTEKLength() > 0U) {
+@@ -908,6 +1064,9 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+     // send P25 LDU1
+     if (m_p25N == 8U) {
+         LogInfoEx(LOG_HOST, P25_LDU1_STR " audio, srcId = %u, dstId = %u", srcId, dstId);
++        bridge::stampP25ImbeSync(m_netLDU1, true,
++            m_directAmbeToP25Enabled, lc.getAlgId() == P25DEF::ALGO_UNENCRYPT &&
++            m_tekAlgoId == P25DEF::ALGO_UNENCRYPT);
+         m_network->writeP25LDU1(lc, lsd, m_netLDU1, FrameType::HDU_VALID, controlByte);
+         m_txStreamId = m_network->getP25StreamId();
+         m_lastAudioOut = system_clock::hrc::now();
+@@ -916,6 +1075,9 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+     // send P25 LDU2
+     if (m_p25N == 17U) {
+         LogInfoEx(LOG_HOST, P25_LDU2_STR " audio, algo = $%02X, kid = $%04X", m_tekAlgoId, m_tekKeyId);
++        bridge::stampP25ImbeSync(m_netLDU2, false,
++            m_directAmbeToP25Enabled, lc.getAlgId() == P25DEF::ALGO_UNENCRYPT &&
++            m_tekAlgoId == P25DEF::ALGO_UNENCRYPT);
+         m_network->writeP25LDU2(lc, lsd, m_netLDU2, controlByte);
+         m_lastAudioOut = system_clock::hrc::now();
+     }
+@@ -927,3 +1089,23 @@ void HostBridge::encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+     if (m_p25N > 17)
+         m_p25N = 0;
+ }
++
++/* Flush pending direct AMBE speech before end padding can replace its buffer. */
++void HostBridge::finishDirectP25ToDmr(uint32_t srcId, uint32_t dstId)
++{
++    if (!m_directP25ToAmbeEnabled || m_p25ToAmbeFloat == nullptr || m_txMode != TX_MODE_DMR)
++        return;
++    while (m_ambeCount > 0U && m_ambeCount < 3U) {
++        vocoder::P25ToAmbeFloat::Frame frame;
++        m_p25ToAmbeFloat->silenceFrame(frame);
++        if (!frame.hasFrame()) {
++            m_ambeCount = 0U;
++            ::memset(m_ambeBuffer, 0x00U, 27U);
++            break;
++        }
++        encodeDMRAudioFrame(nullptr, srcId, dstId, frame.bytes.data());
++    }
++    if (m_ambeCount == 3U)
++        flushPendingDMRFrame(srcId, dstId);
++    m_p25ToAmbeFloat->resetCall();
++}
 diff --git a/src/bridge/HostBridge.cpp b/src/bridge/HostBridge.cpp
-index 77f46801..f9e5fb60 100644
+index 77f46801..eb660999 100644
 --- a/src/bridge/HostBridge.cpp
 +++ b/src/bridge/HostBridge.cpp
-@@ -1,3 +1,5 @@
-+#include "DirectAmbeImbe.h"
-+#include "DirectImbeAmbe.h"
- // SPDX-License-Identifier: GPL-2.0-only
- /*
-  * Digital Voice Modem - Bridge
-@@ -1050,6 +1052,12 @@ bool HostBridge::readParams()
+@@ -29,6 +29,7 @@
+ #include "common/Utils.h"
+ #include "bridge/ActivityLog.h"
+ #include "HostBridge.h"
++#include "bridge/P25ImbeSync.h"
+ #include "BridgeMain.h"
+ 
+ using namespace analog;
+@@ -41,6 +42,7 @@ using namespace network::udp;
+ #include <algorithm>
+ #include <functional>
+ #include <random>
++#include <cmath>
+ 
+ #if !defined(_WIN32)
+ #include <unistd.h>
+@@ -222,6 +224,17 @@ HostBridge::HostBridge(const std::string& confFile) :
+     m_udpPackets(),
+     m_decoder(nullptr),
+     m_encoder(nullptr),
++    m_p25ToAmbeFloat(nullptr),
++    m_ambeToP25Float(nullptr),
++    m_directP25ToAmbeEnabled(false),
++    m_directAmbeToP25Enabled(false),
++    m_directForwardDeessDb(0.0f),
++    m_directReverseDeessDb(0.0f),
++    m_directForwardGain(1.5f),
++    m_directForwardScale(0.9f),
++    m_directReverseScale(4.0f),
++    m_directReverseGain(0.0f),
++    m_directCodecMutex(),
+     m_mdcDecoder(nullptr),
+     m_udpAudio(false),
+     m_udpMetadata(false),
+@@ -536,6 +549,35 @@ int HostBridge::run()
+         m_encoder->setGainAdjust(m_vocoderEncoderAudioGain);
+     }
+ 
++    if (m_directP25ToAmbeEnabled) {
++        vocoder::P25ToAmbeFloat::Config direct;
++        direct.gain = m_directForwardGain;
++        direct.scale = m_directForwardScale;
++        direct.cutoffHz = m_dmrEncodeHighCutHz;
++        direct.deessMaxDb = m_directForwardDeessDb;
++        m_p25ToAmbeFloat = std::make_unique<vocoder::P25ToAmbeFloat>(direct);
++        m_p25ToAmbeFloat->setEnabled(true);
++    }
++    if (m_directAmbeToP25Enabled) {
++        m_ambeToP25Float = std::make_unique<vocoder::AmbeToP25Float>();
++        if (!m_ambeToP25Float->setLevel(m_directReverseScale, m_directReverseGain) ||
++            !m_ambeToP25Float->setDeessDb(m_directReverseDeessDb)) {
++            LogError(LOG_HOST, "Invalid direct AMBE-to-P25 model configuration");
++            return EXIT_FAILURE;
++        }
++        vocoder::AmbeToP25Float::LevelerConfig leveler;
++        leveler.enabled = systemConf["directReverseLeveler"].as<bool>(false);
++        leveler.targetDbfs = systemConf["directReverseLevelerTargetDbfs"].as<float>(-29.5f);
++        leveler.maxBoostDb = systemConf["directReverseLevelerMaxBoostDb"].as<float>(12.0f);
++        leveler.maxCutDb = systemConf["directReverseLevelerMaxCutDb"].as<float>(18.0f);
++        if (!m_ambeToP25Float->setLevelerConfig(leveler)) {
++            LogError(LOG_HOST, "Invalid direct AMBE-to-P25 leveler configuration");
++            return EXIT_FAILURE;
++        }
++        LogInfoEx(LOG_HOST, "Direct AMBE-to-P25 leveler: %s, target %.1f dBFS reference, boost %.1f dB / cut %.1f dB",
++            leveler.enabled ? "enabled" : "disabled", leveler.targetDbfs, leveler.maxBoostDb, leveler.maxCutDb);
++    }
++
+ #if defined(_WIN32)
+     initializeAMBEDLL();
+     if (m_useExternalVocoder) {
+@@ -649,6 +691,9 @@ int HostBridge::run()
+         // ------------------------------------------------------
+ 
+         if (m_network != nullptr) {
++            std::unique_lock<std::recursive_mutex> directLock(m_directCodecMutex, std::defer_lock);
++            if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled)
++                directLock.lock();
+             std::lock_guard<std::mutex> lock(HostBridge::s_networkMutex);
+             m_network->clock(ms);
+ 
+@@ -656,7 +701,7 @@ int HostBridge::run()
+                 m_networkWatchdog.clock(ms);
+ 
+                 if (m_networkWatchdog.isRunning() && m_networkWatchdog.hasExpired()) {
+-                    if (m_txMode == TX_MODE_P25) {
++                    if (m_txMode == TX_MODE_P25 && !m_directAmbeToP25Enabled) {
+                         m_networkWatchdog.start();
+                         continue;
+                     }
+@@ -688,6 +733,14 @@ int HostBridge::run()
+ 
+                         callEnd(endSrcId, endDstId);
+                     }
++                    else if (m_directAmbeToP25Enabled && (m_txStreamId != 0U || m_p25N != 0U)) {
++                        callEnd(m_rxDMRLC.getSrcId(), m_rxDMRLC.getDstId());
++                    }
++
++                    if (m_p25ToAmbeFloat != nullptr)
++                        m_p25ToAmbeFloat->resetCall();
++                    if (m_ambeToP25Float != nullptr)
++                        m_ambeToP25Float->reset();
+ 
+                     m_callInProgress = false;
+                     m_ignoreCall = false;
+@@ -727,12 +780,12 @@ int HostBridge::run()
+                     m_p25Crypto->clearMI();
+                     m_p25Crypto->resetKeystream();
+ 
+-                    m_network->resetDMR(1U);
+-                    m_network->resetDMR(2U);
+-
+-                    m_network->resetP25();
+-
+-                    m_network->resetAnalog();
++                    if (!m_directP25ToAmbeEnabled && !m_directAmbeToP25Enabled) {
++                        m_network->resetDMR(1U);
++                        m_network->resetDMR(2U);
++                        m_network->resetP25();
++                        m_network->resetAnalog();
++                    }
+                 }
+             }
+         }
+@@ -1050,7 +1103,8 @@ bool HostBridge::readParams()
          m_vocoderDecoderUvQuality = 64U;
      m_txAudioGain = systemConf["txAudioGain"].as<float>(1.0f);
      m_vocoderEncoderAudioGain = systemConf["vocoderEncoderAudioGain"].as<float>(3.0f);
-+    quantar_direct::configure(systemConf["directImbeToAmbe"].as<bool>(false) && m_identity == "BRIDGE-P25-DMR",
-+        systemConf["directImbeGainAdjust"].as<float>(1.58f));
-+    LogInfo("    Direct IMBE-to-AMBE: %s, gain adjustment: %.3f", quantar_direct::enabled() ? "enabled" : "disabled", quantar_direct::gain());
-+    quantar_reverse::configure(systemConf["directAmbeToImbe"].as<bool>(false) && m_identity == "BRIDGE-DMR-P25",
-+        systemConf["directAmbeSpectralScale"].as<float>(4.0f), systemConf["directAmbeGainAdjust"].as<float>(1.0f));
-+    LogInfo("    Direct AMBE-to-IMBE: %s", quantar_reverse::enabled() ? "enabled" : "disabled");
-     m_dmrEncodeHighCutHz = systemConf["dmrEncodeHighCutHz"].as<float>(0.0f);
+-    m_dmrEncodeHighCutHz = systemConf["dmrEncodeHighCutHz"].as<float>(0.0f);
++    m_dmrEncodeHighCutHz = systemConf["dmrEncodeHighCutHz"].as<float>(
++        systemConf["directP25ToAmbe"].as<bool>(false) ? 3300.0f : 0.0f);
      if (m_dmrEncodeHighCutHz < 0.0f)
          m_dmrEncodeHighCutHz = 0.0f;
+     if (m_dmrEncodeHighCutHz > 3500.0f)
+@@ -1161,6 +1215,46 @@ bool HostBridge::readParams()
+ 
+     m_udpAudio = systemConf["udpAudio"].as<bool>(false);
+     m_udpMetadata = systemConf["udpMetadata"].as<bool>(false);
++
++    m_directP25ToAmbeEnabled = systemConf["directP25ToAmbe"].as<bool>(false);
++    m_directAmbeToP25Enabled = systemConf["directAmbeToP25"].as<bool>(false);
++    m_directForwardDeessDb = systemConf["directForwardDeessDb"].as<float>(0.0f);
++    m_directReverseDeessDb = systemConf["directReverseDeessDb"].as<float>(0.0f);
++    m_directForwardGain = systemConf["directForwardGain"].as<float>(1.5f);
++    m_directForwardScale = systemConf["directForwardScale"].as<float>(0.9f);
++    m_directReverseScale = systemConf["directReverseScale"].as<float>(4.0f);
++    m_directReverseGain = systemConf["directReverseGain"].as<float>(0.0f);
++    if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled) {
++        if (m_localAudio || m_udpAudio ||
++            (m_directP25ToAmbeEnabled && (m_directAmbeToP25Enabled || m_txMode != TX_MODE_DMR ||
++                m_identity.find("P25-DMR") == std::string::npos || m_identity.find("DMR-P25") != std::string::npos ||
++                m_identity.find("P25-PCM-ONLY") != std::string::npos)) ||
++            (m_directAmbeToP25Enabled && (m_txMode != TX_MODE_P25 || m_identity.find("DMR-P25") == std::string::npos ||
++                m_identity.find("P25-DMR") != std::string::npos))) {
++            LogError(LOG_HOST, "Direct model conversion requires its matching network-only bridge profile");
++            return false;
++        }
++        const float values[] = { m_directForwardDeessDb, m_directReverseDeessDb,
++            m_directForwardGain, m_directForwardScale, m_directReverseScale, m_directReverseGain, m_dmrEncodeHighCutHz };
++        for (float value : values) {
++            if (!std::isfinite(value)) {
++                LogError(LOG_HOST, "Direct model conversion settings must be finite");
++                return false;
++            }
++        }
++        if (m_directForwardDeessDb < 0.0f || m_directForwardDeessDb > 2.0f ||
++            m_directReverseDeessDb < 0.0f || m_directReverseDeessDb > 2.0f ||
++            m_directForwardGain < 0.0f || m_directForwardGain > 5.0f ||
++            m_directForwardScale <= 0.0f || m_directForwardScale > 4.0f ||
++            m_directReverseScale <= 0.0f || m_directReverseScale > 16.0f ||
++            m_directReverseGain < -4.0f || m_directReverseGain > 4.0f) {
++            LogError(LOG_HOST, "Direct model conversion setting outside supported range");
++            return false;
++        }
++        LogInfoEx(LOG_HOST, "Direct model conversion: P25-to-AMBE %s, AMBE-to-P25 %s, deess %.2f / %.2f dB",
++            m_directP25ToAmbeEnabled ? "enabled" : "disabled", m_directAmbeToP25Enabled ? "enabled" : "disabled",
++            m_directForwardDeessDb, m_directReverseDeessDb);
++    }
+     m_udpSendPort = (uint16_t)systemConf["udpSendPort"].as<uint32_t>(34001);
+     m_udpSendAddress = systemConf["udpSendAddress"].as<std::string>();
+     m_udpReceivePort = (uint16_t)systemConf["udpReceivePort"].as<uint32_t>(34001);
+@@ -1480,6 +1574,12 @@ bool HostBridge::createNetwork()
+ 
+     // initialize networking
+     m_network = new PeerNetwork(address, port, local, id, password, true, debug, dmr, p25, false, analog, true, true, true, allowDiagnosticTransfer, true, false);
++    m_network->setReceiveStreamMetadata(m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled);
++
++    // An audio bridge has no P25 packet-data/control consumer. Keep those packets
++    // from taking the receive-stream lock before processP25Network discards them.
++    m_network->setP25VoiceOnly(true, m_directP25ToAmbeEnabled);
++    LogInfoEx(LOG_HOST, "P25 voice-only receive guard enabled (stale stream timeout 5000 ms)");
+ 
+     m_network->setPacketDump(packetDump);
+     m_network->setMetadata(m_identity, 0U, 0U, 0.0F, 0.0F, 0, 0, 0, 0.0F, 0.0F, 0, "");
+@@ -1856,6 +1956,9 @@ uint8_t* HostBridge::generateRTPHeaders(uint8_t msgLen, uint16_t& rtpSeq)
+ 
+ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+ {
++    std::unique_lock<std::recursive_mutex> directLock(m_directCodecMutex, std::defer_lock);
++    if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled)
++        directLock.lock();
+     std::string trafficType = LOCAL_CALL;
+     if (m_trafficFromUDP) {
+         srcId = m_udpSrcId;
+@@ -1892,7 +1995,10 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+             if (endDstId == 0U)
+                 endDstId = dstId;
+ 
+-            padSilenceAudio(endSrcId, endDstId);
++            if (m_directP25ToAmbeEnabled)
++                finishDirectP25ToDmr(endSrcId, endDstId);
++            else
++                padSilenceAudio(endSrcId, endDstId);
+ 
+             DMRDEF::DataType::E dataType = DMRDEF::DataType::VOICE_SYNC;
+             if (m_dmrN == 0)
+@@ -1914,7 +2020,7 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+ 
+             LogInfoEx(LOG_HOST, DMR_DT_TERMINATOR_WITH_LC ", slot = %u, srcId = %u, dstId = %u, hadCallInProgress = %u", m_slot, endSrcId, endDstId, hadCallInProgress ? 1U : 0U);
+ 
+-            m_network->writeDMRTerminator(data, &m_dmrSeqNo, &m_dmrN, m_dmrEmbeddedData);
++            m_network->writeDMRTerminator(data, &m_dmrSeqNo, &m_dmrN, m_dmrEmbeddedData, m_directP25ToAmbeEnabled);
+             srcId = endSrcId;
+             dstId = endDstId;
+         }
+@@ -1977,6 +2083,23 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+     m_p25SeqNo = 0U;
+     m_p25N = 0U;
+     m_analogN = 0U;
++    if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled) {
++        m_ambeCount = 0U;
++        if (m_ambeBuffer != nullptr)
++            ::memset(m_ambeBuffer, 0x00U, 27U);
++        if (m_p25ToAmbeFloat != nullptr)
++            m_p25ToAmbeFloat->resetCall();
++        if (m_ambeToP25Float != nullptr) {
++            const auto leveler = m_ambeToP25Float->getLevelerDiagnostics();
++            if (leveler.enabled) {
++                LogInfoEx(LOG_HOST, "Direct AMBE-to-P25 leveler call: frames=%llu voice=%llu level=%.1f dBFS ref, gain=%.2f dB, noise=%.1f dBFS trusted=%u, peakLimited=%u",
++                    static_cast<unsigned long long>(leveler.framesEncoded), static_cast<unsigned long long>(leveler.confirmedVoiceFrames),
++                    leveler.estimatedLevelDbfs, leveler.appliedGainDb, leveler.noiseFloorDbfs,
++                    leveler.noiseTrusted ? 1U : 0U, leveler.peakLimited ? 1U : 0U);
++            }
++            m_ambeToP25Float->reset();
++        }
++    }
+     m_dmrEncodeLowPassState1 = 0.0f;
+     m_dmrEncodeLowPassState2 = 0.0f;
+     m_p25EncodeAgcCurrentGain = 1.0f;
+@@ -1993,9 +2116,17 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+     m_p25Crypto->clearMI();
+     m_p25Crypto->resetKeystream();
+ 
+-    m_network->resetDMR(m_slot);
+-    m_network->resetP25();
+-    m_network->resetAnalog();
++    if (m_directP25ToAmbeEnabled) {
++        m_network->resetTransmitDMR(m_slot);
++    }
++    else if (m_directAmbeToP25Enabled) {
++        m_network->resetTransmitP25();
++    }
++    else {
++        m_network->resetDMR(m_slot);
++        m_network->resetP25();
++        m_network->resetAnalog();
++    }
+ }
+ 
+ /* Helper to process a FNE KMM TEK response. */
+@@ -2834,6 +2965,9 @@ void HostBridge::resetWithNullAudio(uint8_t* data, bool encrypted)
+ 
+ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
+ {
++    std::unique_lock<std::recursive_mutex> directLock(m_directCodecMutex, std::defer_lock);
++    if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled)
++        directLock.lock();
+     switch (m_txMode) {
+     case TX_MODE_DMR:
+         {
+@@ -2945,7 +3079,7 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
+                 }
+ 
+                 // LDU2
+-                if (m_p25N >= 9U && m_p25N < 17U) {
++                if (m_p25N >= 9U && m_p25N < 18U) {
+                     for (uint8_t n = m_p25N; n < 18U; n++) {
+                         switch (n) {
+                         case 9:
+@@ -2989,7 +3123,7 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
+                 }
+ 
+                 // LDU2
+-                if (m_p25N >= 9U && m_p25N < 17U) {
++                if (m_p25N >= 9U && m_p25N < 18U) {
+                     resetWithNullAudio(m_netLDU2, false);
+                     m_p25N = 17U;
+                 }
+@@ -3022,6 +3156,9 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
+             // send P25 LDU1
+             if (m_p25N == 8U) {
+                 LogInfoEx(LOG_HOST, P25_LDU1_STR " audio (silence padded %u), srcId = %u, dstId = %u", 8U - n, srcId, dstId);
++                bridge::stampP25ImbeSync(m_netLDU1, true,
++                    m_directAmbeToP25Enabled, lc.getAlgId() == P25DEF::ALGO_UNENCRYPT &&
++                    m_tekAlgoId == P25DEF::ALGO_UNENCRYPT);
+                 m_network->writeP25LDU1(lc, lsd, m_netLDU1, FrameType::DATA_UNIT);
+                 m_p25N = 9U;
+                 break;
+@@ -3030,6 +3167,9 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
+             // send P25 LDU2
+             if (m_p25N == 17U) {
+                 LogInfoEx(LOG_HOST, P25_LDU2_STR " audio (silence padded %u), algo = $%02X, kid = $%04X", 17U - n, ALGO_UNENCRYPT, 0U);
++                bridge::stampP25ImbeSync(m_netLDU2, false,
++                    m_directAmbeToP25Enabled, lc.getAlgId() == P25DEF::ALGO_UNENCRYPT &&
++                    m_tekAlgoId == P25DEF::ALGO_UNENCRYPT);
+                 m_network->writeP25LDU2(lc, lsd, m_netLDU2);
+                 m_p25N = 0U;
+                 break;
+@@ -3081,6 +3221,10 @@ void* HostBridge::threadCallWatchdog(void* arg)
+             uint32_t ms = stopWatch.elapsed();
+             stopWatch.start();
+ 
++            std::unique_lock<std::recursive_mutex> directLock(bridge->m_directCodecMutex, std::defer_lock);
++            if (bridge->m_directP25ToAmbeEnabled || bridge->m_directAmbeToP25Enabled)
++                directLock.lock();
++
+             if (!bridge->m_trafficFromUDP) {
+                 if (bridge->m_localDropTime.isRunning())
+                     bridge->m_localDropTime.clock(ms);
+@@ -3133,6 +3277,8 @@ void* HostBridge::threadCallWatchdog(void* arg)
+                 }
+             }
+ 
++            if (directLock.owns_lock())
++                directLock.unlock();
+             Thread::sleep(5U);
+         }
+ 
 diff --git a/src/bridge/HostBridge.h b/src/bridge/HostBridge.h
-index ec146e31..a1f4bd05 100644
+index ec146e31..6a84da13 100644
 --- a/src/bridge/HostBridge.h
 +++ b/src/bridge/HostBridge.h
-@@ -610,6 +610,7 @@ private:
+@@ -30,6 +30,8 @@
+ #include "common/Clock.h"
+ #include "vocoder/MBEDecoder.h"
+ #include "vocoder/MBEEncoder.h"
++#include "vocoder/P25ToAmbeFloat.h"
++#include "vocoder/AmbeToP25Float.h"
+ #define MINIAUDIO_IMPLEMENTATION
+ #include "audio/miniaudio.h"
+ #include "mdc/mdc_decode.h"
+@@ -39,6 +41,7 @@
+ 
+ #include <string>
+ #include <mutex>
++#include <memory>
+ 
+ #if defined(_WIN32)
+ #define WIN32_LEAN_AND_MEAN
+@@ -232,6 +235,18 @@ private:
+     vocoder::MBEDecoder* m_decoder;
+     vocoder::MBEEncoder* m_encoder;
+ 
++    std::unique_ptr<vocoder::P25ToAmbeFloat> m_p25ToAmbeFloat;
++    std::unique_ptr<vocoder::AmbeToP25Float> m_ambeToP25Float;
++    bool m_directP25ToAmbeEnabled;
++    bool m_directAmbeToP25Enabled;
++    float m_directForwardDeessDb;
++    float m_directReverseDeessDb;
++    float m_directForwardGain;
++    float m_directForwardScale;
++    float m_directReverseScale;
++    float m_directReverseGain;
++    std::recursive_mutex m_directCodecMutex;
++
+     mdc_decoder_t* m_mdcDecoder;
+     
+     bool m_udpAudio;
+@@ -609,7 +624,10 @@ private:
+      * @param forcedSrcId 
       * @param forcedDstId 
       */
-     void encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId = 0U, uint32_t forcedDstId = 0U);
-+    void encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId, const uint8_t* directAmbe);
+-    void encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId = 0U, uint32_t forcedDstId = 0U);
++    void encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId = 0U, uint32_t forcedDstId = 0U,
++        const uint8_t* encodedAmbe = nullptr);
++    bool flushPendingDMRFrame(uint32_t srcId, uint32_t dstId);
++    void finishDirectP25ToDmr(uint32_t srcId, uint32_t dstId);
  
      // Project 25 (HostBridge.P25.cpp)
      /**
-@@ -633,6 +634,7 @@ private:
+@@ -632,7 +650,8 @@ private:
+      * @param forcedSrcId 
       * @param forcedDstId 
       */
-     void encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId = 0U, uint32_t forcedDstId = 0U);
-+    void encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_t forcedDstId, const uint8_t* directImbe);
+-    void encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId = 0U, uint32_t forcedDstId = 0U);
++    void encodeP25AudioFrame(uint8_t* pcm, uint32_t forcedSrcId = 0U, uint32_t forcedDstId = 0U,
++        const uint8_t* encodedImbe = nullptr);
  
      // Analog (HostBridge.Analog.cpp)
      /**
+diff --git a/src/bridge/P25ImbeSync.h b/src/bridge/P25ImbeSync.h
+new file mode 100644
+index 00000000..8842dc81
+--- /dev/null
++++ b/src/bridge/P25ImbeSync.h
+@@ -0,0 +1,24 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#ifndef BRIDGE_P25_IMBE_SYNC_H
++#define BRIDGE_P25_IMBE_SYNC_H
++
++#include <cstdint>
++
++namespace bridge {
++// Synchronization bit b[L+2] alternates across the nine voice words of each
++// LDU: LDU1 starts with zero, LDU2 with one. The other 87 IMBE bits and all
++// non-voice bytes are untouched. Existing LDU/call position owns the phase.
++inline void stampP25ImbeSync(uint8_t* ldu, bool ldu1, bool directReverse, bool clear)
++{
++    if (ldu == nullptr || !directReverse || !clear)
++        return;
++    const unsigned offsets[9] = {10U, 26U, 55U, 80U, 105U, 130U, 155U, 180U, 204U};
++    const unsigned first = ldu1 ? 0U : 1U;
++    for (unsigned i = 0; i < 9U; ++i) {
++        uint8_t& last = ldu[offsets[i] + 10U];
++        last = static_cast<uint8_t>((last & 0xFEU) | ((first + i) & 1U));
++    }
++}
++}
++
++#endif
+diff --git a/src/bridge/network/PeerNetwork.cpp b/src/bridge/network/PeerNetwork.cpp
+index 74595b9b..fc22404c 100644
+--- a/src/bridge/network/PeerNetwork.cpp
++++ b/src/bridge/network/PeerNetwork.cpp
+@@ -11,6 +11,7 @@
+ #include "common/dmr/data/EMB.h"
+ #include "common/dmr/lc/FullLC.h"
+ #include "common/dmr/SlotType.h"
++#include "common/dmr/Sync.h"
+ #include "common/p25/dfsi/DFSIDefines.h"
+ #include "common/p25/dfsi/LC.h"
+ #include "common/json/json.h"
+@@ -84,63 +85,65 @@ bool PeerNetwork::writeP25LDU2(const p25::lc::LC& control, const p25::data::LowS
+ 
+ /* Helper to send a DMR terminator with LC message. */
+ 
+-void PeerNetwork::writeDMRTerminator(dmr::data::NetData& data, uint32_t* seqNo, uint8_t* dmrN, dmr::data::EmbeddedData& embeddedData)
++void PeerNetwork::writeDMRTerminator(dmr::data::NetData& data, uint32_t* seqNo, uint8_t* dmrN, dmr::data::EmbeddedData& embeddedData, bool firstVoiceSync)
+ {
+     using namespace dmr;
+     using namespace dmr::defines;
+ 
+-    uint8_t n = (uint8_t)((*seqNo - 3U) % 6U);
+-    uint32_t fill = 6U - n;
+-
+-    uint8_t* buffer = nullptr;
+-    if (n > 0U) {
+-        for (uint32_t i = 0U; i < fill; i++) {
+-            // generate DMR AMBE data
+-            buffer = new uint8_t[DMR_FRAME_LENGTH_BYTES];
+-            ::memcpy(buffer, SILENCE_DATA, DMR_FRAME_LENGTH_BYTES);
+-
+-            uint8_t lcss = embeddedData.getData(buffer, n);
+-
+-            // generated embedded signalling
+-            data::EMB emb = data::EMB();
+-            emb.setColorCode(0U);
+-            emb.setLCSS(lcss);
+-            emb.encode(buffer);
+-
+-            // generate DMR network frame
+-            data.setData(buffer);
+-
+-            writeDMR(data);
+-
+-            seqNo++;
+-            dmrN++;
+-            delete[] buffer;
+-        }
++    assert(seqNo != nullptr);
++    assert(dmrN != nullptr);
++
++    // seqNo is the NEXT packet sequence and includes the sequence-0 LC header.
++    // Direct mode excludes that header when mapping voice phases. dmrN may
++    // still contain the LAST sent phase, so do not use it as the next phase.
++    const uint32_t headerOffset = firstVoiceSync && *seqNo > 0U ? 1U : 0U;
++    uint8_t n = static_cast<uint8_t>((*seqNo - headerOffset) % 6U);
++    const uint32_t fill = (6U - n) % 6U;
++    uint8_t buffer[DMR_FRAME_LENGTH_BYTES] = {};
++
++    for (uint32_t i = 0U; i < fill; i++) {
++        // SILENCE_DATA includes the two-byte modem tag/length prefix.
++        ::memcpy(buffer, SILENCE_DATA + 2U, DMR_FRAME_LENGTH_BYTES);
++
++        const uint8_t lcss = embeddedData.getData(buffer, n);
++        data::EMB emb = data::EMB();
++        emb.setColorCode(0U);
++        emb.setLCSS(lcss);
++        emb.encode(buffer);
++
++        data.setDataType(DataType::VOICE);
++        data.setN(n);
++        data.setSeqNo(*seqNo);
++        data.setData(buffer);
++        writeDMR(data);
++
++        ++(*seqNo);
++        n = static_cast<uint8_t>((n + 1U) % 6U);
++        *dmrN = n;
+     }
+ 
+-    buffer = new uint8_t[DMR_FRAME_LENGTH_BYTES];
+-
+-    // generate DMR LC
++    ::memset(buffer, 0x00U, sizeof(buffer));
+     lc::LC dmrLC = lc::LC();
+     dmrLC.setFLCO(FLCO::GROUP);
+     dmrLC.setSrcId(data.getSrcId());
+     dmrLC.setDstId(data.getDstId());
+ 
+-    // generate the Slot Type
+     SlotType slotType = SlotType();
+     slotType.setDataType(DataType::TERMINATOR_WITH_LC);
+     slotType.encode(buffer);
+-
+     lc::FullLC fullLC = lc::FullLC();
+     fullLC.encode(dmrLC, buffer, DataType::TERMINATOR_WITH_LC);
++    Sync::addDMRDataSync(buffer, m_duplex);
+ 
+-    // generate DMR network frame
++    // Network metadata determines the Homebrew/RTP end-of-call marker.
++    data.setDataType(DataType::TERMINATOR_WITH_LC);
++    data.setN(0U);
++    data.setSeqNo(*seqNo);
+     data.setData(buffer);
+-
+     writeDMR(data);
+ 
+-    seqNo = 0;
+-    dmrN = 0;
++    *seqNo = 0U;
++    *dmrN = 0U;
+ }
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/src/bridge/network/PeerNetwork.h b/src/bridge/network/PeerNetwork.h
+index 8fe3b8f8..1d645a5c 100644
+--- a/src/bridge/network/PeerNetwork.h
++++ b/src/bridge/network/PeerNetwork.h
+@@ -87,7 +87,7 @@ namespace network
+          * @param dmrN 
+          * @param embeddedData 
+          */
+-        void writeDMRTerminator(dmr::data::NetData& data, uint32_t* seqNo, uint8_t* dmrN, dmr::data::EmbeddedData& embeddedData);
++        void writeDMRTerminator(dmr::data::NetData& data, uint32_t* seqNo, uint8_t* dmrN, dmr::data::EmbeddedData& embeddedData, bool firstVoiceSync = false);
+ 
+     protected:
+         /**
+diff --git a/src/common/network/BaseNetwork.cpp b/src/common/network/BaseNetwork.cpp
+index f1426b56..737de354 100644
+--- a/src/common/network/BaseNetwork.cpp
++++ b/src/common/network/BaseNetwork.cpp
+@@ -56,6 +56,9 @@ BaseNetwork::BaseNetwork(uint32_t peerId, bool duplex, bool debug, bool slot1, b
+     m_rxP25P2Data(NET_RING_BUF_SIZE, "P25 Phase 2 Net Buffer"),
+     m_rxNXDNData(NET_RING_BUF_SIZE, "NXDN Net Buffer"),
+     m_rxAnalogData(NET_RING_BUF_SIZE, "Analog Net Buffer"),
++    m_receiveStreamMetadata(false),
++    m_lastReadDMRStreamId(0U),
++    m_lastReadP25StreamId(0U),
+     m_random(),
+     m_dmrStreamId(nullptr),
+     m_p25StreamId(0U),
+@@ -475,10 +478,96 @@ bool BaseNetwork::writeMaster(FrameQueue::OpcodePair opcode, const uint8_t* data
+     return true;
+ }
+ 
++/* Optional internal RX framing; the network wire payload remains untouched. */
++void BaseNetwork::setReceiveStreamMetadata(bool enabled)
++{
++    if (enabled == m_receiveStreamMetadata)
++        return;
++    m_rxDMRData.clear();
++    m_rxP25Data.clear();
++    m_lastReadDMRStreamId = 0U;
++    m_lastReadP25StreamId = 0U;
++    m_receiveStreamMetadata = enabled;
++}
++
++bool BaseNetwork::enqueueReceiveRecord(RingBuffer<uint8_t>& ring, const uint8_t* payload,
++    uint32_t length, uint32_t streamId)
++{
++    if (payload == nullptr || length == 0U || length > 512U || !ring.hasSpace(length + 6U)) {
++        ring.clear();
++        return false;
++    }
++    uint8_t record[518U];
++    record[0U] = (uint8_t)(streamId >> 24);
++    record[1U] = (uint8_t)(streamId >> 16);
++    record[2U] = (uint8_t)(streamId >> 8);
++    record[3U] = (uint8_t)streamId;
++    record[4U] = (uint8_t)(length >> 8);
++    record[5U] = (uint8_t)length;
++    ::memcpy(record + 6U, payload, length);
++    // One ring write is essential: payload and its stream ID cannot separate.
++    if (!ring.addData(record, length + 6U)) {
++        ring.clear();
++        return false;
++    }
++    return true;
++}
++
++UInt8Array BaseNetwork::readReceiveRecord(RingBuffer<uint8_t>& ring, bool& ret,
++    uint32_t& length, uint32_t& streamId)
++{
++    ret = false;
++    length = 0U;
++    streamId = 0U;
++    if (ring.isEmpty())
++        return nullptr;
++    uint8_t header[6U];
++    if (ring.dataSize() < 6U || !ring.peek(header, 6U)) {
++        ring.clear();
++        return nullptr;
++    }
++    const uint32_t size = ((uint32_t)header[4U] << 8) | header[5U];
++    if (size == 0U || size > 512U || ring.dataSize() < size + 6U) {
++        ring.clear();
++        return nullptr;
++    }
++    UInt8Array payload = std::make_unique<uint8_t[]>(size);
++    if (!ring.get(header, 6U) || !ring.get(payload.get(), size)) {
++        ring.clear();
++        return nullptr;
++    }
++    streamId = ((uint32_t)header[0U] << 24) | ((uint32_t)header[1U] << 16) |
++        ((uint32_t)header[2U] << 8) | header[3U];
++    length = size;
++    ret = true;
++    return payload;
++}
++
++void BaseNetwork::resetTransmitDMR(uint32_t slotNo)
++{
++    assert(slotNo == 1U || slotNo == 2U);
++    m_dmrStreamId[slotNo - 1U] = createStreamId();
++    m_pktSeq = 0U;
++}
++
++void BaseNetwork::resetTransmitP25()
++{
++    m_p25StreamId = createStreamId();
++    m_pktSeq = 0U;
++}
++
+ /* Reads DMR raw frame data from the DMR ring buffer. */
+ 
+ UInt8Array BaseNetwork::readDMR(bool& ret, uint32_t& frameLength)
+ {
++    if (m_receiveStreamMetadata) {
++        ret = false;
++        frameLength = 0U;
++        m_lastReadDMRStreamId = 0U;
++        if (m_status != NET_STAT_RUNNING && m_status != NET_STAT_MST_RUNNING)
++            return nullptr;
++        return readReceiveRecord(m_rxDMRData, ret, frameLength, m_lastReadDMRStreamId);
++    }
+     if (m_status != NET_STAT_RUNNING && m_status != NET_STAT_MST_RUNNING)
+         return nullptr;
+ 
+@@ -567,6 +656,14 @@ bool BaseNetwork::hasDMRData() const
+ 
+ UInt8Array BaseNetwork::readP25(bool& ret, uint32_t& frameLength)
+ {
++    if (m_receiveStreamMetadata) {
++        ret = false;
++        frameLength = 0U;
++        m_lastReadP25StreamId = 0U;
++        if (m_status != NET_STAT_RUNNING && m_status != NET_STAT_MST_RUNNING)
++            return nullptr;
++        return readReceiveRecord(m_rxP25Data, ret, frameLength, m_lastReadP25StreamId);
++    }
+     if (m_status != NET_STAT_RUNNING && m_status != NET_STAT_MST_RUNNING)
+         return nullptr;
+ 
+diff --git a/src/common/network/BaseNetwork.h b/src/common/network/BaseNetwork.h
+index 6c54fd69..460a254e 100644
+--- a/src/common/network/BaseNetwork.h
++++ b/src/common/network/BaseNetwork.h
+@@ -733,6 +733,14 @@ namespace network
+          * @return uint32_t Stream ID.
+          */
+         uint32_t getP25StreamId() const { return m_p25StreamId; }
++
++        /** Optional internal RX record metadata. Configure before open/read. */
++        void setReceiveStreamMetadata(bool enabled);
++        uint32_t getLastReadP25StreamId() const { return m_lastReadP25StreamId; }
++        uint32_t getLastReadDMRStreamId() const { return m_lastReadDMRStreamId; }
++        /** Reset only target TX generation; never discard queued RX records. */
++        void resetTransmitDMR(uint32_t slotNo);
++        void resetTransmitP25();
+         /**
+          * @brief Gets the current P25 Phase 2 stream ID.
+          * @param slotNo P25 Phase 2 slot to get stream ID for.
+@@ -984,6 +992,14 @@ namespace network
+         RingBuffer<uint8_t> m_rxNXDNData;
+         RingBuffer<uint8_t> m_rxAnalogData;
+ 
++        bool m_receiveStreamMetadata;
++        uint32_t m_lastReadDMRStreamId;
++        uint32_t m_lastReadP25StreamId;
++        bool enqueueReceiveRecord(RingBuffer<uint8_t>& ring, const uint8_t* payload,
++            uint32_t length, uint32_t streamId);
++        UInt8Array readReceiveRecord(RingBuffer<uint8_t>& ring, bool& ret,
++            uint32_t& length, uint32_t& streamId);
++
+         std::mt19937 m_random;
+ 
+         uint32_t* m_dmrStreamId;
+diff --git a/src/common/network/Network.cpp b/src/common/network/Network.cpp
+index d4b3586c..0f3ad520 100644
+--- a/src/common/network/Network.cpp
++++ b/src/common/network/Network.cpp
+@@ -34,6 +34,8 @@ using namespace network;
+ 
+ #define MAX_SERVER_DIFF 360ULL // maximum difference in time between a server timestamp and local timestamp in milliseconds
+ 
++static constexpr uint32_t P25_VOICE_IDLE_TIMEOUT_MS = 5000U;
++
+ // ---------------------------------------------------------------------------
+ //  Public Class Members
+ // ---------------------------------------------------------------------------
+@@ -55,6 +57,9 @@ Network::Network(const std::string& address, uint16_t port, uint16_t localPort,
+     m_enabled(false),
+     m_dmrEnabled(dmr),
+     m_p25Enabled(p25),
++    m_p25VoiceOnly(false),
++    m_p25RejectSwitchOver(false),
++    m_p25VoiceIdleMs(0U),
+     m_nxdnEnabled(nxdn),
+     m_analogEnabled(analog),
+     m_updateLookup(updateLookup),
+@@ -139,6 +144,7 @@ void Network::resetP25()
+ {
+     BaseNetwork::resetP25();
+     m_rxP25StreamId = 0U;
++    m_p25VoiceIdleMs = 0U;
+ 
+     if (m_debug)
+         LogDebugEx(LOG_NET, "Network::resetP25()", "reset P25 rx stream ID");
+@@ -293,6 +299,20 @@ void Network::clock(uint32_t ms)
+ 
+     uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+ 
++    // A voice bridge must recover even when its decoder never started a call
++    // (for example, after losing the end of a rejected or incomplete stream).
++    // Do not apply a voice timeout to packet-data clients.
++    if (m_p25VoiceOnly && m_rxP25StreamId != 0U) {
++        if (ms >= P25_VOICE_IDLE_TIMEOUT_MS - m_p25VoiceIdleMs) {
++            LogWarning(LOG_NET, "P25 voice receive stream %u idle for %u ms; releasing stale stream", 
++                m_rxP25StreamId, P25_VOICE_IDLE_TIMEOUT_MS);
++            resetP25();
++        }
++        else {
++            m_p25VoiceIdleMs += ms;
++        }
++    }
++
+     // roll the RTP timestamp if no call is in progress
+     if ((m_status == NET_STAT_RUNNING) &&
+         (m_rxDMRStreamId[0U] == 0U && m_rxDMRStreamId[1U] == 0U) &&
+@@ -448,9 +468,14 @@ void Network::clock(uint32_t ms)
+                             if (length > (int)(DMR_PACKET_LENGTH + PACKET_PAD))
+                                 LogError(LOG_NET, "DMR Stream %u, frame oversized? this shouldn't happen, pktSeq = %u, len = %u", streamId, m_pktSeq, length);
+ 
+-                            uint8_t len = length;
+-                            m_rxDMRData.addData(&len, 1U);
+-                            m_rxDMRData.addData(buffer.get(), len);
++                            if (m_receiveStreamMetadata) {
++                                enqueueReceiveRecord(m_rxDMRData, buffer.get(), (uint32_t)length, streamId);
++                            }
++                            else {
++                                uint8_t len = length;
++                                m_rxDMRData.addData(&len, 1U);
++                                m_rxDMRData.addData(buffer.get(), len);
++                            }
+                         }
+                     }
+                     break;
+@@ -458,6 +483,26 @@ void Network::clock(uint32_t ms)
+                 case NET_SUBFUNC::PROTOCOL_SUBFUNC_P25:                 // Encapsulated P25 data frame
+                     {
+                         if (m_enabled && m_p25Enabled) {
++                            // Filter before latching a receive stream. Audio bridges discard
++                            // HDU/TSDU/PDU without starting their call watchdog, so allowing
++                            // those frames to take the stream lock blocks every later call.
++                            if (m_p25VoiceOnly) {
++                                if (length < 24 || ::memcmp(buffer.get(), "P25D", 4U) != 0)
++                                    break;
++                                if (m_p25RejectSwitchOver && (buffer[14U] & NET_CTRL_SWITCH_OVER) != 0U)
++                                    break;
++                                const uint8_t duid = buffer[22U];
++                                const bool audio = duid == P25DEF::DUID::LDU1 || duid == P25DEF::DUID::LDU2;
++                                const bool end = duid == P25DEF::DUID::TDU || duid == P25DEF::DUID::TDULC;
++                                if (!audio && !end)
++                                    break;
++                                if ((duid == P25DEF::DUID::LDU1 && length < (int)P25_LDU1_PACKET_LENGTH) ||
++                                    (duid == P25DEF::DUID::LDU2 && length < (int)P25_LDU2_PACKET_LENGTH))
++                                    break;
++                                // Late terminators must not reset a different active call.
++                                if (end && m_rxP25StreamId != streamId)
++                                    break;
++                            }
+                             if (m_debug) {
+                                 LogDebug(LOG_NET, "P25, peer = %u, len = %u, pktSeq = %u, streamId = %u", 
+                                     peerId, length, rtpHeader.getSequence(), streamId);
+@@ -528,23 +573,31 @@ void Network::clock(uint32_t ms)
+                                 }
+                             }
+ 
++                            if (m_p25VoiceOnly)
++                                m_p25VoiceIdleMs = 0U;
++
+                             if (m_packetDump)
+                                 Utils::dump(1U, "Network::clock(), Network Rx, P25", buffer.get(), length);
+                             if (length > 512)
+                                 LogError(LOG_NET, "P25 Stream %u, frame oversized? this shouldn't happen, pktSeq = %u, len = %u", streamId, m_pktSeq, length);
+ 
+-                            // P25 frames can be up to 512 bytes, but we need to handle the case where the frame is larger than 255 bytes
+-                            uint8_t len = length;
+-                            if (length > 254) {
+-                                len = 254U;
+-                                m_rxP25Data.addData(&len, 1U);
+-                                len = length - 254U;
+-                                m_rxP25Data.addData(&len, 1U);
+-                            } else {
+-                                m_rxP25Data.addData(&len, 1U);
++                            if (m_receiveStreamMetadata) {
++                                enqueueReceiveRecord(m_rxP25Data, buffer.get(), (uint32_t)length, streamId);
+                             }
++                            else {
++                                // P25 frames can be up to 512 bytes, but we need to handle the case where the frame is larger than 255 bytes
++                                uint8_t len = length;
++                                if (length > 254) {
++                                    len = 254U;
++                                    m_rxP25Data.addData(&len, 1U);
++                                    len = length - 254U;
++                                    m_rxP25Data.addData(&len, 1U);
++                                } else {
++                                    m_rxP25Data.addData(&len, 1U);
++                                }
+ 
+-                            m_rxP25Data.addData(buffer.get(), len);
++                                m_rxP25Data.addData(buffer.get(), len);
++                            }
+                         }
+                     }
+                     break;
+diff --git a/src/common/network/Network.h b/src/common/network/Network.h
+index 185daeaf..8bf131da 100644
+--- a/src/common/network/Network.h
++++ b/src/common/network/Network.h
+@@ -248,6 +248,16 @@ namespace network
+          */
+         void enable(bool enabled);
+ 
++        /**
++         * @brief Restrict P25 reception to voice calls, with bounded stale-stream recovery.
++         * Opt-in for audio bridges only; packet-data clients keep their existing behavior.
++         */
++        void setP25VoiceOnly(bool enabled, bool rejectSwitchOver = false) {
++            m_p25VoiceOnly = enabled;
++            m_p25RejectSwitchOver = rejectSwitchOver;
++            m_p25VoiceIdleMs = 0U;
++        }
++
+         /**
+          * @brief Helper to clear the duplicate connection flag.
+          */
+@@ -313,6 +323,9 @@ namespace network
+ 
+         bool m_dmrEnabled;
+         bool m_p25Enabled;
++        bool m_p25VoiceOnly;
++        bool m_p25RejectSwitchOver;
++        uint32_t m_p25VoiceIdleMs;
+         bool m_nxdnEnabled;
+         bool m_analogEnabled;
+ 
+diff --git a/src/vocoder/AmbeToP25Float.cpp b/src/vocoder/AmbeToP25Float.cpp
+new file mode 100644
+index 00000000..92597e0b
+--- /dev/null
++++ b/src/vocoder/AmbeToP25Float.cpp
+@@ -0,0 +1,330 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include "vocoder/AmbeToP25Float.h"
++#include "vocoder/imbe/ch_decode.h"
++#include "common/p25/P25Defines.h"
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++#include <limits>
++#include <cassert>
++
++namespace {
++constexpr double PI = 3.14159265358979323846;
++#include "SourceGridModelDecode.inc"
++const int RW[36] = {0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,2,0,2,0,2,0,2,0,2,0,2,0,2};
++const int RX[36] = {23,10,22,9,21,8,20,7,19,6,18,5,17,4,16,3,15,2,14,1,13,0,12,10,11,9,10,8,9,7,8,6,7,5,6,4};
++const int RY[36] = {0,2,0,2,0,2,0,2,0,3,0,3,1,3,1,3,1,3,1,3,1,3,1,3,1,3,1,3,1,3,1,3,1,3,1,3};
++const int RZ[36] = {5,3,4,2,3,1,2,0,1,13,0,12,22,11,21,10,20,9,19,8,18,7,17,6,16,5,15,4,14,3,13,2,12,1,11,0};
++
++void unpack(const uint8_t* raw, Word16* frame)
++{
++    const int widths[8] = {12,12,12,12,11,11,11,7};
++    int bit = 0;
++    for (int k = 0; k < 8; ++k) {
++        frame[k] = 0;
++        for (int i = 0; i < widths[k]; ++i, ++bit)
++            frame[k] = static_cast<Word16>((frame[k] << 1) | ((raw[bit / 8] >> (7 - bit % 8)) & 1));
++    }
++}
++void pack(const Word16* frame, uint8_t* raw)
++{
++    const int widths[8] = {12,12,12,12,11,11,11,7};
++    std::memset(raw, 0, 11);
++    int bit = 0;
++    for (int k = 0; k < 8; ++k)
++        for (int i = widths[k] - 1; i >= 0; --i, ++bit)
++            raw[bit / 8] |= static_cast<uint8_t>(((frame[k] >> i) & 1) << (7 - bit % 8));
++}
++bool validModel(const mbe_parms& m)
++{
++    if (m.L < 9 || m.L > 56 || !std::isfinite(m.w0) || m.w0 <= 0.0f ||
++        !std::isfinite(m.gamma))
++        return false;
++    for (int l = 1; l <= m.L; ++l)
++        if (!std::isfinite(m.Ml[l]) || m.Ml[l] < 0.0f ||
++            !std::isfinite(m.log2Ml[l]) || (m.Vl[l] != 0 && m.Vl[l] != 1))
++            return false;
++    return true;
++}
++}
++
++using namespace vocoder;
++#include "ReverseLevelerControl.inc"
++
++AmbeToP25Float::AmbeToP25Float() :
++    m_haveLast(false), m_erasures(0), m_sourceScale(4.0f), m_encodedGain(0.0f), m_deessDb(0.0f),
++    m_levelerConfig(), m_levelerState(), m_levelerResetGeneration(0)
++{
++    reset();
++}
++
++void AmbeToP25Float::resetSource()
++{
++    resetLeveler();
++    std::memset(&m_current, 0, sizeof(m_current));
++    std::memset(&m_previous, 0, sizeof(m_previous));
++    std::memset(&m_unusedEnhanced, 0, sizeof(m_unusedEnhanced));
++    std::memset(&m_lastGood, 0, sizeof(m_lastGood));
++    mbe_initMbeParms(&m_current, &m_previous, &m_unusedEnhanced);
++    m_haveLast = false;
++}
++
++void AmbeToP25Float::reset()
++{
++    resetSource();
++    m_erasures = 0;
++    m_target.reset_model_predictors();
++    m_target.set_gain_adjust(m_encodedGain);
++}
++
++bool AmbeToP25Float::setLevel(float scale, float gain)
++{
++    if (!std::isfinite(scale) || scale <= 0.0f || scale > 64.0f ||
++        !std::isfinite(gain) || gain < -8.0f || gain > 8.0f)
++        return false;
++    m_sourceScale = scale;
++    m_encodedGain = gain;
++    return true;
++}
++
++bool AmbeToP25Float::setDeessDb(float db)
++{
++    if (!std::isfinite(db) || db < 0.0f || db > 2.0f)
++        return false;
++    m_deessDb = db;
++    return true;
++}
++
++void AmbeToP25Float::emitNull(uint8_t* output)
++{
++    std::memcpy(output, p25::defines::NULL_IMBE, 11);
++    Word16 frame[8];
++    unpack(output, frame);
++    const bool tracked = m_target.imbe_track_encoded_model(frame);
++    assert(tracked);
++    (void)tracked;
++}
++
++bool AmbeToP25Float::prepareModel(const mbe_parms& source, IMBE_PARAM& model, Word32* spectralLogs, LevelerMeter* meter)
++{
++    if (!validModel(source))
++        return false;
++    const double sourceF0 = source.w0 * 8000.0 / (2.0 * PI);
++    const double period = 8000.0 / sourceF0;
++    const int b0 = std::max(0, std::min(207, static_cast<int>(std::floor(2.0 * period - 39.0))));
++    model = IMBE_PARAM();
++    Word16 pitchFrame[8] = {};
++    pitchFrame[0] = static_cast<Word16>((b0 & 0xFC) << 4);
++    pitchFrame[7] = static_cast<Word16>((b0 & 3) << 1);
++    decode_frame_vector(&model, pitchFrame);
++    const int L = model.num_harms;
++    if (L < 9 || L > 56)
++        return false;
++    const double targetF0 = static_cast<double>(model.fund_freq) / 2147483648.0 * 4000.0;
++    double sourceEnergy = 0.0, mappedEnergy = 0.0;
++    double sourceV = 0.0;
++    if (meter != nullptr) *meter = LevelerMeter();
++    double energy[56] = {}, voicedEnergy[56] = {};
++    for (int l = 1; l <= source.L; ++l) {
++        sourceEnergy += static_cast<double>(source.Ml[l]) * source.Ml[l];
++        if (meter != nullptr && source.Vl[l] != 0)
++            sourceV += static_cast<double>(source.Ml[l]) * source.Ml[l];
++    }
++    if (!std::isfinite(sourceEnergy) || sourceEnergy <= 0.0)
++        return false;
++    for (int i = 0; i < L; ++i) {
++        double index = (i + 1) * targetF0 / sourceF0 - 1.0;
++        index = std::max(0.0, std::min(static_cast<double>(source.L - 1), index));
++        const int lo = static_cast<int>(std::floor(index));
++        const int hi = std::min(source.L - 1, lo + 1);
++        const double a = index - lo;
++        const double low = static_cast<double>(source.Ml[lo + 1]) * source.Ml[lo + 1];
++        const double high = static_cast<double>(source.Ml[hi + 1]) * source.Ml[hi + 1];
++        energy[i] = (1.0 - a) * low + a * high;
++        voicedEnergy[i] = (1.0 - a) * low * (source.Vl[lo + 1] != 0) +
++            a * high * (source.Vl[hi + 1] != 0);
++        mappedEnergy += energy[i];
++    }
++    const double energyScale = mappedEnergy > 0.0 ? std::sqrt(sourceEnergy / mappedEnergy) : 1.0;
++    double bandV[12] = {}, bandU[12] = {};
++    int bandVoiced[12] = {};
++    for (int i = 0; i < L; ++i) {
++        const int group = std::min(i / 3, 11);
++        bandV[group] += voicedEnergy[i];
++        bandU[group] += energy[i] - voicedEnergy[i];
++    }
++    int b1 = 0;
++    for (int group = 0; group < model.num_bands; ++group) {
++        bandVoiced[group] = bandV[group] > bandU[group];
++        b1 = (b1 << 1) | bandVoiced[group];
++    }
++    model.b_vec[1] = static_cast<Word16>(b1);
++    const double nominalBaseScale = meter != nullptr ? std::exp2(-static_cast<double>(m_encodedGain)) : 1.0;
++    if (meter != nullptr) {
++        meter->sourceVoicedFraction = sourceV / sourceEnergy;
++        meter->omega = static_cast<double>(model.fund_freq) / 2147483648.0 * PI;
++    }
++    for (int i = 0; i < L; ++i) {
++        double shapedEnergy = energy[i];
++        const double hz = (i + 1) * targetF0;
++        if (m_deessDb > 0.0f && hz > 2200.0 && energy[i] > voicedEnergy[i]) {
++            const double t = std::max(0.0, std::min(1.0, (hz - 2200.0) / 1200.0));
++            const double smooth = t * t * (3.0 - 2.0 * t);
++            const double attenuation = std::pow(10.0, -static_cast<double>(m_deessDb) * smooth / 10.0);
++            // Keep original grouping and conservation scale. Only source UV
++            // power is reduced; no global renormalization can boost V/low bands.
++            shapedEnergy = voicedEnergy[i] + (energy[i] - voicedEnergy[i]) * attenuation;
++        }
++        const double physical = std::sqrt(shapedEnergy) * energyScale * m_sourceScale / 4.0;
++        if (!std::isfinite(physical) || physical <= 0.0)
++            return false;
++        const double logValue = std::log2(physical) * 4194304.0;
++        if (logValue < std::numeric_limits<Word32>::min() || logValue > std::numeric_limits<Word32>::max())
++            return false;
++        spectralLogs[i] = static_cast<Word32>(std::llround(logValue));
++        model.v_uv_dsn[i] = static_cast<Word16>(bandVoiced[std::min(i / 3, 11)]);
++        model.l_uv += model.v_uv_dsn[i] == 0;
++        if (meter != nullptr) {
++            const double aBase = physical * nominalBaseScale;
++            if (model.v_uv_dsn[i] != 0) { meter->EV += aBase * aBase; meter->SV += aBase; }
++            else meter->EU += aBase * aBase;
++        }
++    }
++    model.ref_pitch = static_cast<Word16>(128 * b0 + 5056);
++    model.b_vec[L + 2] = 0;
++    if (meter != nullptr)
++        meter->targetVoicedFraction = meter->EV + meter->EU > 0.0 ? meter->EV / (meter->EV + meter->EU) : 0.0;
++    return true;
++}
++
++bool AmbeToP25Float::encodePreparedModel(IMBE_PARAM& model, const Word32* spectralLogs, uint8_t* output, float gain)
++{
++    Word16 frame[8] = {};
++    m_target.set_gain_adjust(gain);
++    if (!m_target.imbe_encode_model_log(&model, spectralLogs, frame))
++        return false;
++    pack(frame, output);
++    return true;
++}
++
++bool AmbeToP25Float::encodeModel(const mbe_parms& source, uint8_t* output)
++{
++    IMBE_PARAM model = {};
++    Word32 logs[56] = {};
++    LevelerMeter meter;
++    if (!prepareModel(source, model, logs, m_levelerConfig.enabled ? &meter : nullptr))
++        return false;
++    if (!m_levelerConfig.enabled)
++        return encodePreparedModel(model, logs, output, m_encodedGain);
++    // This entry is used for lastGood concealment and private model probes.
++    // It has no accepted-current-source authority to learn a station level.
++    LevelerContext context;
++    context.freeze = true;
++    LevelerState next = m_levelerState;
++    proposeLeveler(next, meter, context);
++    if (!encodePreparedModel(model, logs, output, effectiveLevelerGain(next)))
++        return false;
++    finishLeveler(next, meter, context);
++    m_levelerState = next;
++    return true;
++}
++
++AmbeToP25Float::Result AmbeToP25Float::erasure(uint8_t* output, unsigned errors)
++{
++    if (m_erasures < 255U)
++        ++m_erasures;
++    if (m_haveLast && m_erasures <= 3U && encodeModel(m_lastGood, output))
++        return {Status::Concealed, errors, m_erasures, false};
++    resetSource();
++    emitNull(output);
++    if (m_levelerConfig.enabled) m_levelerState.reason = LevelerReason::Muted;
++    return {Status::Muted, errors, m_erasures, false};
++}
++
++AmbeToP25Float::Result AmbeToP25Float::convert(const uint8_t* input, uint8_t* output, bool encrypted)
++{
++    assert(output != nullptr);
++    if (encrypted) {
++        resetSource();
++        m_erasures = 0;
++        emitNull(output);
++        if (m_levelerConfig.enabled) m_levelerState.reason = LevelerReason::Encrypted;
++        return {Status::EncryptedMuted, 0, 0, false};
++    }
++    if (input == nullptr)
++        return erasure(output, 0);
++    char frame[4][24] = {}, bits[49] = {};
++    for (int i = 0; i < 36; ++i) {
++        frame[RW[i]][RX[i]] = (input[(2 * i) / 8] >> (7 - (2 * i) % 8)) & 1;
++        frame[RY[i]][RZ[i]] = (input[(2 * i + 1) / 8] >> (7 - (2 * i + 1) % 8)) & 1;
++    }
++    int errors = mbe_eccAmbe3600x2450C0(frame);
++    mbe_demodulateAmbe3600x2450Data(frame);
++    errors += mbe_eccAmbe3600x2450Data(frame, bits);
++    if (errors > 3)
++        return erasure(output, static_cast<unsigned>(errors));
++    int b0 = 0;
++    for (int index : {0,1,2,3,37,38,39})
++        b0 = (b0 << 1) | bits[index];
++    if (b0 == 126 || b0 == 127) {
++        resetSource();
++        m_erasures = 0;
++        emitNull(output);
++        if (m_levelerConfig.enabled) m_levelerState.reason = LevelerReason::Tone;
++        return {Status::ToneMuted, static_cast<unsigned>(errors), 0, false};
++    }
++    if (b0 >= 120 && b0 <= 123)
++        return erasure(output, static_cast<unsigned>(errors));
++    // The source decoder uses the legacy PRBA bit-field convention. Adapt
++    // only its local model input; retain original bits for FEC and guards.
++    char modelBits[49];
++    std::memcpy(modelBits, bits, sizeof(modelBits));
++    modelBits[40] = bits[43];
++    modelBits[41] = bits[40];
++    modelBits[42] = bits[41];
++    modelBits[43] = bits[42];
++    mbe_parms trial = m_current, previous = m_previous;
++    int b1 = 0;
++    for (int index : {4,5,6,7,35})
++        b1 = (b1 << 1) | bits[index];
++    // For the proven native codebook rows18..31 no band carries ordinary
++    // code1 and at least one carries fixed-frequency code2. Original type/FEC
++    // guards above retain priority. The exported model remains binary V/U;
++    // only its raw spectral grid/history is corrected here.
++    const bool nativeExtraGrid = b0 < 120 && b1 >= 18;
++    const bool nativeGridHistory = b0 < 120 && (nativeExtraGrid || previous.L == 56);
++    const int decodeStatus = nativeGridHistory ?
++        decodeSourceGridParms(modelBits, &trial, &previous, nativeExtraGrid) :
++        mbe_decodeAmbe2450Parms(modelBits, &trial, &previous);
++    if (decodeStatus != 0 || !validModel(trial))
++        return erasure(output, static_cast<unsigned>(errors));
++    if (!m_levelerConfig.enabled) {
++        if (!encodeModel(trial, output))
++            return erasure(output, static_cast<unsigned>(errors));
++    } else {
++        IMBE_PARAM model = {};
++        Word32 logs[56] = {};
++        LevelerMeter meter;
++        if (!prepareModel(trial, model, logs, &meter))
++            return erasure(output, static_cast<unsigned>(errors));
++        LevelerContext context;
++        context.ordinary = b0 < 120 && b1 < 18;
++        context.extra = nativeExtraGrid;
++        context.codedSilence = b0 == 124 || b0 == 125;
++        context.fec = static_cast<unsigned>(errors);
++        context.freeze = errors != 0;
++        LevelerState next = m_levelerState;
++        proposeLeveler(next, meter, context);
++        if (!encodePreparedModel(model, logs, output, effectiveLevelerGain(next)))
++            return erasure(output, static_cast<unsigned>(errors));
++        finishLeveler(next, meter, context);
++        m_levelerState = next;
++    }
++    m_current = trial;
++    mbe_moveMbeParms(&m_current, &m_previous);
++    m_lastGood = trial;
++    m_haveLast = true;
++    m_erasures = 0;
++    return {b0 == 124 || b0 == 125 ? Status::CodedSilence : Status::Voice,
++        static_cast<unsigned>(errors), 0, true};
++}
+diff --git a/src/vocoder/AmbeToP25Float.h b/src/vocoder/AmbeToP25Float.h
+new file mode 100644
+index 00000000..f6ef7692
+--- /dev/null
++++ b/src/vocoder/AmbeToP25Float.h
+@@ -0,0 +1,120 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#if !defined(__AMBE_TO_P25_FLOAT_H__)
++#define __AMBE_TO_P25_FLOAT_H__
++
++#include "common/Defines.h"
++#include "vocoder/mbe.h"
++#include "vocoder/imbe/imbe_vocoder.h"
++#include <cstdint>
++
++namespace vocoder {
++
++/** Clear AMBE+2 model -> IMBE model requantizer. One instance belongs to one call.
++ * No PCM synthesis/analysis is performed. Source Ml is physical linear amplitude;
++ * sourceScaleQ14_2=4 converts to the fixed codec's historical Q14.2 reference.
++ * The quantizer receives log2(physical amplitude) as signed Q10.22 directly.
++ */
++class HOST_SW_API AmbeToP25Float {
++public:
++    enum class Status { Voice, CodedSilence, Concealed, Muted, ToneMuted, EncryptedMuted };
++    struct Result {
++        Status status;
++        unsigned fecCorrections;
++        unsigned consecutiveErasures;
++        bool sourceAccepted;
++    };
++
++    // Optional per-call station level control. Result and the original object
++    // prefix remain unchanged; all header-dependent owners must be rebuilt.
++    struct LevelerConfig {
++        bool enabled = false;
++        float targetDbfs = -29.5f;
++        float maxBoostDb = 12.0f;
++        float maxCutDb = 18.0f;
++    };
++    enum class LevelerReason : unsigned {
++        Disabled, Bootstrap, Speech, Unvoiced, Extra, Fec, CodedSilence,
++        Concealment, Muted, Tone, Encrypted, LowEnergy, SaturatedFeedback
++    };
++    struct LevelerDiagnostics {
++        bool enabled, estimateReady, noiseTrusted, learnedThisFrame;
++        bool noiseObservedThisFrame, peakLimited, noiseLimited;
++        bool ceilingUnsatisfied, fadeActive, feedbackSaturated, predictedSpeechEligible;
++        uint64_t framesEncoded, confirmedVoiceFrames, learnedWindows, resetGeneration;
++        unsigned consecutiveVoiceFrames, noiseObservations, nonVoiceMs;
++        double levelGainDb, appliedGainDb, estimatedEVBase, estimatedLevelDbfs;
++        double noiseFloorDbfs, boostCapDb, predictedPeakBound, peakCapDb;
++        double sourceVoicedFraction, targetPredVoicedFraction, targetWireVoicedFraction;
++        double feedbackEVBase, noisePowerBase;
++        double activityGainDb, noiseAllowedGainDb, peakAllowedGainDb;
++        bool activityRecovering, normalControllerTick;
++        LevelerReason reason;
++    };
++
++    AmbeToP25Float();
++    AmbeToP25Float(const AmbeToP25Float&) = delete;
++    AmbeToP25Float& operator=(const AmbeToP25Float&) = delete;
++    void reset();
++    bool setLevel(float sourceScaleQ14_2, float encodedLog2Gain);
++    bool setDeessDb(float maximumDb);
++    bool setLevelerConfig(const LevelerConfig& config);
++    LevelerDiagnostics getLevelerDiagnostics() const;
++    Result convert(const uint8_t ambe[9], uint8_t imbe[11], bool encrypted = false);
++
++private:
++    mbe_parms m_current, m_previous, m_unusedEnhanced, m_lastGood;
++    imbe_vocoder m_target;
++    bool m_haveLast;
++    unsigned m_erasures;
++    float m_sourceScale, m_encodedGain, m_deessDb;
++
++    // Appended controller state only: no storage borrowed from MBE predictors.
++    struct LevelerMeter {
++        double sourceVoicedFraction = 0, targetVoicedFraction = 0;
++        double EV = 0, EU = 0, SV = 0, omega = 0;
++    };
++    struct LevelerContext {
++        bool ordinary = false, codedSilence = false, extra = false;
++        bool freeze = false;
++        unsigned fec = 0;
++    };
++    struct LevelerState {
++        double levelGainDb = 0, appliedGainDb = 0, estimateEV = 0;
++        double activityGainDb = 0, noiseAllowedGainDb = 6, peakAllowedGainDb = 12;
++        bool activityRecovering = false, normalControllerTick = false;
++        double voicePower[4] = {}, peakSV[3] = {}, peakWU[3] = {};
++        unsigned voicePosition = 0, voiceCount = 0, voiceStreak = 0;
++        unsigned peakPosition = 0, peakCount = 0, nonVoiceMs = 0;
++        uint64_t confirmedVoice = 0, learnedWindows = 0, frames = 0;
++        bool estimateReady = false;
++        double noiseFloorDbfs = -90.30899869919436;
++        double noiseFloorRms = 0.0;
++        unsigned noiseObservations = 0;
++        bool fading = false;
++        double fadeMs = 0, fadeLevelStart = 0, fadeAppliedStart = 0;
++        bool learned = false, noiseObserved = false, peakLimited = false;
++        bool noiseLimited = false, ceilingUnsatisfied = false, saturated = false;
++        bool predictedEligible = false;
++        double boostCapDb = 6, peakBound = 1024, peakCapDb = 27.399;
++        double sourceVoicedFraction = 0, targetPredVoicedFraction = 0;
++        double targetWireVoicedFraction = 0, feedbackEVBase = 0, noisePowerBase = 0;
++        LevelerReason reason = LevelerReason::Disabled;
++    };
++    LevelerConfig m_levelerConfig;
++    LevelerState m_levelerState;
++    uint64_t m_levelerResetGeneration;
++
++    void resetSource();
++    void emitNull(uint8_t imbe[11]);
++    bool encodeModel(const mbe_parms& source, uint8_t imbe[11]);
++    bool prepareModel(const mbe_parms& source, IMBE_PARAM& model, Word32* logs, LevelerMeter* meter);
++    bool encodePreparedModel(IMBE_PARAM& model, const Word32* logs, uint8_t* output, float gain);
++    void resetLeveler();
++    double levelerBoostCap(const LevelerState& state) const;
++    void proposeLeveler(LevelerState& state, const LevelerMeter& meter, const LevelerContext& context) const;
++    void finishLeveler(LevelerState& state, const LevelerMeter& meter, const LevelerContext& context);
++    float effectiveLevelerGain(LevelerState& state) const;
++    Result erasure(uint8_t imbe[11], unsigned errors);
++};
++}
++#endif
 diff --git a/src/vocoder/MBEEncoder.cpp b/src/vocoder/MBEEncoder.cpp
-index de5152ff..fdd33d60 100644
+index de5152ff..112dfeb7 100644
 --- a/src/vocoder/MBEEncoder.cpp
 +++ b/src/vocoder/MBEEncoder.cpp
-@@ -181,7 +181,7 @@ static void encodeAMBE(const IMBE_PARAM* imbe_param, int b[], mbe_parms* cur_mp,
+@@ -604,10 +604,8 @@ void MBEEncoder::encodeBits(uint8_t* bits, uint8_t* codeword)
+         uint8_t rawAmbe[9U];
+         ::memset(rawAmbe, 0x00U, 9U);
  
-     // ref_pitch is Q8_8 in range 19.875 - 123.125
-     int b0_i = (imbe_param->ref_pitch >> 5) - 159;
--    if (b0_i < 0 || b0_i > b0_lmax) {
-+    if (b0_i < 0 || b0_i >= b0_lmax) {
-         fprintf(stderr, "encode error b0_i %d\n", b0_i);
-         return;
-     }
-@@ -195,7 +195,7 @@ static void encodeAMBE(const IMBE_PARAM* imbe_param, int b[], mbe_parms* cur_mp,
-             b0_i++;
-         else if (L > imbe_param->num_harms)
-             b0_i--;
--        if (b0_i < 0 || b0_i > b0_lmax) {
-+        if (b0_i < 0 || b0_i >= b0_lmax) {
-             fprintf(stderr, "encode error2 b0_i %d\n", b0_i);
-             return;
+-        for (int i = 0; i < 9; ++i) {
+-            for (int j = 0; j < 8; ++j) {
+-                rawAmbe[i] |= (bits[(i * 8) + j] << (7 - j));
+-            }
++        for (uint32_t i = 0U; i < 49U; ++i) {
++            rawAmbe[i / 8U] |= (uint8_t)((bits[i] & 1U) << (7U - (i % 8U)));
          }
+ 
+         // build DMR AMBE bytes
+@@ -701,10 +699,8 @@ void MBEEncoder::encode(int16_t* samples, uint8_t* codeword)
+         uint8_t rawAmbe[9U];
+         ::memset(rawAmbe, 0x00U, 9U);
+ 
+-        for (int i = 0; i < 7; ++i) {
+-            for (int j = 0; j < 8; ++j) {
+-                rawAmbe[i] |= (bits[(i * 8) + j] << (7 - j));
+-            }
++        for (uint32_t i = 0U; i < 49U; ++i) {
++            rawAmbe[i / 8U] |= (uint8_t)((bits[i] & 1U) << (7U - (i % 8U)));
+         }
+ 
+         // build DMR AMBE bytes
+diff --git a/src/vocoder/P25ToAmbeFloat.cpp b/src/vocoder/P25ToAmbeFloat.cpp
+new file mode 100644
+index 00000000..ada7dab8
+--- /dev/null
++++ b/src/vocoder/P25ToAmbeFloat.cpp
+@@ -0,0 +1,157 @@
++#include "P25ToAmbeFloat.h"
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++#include <limits>
++
++// Existing AMBE quantizer, copied for review with float-amplitude access and
++// numerical log guard only. This converter calls no PCM synthesis or analysis.
++#include "P25ToAmbeFloatQuantizer.inc"
++
++namespace vocoder {
++
++namespace {
++constexpr std::array<uint8_t, 9> SILENCE = {
++    0xb9, 0xe8, 0x81, 0x52, 0x61, 0x73, 0x00, 0x2a, 0x6b
++};
++float magnitude(float hz, float cutoff) {
++    if (cutoff <= 0) return 1;
++    const double t = std::tan(M_PI * hz / 8000.0) / std::tan(M_PI * cutoff / 8000.0);
++    return static_cast<float>(1.0 / std::sqrt(1.0 + t*t*t*t));
++}
++}
++
++P25ToAmbeFloat::P25ToAmbeFloat() : P25ToAmbeFloat(Config{}) {}
++P25ToAmbeFloat::P25ToAmbeFloat(Config config) : m_config(config) {
++    m_configValid = std::isfinite(config.gain) && std::isfinite(config.scale) &&
++        config.scale > 0 && std::isfinite(config.cutoffHz) &&
++        (config.cutoffHz == 0 || (config.cutoffHz > 0 && config.cutoffHz < 4000)) &&
++        std::isfinite(config.amplitudeFloor) && config.amplitudeFloor > 0 &&
++        std::isfinite(config.deessMaxDb) && config.deessMaxDb >= 0 && config.deessMaxDb <= 2 &&
++        std::isfinite(config.deessStartHz) && std::isfinite(config.deessFullHz) &&
++        config.deessStartHz >= 2200 && config.deessFullHz > config.deessStartHz &&
++        config.deessFullHz < 4000;
++    resetCall();
++}
++void P25ToAmbeFloat::resetSource() {
++    m_source = {}; m_sourcePrevious = {}; m_sourceEnhanced = {};
++    mbe_initMbeParms(&m_source, &m_sourcePrevious, &m_sourceEnhanced);
++}
++void P25ToAmbeFloat::resetCall() {
++    resetSource();
++    m_target = {}; m_targetPrevious = {}; m_targetEnhanced = {};
++    mbe_initMbeParms(&m_target, &m_targetPrevious, &m_targetEnhanced);
++    m_haveLast = false; m_erasureCount = 0; m_last = {};
++}
++void P25ToAmbeFloat::setEnabled(bool enabled) {
++    if (enabled != m_enabled) { resetCall(); m_enabled = enabled; }
++}
++P25ToAmbeFloat::Status P25ToAmbeFloat::clear(Frame& out, Status status) {
++    out.bytes.fill(0); out.status = status; return status;
++}
++bool P25ToAmbeFloat::encodeModel(const Model& in, Frame& out) {
++    if (in.harmonics < 9 || in.harmonics > 56) return false;
++    const int count = sizeof(b0_lookup) / sizeof(b0_lookup[0]);
++    int index = (in.pitch >> 5) - 159, steps = 0;
++    if (index < 0 || index >= count) return false;
++    while (static_cast<int>(AmbeLtable[b0_lookup[index]]) != in.harmonics) {
++        index += AmbeLtable[b0_lookup[index]] < in.harmonics ? 1 : -1;
++        if (index < 0 || index >= count || ++steps > count) return false;
++    }
++    IMBE_PARAM model{};
++    model.num_harms = in.harmonics; model.ref_pitch = in.pitch;
++    for (int i = 0; i < in.harmonics; ++i) {
++        const double power = static_cast<double>(in.amplitudes[i]) * in.amplitudes[i];
++        if (!std::isfinite(in.amplitudes[i]) || in.amplitudes[i] < 0 ||
++            power > std::numeric_limits<float>::max()) return false;
++        model.v_uv_dsn[i] = in.voicing[i];
++    }
++    // Transactional target predictor: commit only a complete emitted word.
++    mbe_parms target = m_target, previous = m_targetPrevious;
++    int b[9] = {};
++    encodeAMBEFloat(&model, in.amplitudes.data(), in.voicingWeights.data(), m_config.amplitudeFloor,
++        b, &target, &previous, m_config.gain);
++    uint8_t bits[49] = {}, packed[9] = {};
++    encode49bit(bits, b);
++    for (int i = 0; i < 49; ++i) packed[i/8] |= bits[i] << (7-i%8);
++    encodeDmrAMBE(packed, out.bytes.data());
++    m_target = target; m_targetPrevious = previous;
++    return true;
++}
++P25ToAmbeFloat::Status P25ToAmbeFloat::silence(Frame& out, Status status) {
++    // Native AMBE class-2 renders comfort noise but retains the previous
++    // speech coder predictor (L, gamma and log2Ml). These are the only
++    // previous-state fields consumed by encodeAMBEFloat. Do not equate this
++    // projection with the receiver's changing render flags/class/phase.
++    out.bytes = SILENCE; out.status = status; return status;
++}
++P25ToAmbeFloat::Status P25ToAmbeFloat::convert(
++    const uint8_t* raw88, std::size_t length, bool encrypted, Frame& out) {
++    clear(out, Status::Disabled);
++    if (!m_enabled) return out.status;
++    if (!m_configValid) return clear(out, Status::RejectedConfig);
++    if (encrypted) { resetCall(); return clear(out, Status::RejectedEncrypted); }
++    if (raw88 == nullptr || length != 11) return clear(out, Status::RejectedSize);
++    char bits[88];
++    for (int i = 0; i < 88; ++i) bits[i] = (raw88[i/8] >> (7-i%8)) & 1;
++    int b0 = 0;
++    for (int i = 0; i < 6; ++i) b0 = (b0 << 1) | bits[i];
++    b0 = (b0 << 2) | (bits[85] << 1) | bits[86];
++    if (b0 >= 216 && b0 <= 219) {
++        resetSource(); m_haveLast = false; m_erasureCount = 0;
++        return silence(out, Status::Silence);
++    }
++    if (b0 > 207) return clear(out, Status::RejectedPitch);
++    // Rejected input must not partially alter spectral predictor history.
++    mbe_parms source = m_source, previous = m_sourcePrevious;
++    if (mbe_decodeImbe4400Parms(bits, &source, &previous) != 0)
++        return clear(out, Status::RejectedModel);
++    Model model; model.harmonics = source.L;
++    model.pitch = static_cast<int16_t>(std::max(5088, std::min(31520, b0*128+5056)));
++    if (model.harmonics < 9 || model.harmonics > 56)
++        return clear(out, Status::RejectedModel);
++    for (int i = 0; i < model.harmonics; ++i) {
++        model.voicing[i] = source.Vl[i+1];
++        const float hz = static_cast<float>((i+1)*8000.0 / (static_cast<double>(model.pitch)/256.0));
++        model.amplitudes[i] = 4.0f * source.Ml[i+1] * m_config.scale * magnitude(hz, m_config.cutoffHz);
++        // Keep pitch and the selected AMBE voicing codebook independent of de-essing.
++        model.voicingWeights[i] = model.amplitudes[i];
++        if (m_config.deessMaxDb > 0 && model.voicing[i] == 0) {
++            const float sourceHz = source.w0 * static_cast<float>(i+1) * 8000.0f / static_cast<float>(2.0 * M_PI);
++            float t = (sourceHz - m_config.deessStartHz) / (m_config.deessFullHz - m_config.deessStartHz);
++            t = std::max(0.0f, std::min(1.0f, t));
++            t = t*t*(3.0f - 2.0f*t);
++            model.amplitudes[i] *= std::pow(10.0f, -m_config.deessMaxDb * t / 20.0f);
++        }
++    }
++    if (!encodeModel(model, out)) return clear(out, Status::RejectedModel);
++    m_source = source; mbe_moveMbeParms(&source, &m_sourcePrevious);
++    m_last = model; m_haveLast = true; m_erasureCount = 0;
++    out.status = Status::Voice; return out.status;
++}
++P25ToAmbeFloat::Status P25ToAmbeFloat::silenceFrame(Frame& out) {
++    clear(out, Status::Disabled);
++    if (!m_enabled) return out.status;
++    if (!m_configValid) return clear(out, Status::RejectedConfig);
++    resetSource(); m_haveLast = false; m_erasureCount = 0;
++    return silence(out, Status::Silence);
++}
++P25ToAmbeFloat::Status P25ToAmbeFloat::idleFrame(Frame& out) {
++    clear(out, Status::Disabled);
++    if (!m_enabled) return out.status;
++    if (!m_configValid) return clear(out, Status::RejectedConfig);
++    return silence(out, Status::Silence);
++}
++P25ToAmbeFloat::Status P25ToAmbeFloat::concealErasure(Frame& out) {
++    clear(out, Status::Disabled);
++    if (!m_enabled) return out.status;
++    if (!m_configValid) return clear(out, Status::RejectedConfig);
++    if (m_haveLast && m_erasureCount < 3) {
++        if (!encodeModel(m_last, out)) return clear(out, Status::RejectedModel);
++        ++m_erasureCount; out.status = Status::Concealed; return out.status;
++    }
++    resetSource(); m_haveLast = false;
++    return silence(out, Status::Muted);
++}
++
++} // namespace vocoder
+diff --git a/src/vocoder/P25ToAmbeFloat.h b/src/vocoder/P25ToAmbeFloat.h
+new file mode 100644
+index 00000000..e308472a
+--- /dev/null
++++ b/src/vocoder/P25ToAmbeFloat.h
+@@ -0,0 +1,70 @@
++#pragma once
++#include <array>
++#include <cstddef>
++#include <cstdint>
++extern "C" {
++#include "vocoder/mbe.h"
++}
++
++// Stateful clear-P25 parameter to AMBE conversion; disabled until configured.
++namespace vocoder {
++class P25ToAmbeFloat {
++public:
++    struct Config {
++        float gain = 1.5f;
++        float scale = 0.9f;
++        float cutoffHz = 3300.0f;
++        float amplitudeFloor = 1.0e-6f;
++        float deessMaxDb = 0.0f;
++        float deessStartHz = 2200.0f;
++        float deessFullHz = 3400.0f;
++    };
++    enum class Status {
++        Disabled, Voice, Silence, Concealed, Muted,
++        RejectedSize, RejectedPitch, RejectedEncrypted, RejectedConfig, RejectedModel
++    };
++    struct Frame {
++        std::array<uint8_t, 9> bytes{};
++        Status status = Status::Disabled;
++        bool hasFrame() const {
++            return status == Status::Voice || status == Status::Silence ||
++                status == Status::Concealed || status == Status::Muted;
++        }
++    };
++
++    P25ToAmbeFloat();
++    explicit P25ToAmbeFloat(Config config);
++    void setEnabled(bool enabled);
++    bool enabled() const { return m_enabled; }
++    void resetCall();
++    // encrypted comes from the owning call/LC classification; no decryption here.
++    Status convert(const uint8_t* raw88, std::size_t length, bool encrypted, Frame& out);
++    // Caller chooses this explicitly for a lost/rejected expected voice frame.
++    // Repeat at most three models (60 ms), then emit canonical silence.
++    Status concealErasure(Frame& out);
++    // Canonical silence also advances the target predictor; used for final slot padding.
++    Status silenceFrame(Frame& out);
++
++private:
++    struct Model {
++        int harmonics = 0;
++        int16_t pitch = 0;
++        std::array<int16_t, 56> voicing{};
++        std::array<float, 56> amplitudes{};
++        std::array<float, 56> voicingWeights{};
++    };
++    Config m_config;
++    bool m_enabled = false;
++    bool m_configValid = false;
++    bool m_haveLast = false;
++    unsigned m_erasureCount = 0;
++    Model m_last;
++    mbe_parms m_source{}, m_sourcePrevious{}, m_sourceEnhanced{};
++    mbe_parms m_target{}, m_targetPrevious{}, m_targetEnhanced{};
++    static Status clear(Frame& out, Status status);
++    void resetSource();
++    bool encodeModel(const Model& model, Frame& out);
++    Status silence(Frame& out, Status status);
++};
++
++} // namespace vocoder
+diff --git a/src/vocoder/P25ToAmbeFloatQuantizer.inc b/src/vocoder/P25ToAmbeFloatQuantizer.inc
+new file mode 100644
+index 00000000..03a22166
+--- /dev/null
++++ b/src/vocoder/P25ToAmbeFloatQuantizer.inc
+@@ -0,0 +1,577 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Digital Voice Modem - MBE Vocoder
++ * GPLv2 Open Source. Use is subject to license terms.
++ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
++ *
++ *  Copyright (C) 2019-2021 Doug McLain
++ *  Copyright (C) 2021 Bryan Biedenkapp, N2PLL
++ *
++ */
++#define _USE_MATH_DEFINES
++#include <math.h>
++
++/*
++ * AMBE halfrate encoder - Copyright 2016 Max H. Parke KA1RBI
++ * Copyright (C) 2021 by Bryan Biedenkapp N2PLL
++ *
++ * This file is part of OP25 and part of GNU Radio
++ *
++ * This is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3, or (at your option)
++ * any later version.
++ *
++ * This software is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this software; see the file COPYING.  If not, write to
++ * the Free Software Foundation, Inc., 51 Franklin Street,
++ * Boston, MA 02110-1301, USA.
++ */
++
++#include "common/Defines.h"
++#include "common/edac/AMBEFEC.h"
++#include "common/edac/Golay24128.h"
++#include "common/Utils.h"
++#include "vocoder/MBEEncoder.h"
++#include "vocoder/ambe3600x2450_const.h"
++#include "vocoder/ambe3600x2400_const.h"
++
++#include <cassert>
++
++using namespace edac;
++using namespace vocoder;
++
++#ifdef _MSC_VER
++#pragma warning(disable: 4244)
++#endif
++
++// ---------------------------------------------------------------------------
++//  Constants
++// ---------------------------------------------------------------------------
++
++static const short b0_lookup[] = {
++    0, 0, 0, 1, 1, 2, 2, 2,
++    3, 3, 4, 4, 4, 5, 5, 5,
++    6, 6, 7, 7, 7, 8, 8, 8,
++    9, 9, 9, 10, 10, 11, 11, 11,
++    12, 12, 12, 13, 13, 13, 14, 14,
++    14, 15, 15, 15, 16, 16, 16, 17,
++    17, 17, 17, 18, 18, 18, 19, 19,
++    19, 20, 20, 20, 21, 21, 21, 21,
++    22, 22, 22, 23, 23, 23, 24, 24,
++    24, 24, 25, 25, 25, 25, 26, 26,
++    26, 27, 27, 27, 27, 28, 28, 28,
++    29, 29, 29, 29, 30, 30, 30, 30,
++    31, 31, 31, 31, 31, 32, 32, 32,
++    32, 33, 33, 33, 33, 34, 34, 34,
++    34, 35, 35, 35, 35, 36, 36, 36,
++    36, 37, 37, 37, 37, 38, 38, 38,
++    38, 38, 39, 39, 39, 39, 40, 40,
++    40, 40, 40, 41, 41, 41, 41, 42,
++    42, 42, 42, 42, 43, 43, 43, 43,
++    43, 44, 44, 44, 44, 45, 45, 45,
++    45, 45, 46, 46, 46, 46, 46, 47,
++    47, 47, 47, 47, 48, 48, 48, 48,
++    48, 49, 49, 49, 49, 49, 49, 50,
++    50, 50, 50, 50, 51, 51, 51, 51,
++    51, 52, 52, 52, 52, 52, 52, 53,
++    53, 53, 53, 53, 54, 54, 54, 54,
++    54, 54, 55, 55, 55, 55, 55, 56,
++    56, 56, 56, 56, 56, 57, 57, 57,
++    57, 57, 57, 58, 58, 58, 58, 58,
++    58, 59, 59, 59, 59, 59, 59, 60,
++    60, 60, 60, 60, 60, 61, 61, 61,
++    61, 61, 61, 62, 62, 62, 62, 62,
++    62, 63, 63, 63, 63, 63, 63, 63,
++    64, 64, 64, 64, 64, 64, 65, 65,
++    65, 65, 65, 65, 65, 66, 66, 66,
++    66, 66, 66, 67, 67, 67, 67, 67,
++    67, 67, 68, 68, 68, 68, 68, 68,
++    68, 69, 69, 69, 69, 69, 69, 69,
++    70, 70, 70, 70, 70, 70, 70, 71,
++    71, 71, 71, 71, 71, 71, 72, 72,
++    72, 72, 72, 72, 72, 73, 73, 73,
++    73, 73, 73, 73, 73, 74, 74, 74,
++    74, 74, 74, 74, 75, 75, 75, 75,
++    75, 75, 75, 75, 76, 76, 76, 76,
++    76, 76, 76, 76, 77, 77, 77, 77,
++    77, 77, 77, 77, 77, 78, 78, 78,
++    78, 78, 78, 78, 78, 79, 79, 79,
++    79, 79, 79, 79, 79, 80, 80, 80,
++    80, 80, 80, 80, 80, 81, 81, 81,
++    81, 81, 81, 81, 81, 81, 82, 82,
++    82, 82, 82, 82, 82, 82, 83, 83,
++    83, 83, 83, 83, 83, 83, 83, 84,
++    84, 84, 84, 84, 84, 84, 84, 84,
++    85, 85, 85, 85, 85, 85, 85, 85,
++    85, 86, 86, 86, 86, 86, 86, 86,
++    86, 86, 87, 87, 87, 87, 87, 87,
++    87, 87, 87, 88, 88, 88, 88, 88,
++    88, 88, 88, 88, 89, 89, 89, 89,
++    89, 89, 89, 89, 89, 89, 90, 90,
++    90, 90, 90, 90, 90, 90, 90, 90,
++    91, 91, 91, 91, 91, 91, 91, 91,
++    91, 92, 92, 92, 92, 92, 92, 92,
++    92, 92, 92, 93, 93, 93, 93, 93,
++    93, 93, 93, 93, 93, 94, 94, 94,
++    94, 94, 94, 94, 94, 94, 94, 94,
++    95, 95, 95, 95, 95, 95, 95, 95,
++    95, 95, 96, 96, 96, 96, 96, 96,
++    96, 96, 96, 96, 96, 97, 97, 97,
++    97, 97, 97, 97, 97, 97, 97, 98,
++    98, 98, 98, 98, 98, 98, 98, 98,
++    98, 98, 99, 99, 99, 99, 99, 99,
++    99, 99, 99, 99, 99, 99, 100, 100,
++    100, 100, 100, 100, 100, 100, 100, 100,
++    100, 101, 101, 101, 101, 101, 101, 101,
++    101, 101, 101, 101, 102, 102, 102, 102,
++    102, 102, 102, 102, 102, 102, 102, 102,
++    103, 103, 103, 103, 103, 103, 103, 103,
++    103, 103, 103, 103, 104, 104, 104, 104,
++    104, 104, 104, 104, 104, 104, 104, 104,
++    105, 105, 105, 105, 105, 105, 105, 105,
++    105, 105, 105, 105, 106, 106, 106, 106,
++    106, 106, 106, 106, 106, 106, 106, 106,
++    107, 107, 107, 107, 107, 107, 107, 107,
++    107, 107, 107, 107, 107, 108, 108, 108,
++    108, 108, 108, 108, 108, 108, 108, 108,
++    108, 109, 109, 109, 109, 109, 109, 109,
++    109, 109, 109, 109, 109, 109, 110, 110,
++    110, 110, 110, 110, 110, 110, 110, 110,
++    110, 110, 110, 111, 111, 111, 111, 111,
++    111, 111, 111, 111, 111, 111, 111, 111,
++    112, 112, 112, 112, 112, 112, 112, 112,
++    112, 112, 112, 112, 112, 112, 113, 113,
++    113, 113, 113, 113, 113, 113, 113, 113,
++    113, 113, 113, 113, 114, 114, 114, 114,
++    114, 114, 114, 114, 114, 114, 114, 114,
++    114, 115, 115, 115, 115, 115, 115, 115,
++    115, 115, 115, 115, 115, 115, 115, 116,
++    116, 116, 116, 116, 116, 116, 116, 116,
++    116, 116, 116, 116, 116, 116, 117, 117,
++    117, 117, 117, 117, 117, 117, 117, 117,
++    117, 117, 117, 117, 118, 118, 118, 118,
++    118, 118, 118, 118, 118, 118, 118, 118,
++    118, 118, 118, 119, 119, 119, 119, 119,
++    119, 119, 119
++};
++
++// ---------------------------------------------------------------------------
++//  Global Functions
++// ---------------------------------------------------------------------------
++
++/**
++ * @brief 
++ * @param[in] imbe_param 
++ * @param b 
++ * @param cur_mp Current MBE parameters.
++ * @param prev_mp Previous MBE parameters.
++ * @param gainAdjust Gain adjustment.
++ */
++static void encodeAMBEFloat(const IMBE_PARAM* imbe_param, const float* amplitudes, const float* voicingWeights, float amplitudeFloor, int b[], mbe_parms* cur_mp, mbe_parms* prev_mp, float gainAdjust)
++{
++    static const float SQRT_2 = sqrtf(2.0);
++    static const int b0_lmax = sizeof(b0_lookup) / sizeof(b0_lookup[0]);
++    // int b[9];
++
++    // ref_pitch is Q8_8 in range 19.875 - 123.125
++    int b0_i = (imbe_param->ref_pitch >> 5) - 159;
++    if (b0_i < 0 || b0_i >= b0_lmax) {
++        fprintf(stderr, "encode error b0_i %d\n", b0_i);
++        return;
++    }
++
++    b[0] = b0_lookup[b0_i];
++    int L = (int)AmbeLtable[b[0]];
++
++    // adjust b0 until L agrees
++    while (L != imbe_param->num_harms) {
++        if (L < imbe_param->num_harms)
++            b0_i++;
++        else if (L > imbe_param->num_harms)
++            b0_i--;
++        if (b0_i < 0 || b0_i >= b0_lmax) {
++            fprintf(stderr, "encode error2 b0_i %d\n", b0_i);
++            return;
++        }
++        b[0] = b0_lookup[b0_i];
++        L = (int)AmbeLtable[b[0]];
++    }
++
++    float m_float2[NUM_HARMS_MAX];
++    for (int l = 1; l <= L; l++) {
++        m_float2[l - 1] = voicingWeights[l - 1];
++        m_float2[l - 1] = m_float2[l - 1] * m_float2[l - 1];
++    }
++
++    float en_min = 0;
++    b[1] = 0;
++    int vuv_max = 17;
++    for (int n = 0; n < vuv_max; n++) {
++        float En = 0;
++        for (int l = 1; l <= L; l++) {
++            int jl = (int)((float)l * (float)16.0 * AmbeW0table[b[0]]);
++            int kl = 12;
++            if (l <= 36)
++                kl = (l + 2) / 3;
++
++            if (imbe_param->v_uv_dsn[(kl - 1) * 3] != AmbeVuv[n][jl])
++                En += m_float2[l - 1];
++        }
++
++        if (n == 0)
++            en_min = En;
++        else if (En < en_min) {
++            b[1] = n;
++            en_min = En;
++        }
++    }
++
++    // log spectral amplitudes
++    float num_harms_f = (float)imbe_param->num_harms;
++    float log_l_2 = 0.5 * log2f(num_harms_f);	// fixme: table lookup
++    float log_l_w0 = 0.5 * log2f(num_harms_f * AmbeW0table[b[0]] * 2.0 * M_PI) + 2.289;
++    float lsa[NUM_HARMS_MAX];
++    float lsa_sum = 0.0;
++
++    for (int i1 = 0; i1 < imbe_param->num_harms; i1++) {
++        float sa = (float)amplitudes[i1];
++        if (sa < amplitudeFloor) sa = amplitudeFloor;
++        if (imbe_param->v_uv_dsn[i1])
++            lsa[i1] = log_l_2 + log2f(sa);
++        else
++            lsa[i1] = log_l_w0 + log2f(sa);
++        lsa_sum += lsa[i1];
++    }
++
++    float gain = lsa_sum / num_harms_f;
++    float diff_gain = gain - 0.5 * prev_mp->gamma;
++
++    diff_gain -= gainAdjust;
++
++    float error;
++    int error_index;
++    int max_dg = 32;
++    for (int i1 = 0; i1 < max_dg; i1++) {
++        float diff = fabsf(diff_gain - AmbeDg[i1]);
++        if ((i1 == 0) || (diff < error)) {
++            error = diff;
++            error_index = i1;
++        }
++    }
++
++    b[2] = error_index;
++
++    // prediction residuals
++    float l_prev_l = (float)(prev_mp->L) / num_harms_f;
++    float tmp_s = 0.0;
++    prev_mp->log2Ml[0] = prev_mp->log2Ml[1];
++    for (int i1 = 0; i1 < imbe_param->num_harms; i1++) {
++        float kl = l_prev_l * (float)(i1 + 1);
++        int kl_floor = (int)kl;
++        float kl_frac = kl - kl_floor;
++        tmp_s += (1.0 - kl_frac) * prev_mp->log2Ml[kl_floor + 0] + kl_frac * prev_mp->log2Ml[kl_floor + 1 + 0];
++    }
++
++    float T[NUM_HARMS_MAX];
++    for (int i1 = 0; i1 < imbe_param->num_harms; i1++) {
++        float kl = l_prev_l * (float)(i1 + 1);
++        int kl_floor = (int)kl;
++        float kl_frac = kl - kl_floor;
++        T[i1] = lsa[i1] - 0.65 * (1.0 - kl_frac) * prev_mp->log2Ml[kl_floor + 0]	\
++            - 0.65 * kl_frac * prev_mp->log2Ml[kl_floor + 1 + 0];
++    }
++
++    // DCT
++    const int* J = AmbeLmprbl[imbe_param->num_harms];
++    float* c[4];
++    int acc = 0;
++    for (int i = 0; i < 4; i++) {
++        c[i] = &T[acc];
++        acc += J[i];
++    }
++
++    float C[4][17];
++    for (int i = 1; i <= 4; i++) {
++        for (int k = 1; k <= J[i - 1]; k++) {
++            float s = 0.0;
++            for (int j = 1; j <= J[i - 1]; j++) {
++                //fixme: lut?
++                s += (c[i - 1][j - 1] * cosf((M_PI * (((float)k) - 1.0) * (((float)j) - 0.5)) / (float)J[i - 1]));
++            }
++            C[i - 1][k - 1] = s / (float)J[i - 1];
++        }
++    }
++
++    float R[8];
++    R[0] = C[0][0] + SQRT_2 * C[0][1];
++    R[1] = C[0][0] - SQRT_2 * C[0][1];
++    R[2] = C[1][0] + SQRT_2 * C[1][1];
++    R[3] = C[1][0] - SQRT_2 * C[1][1];
++    R[4] = C[2][0] + SQRT_2 * C[2][1];
++    R[5] = C[2][0] - SQRT_2 * C[2][1];
++    R[6] = C[3][0] + SQRT_2 * C[3][1];
++    R[7] = C[3][0] - SQRT_2 * C[3][1];
++
++    // encode PRBA
++    float G[8];
++    for (int m = 1; m <= 8; m++) {
++        G[m - 1] = 0.0;
++        for (int i = 1; i <= 8; i++) {
++            //fixme: lut?
++            G[m - 1] += (R[i - 1] * cosf((M_PI * (((float)m) - 1.0) * (((float)i) - 0.5)) / 8.0));
++        }
++        G[m - 1] /= 8.0;
++    }
++
++    for (int i = 0; i < 512; i++) {
++        float err = 0.0;
++        float diff;
++
++        diff = G[1] - AmbePRBA24[i][0];
++        err += (diff * diff);
++        diff = G[2] - AmbePRBA24[i][1];
++        err += (diff * diff);
++        diff = G[3] - AmbePRBA24[i][2];
++        err += (diff * diff);
++
++        if (i == 0 || err < error) {
++            error = err;
++            error_index = i;
++        }
++    }
++
++    b[3] = error_index;
++
++    // PRBA58
++    for (int i = 0; i < 128; i++) {
++        float err = 0.0;
++        float diff;
++
++        diff = G[4] - AmbePRBA58[i][0];
++        err += (diff * diff);
++        diff = G[5] - AmbePRBA58[i][1];
++        err += (diff * diff);
++        diff = G[6] - AmbePRBA58[i][2];
++        err += (diff * diff);
++        diff = G[7] - AmbePRBA58[i][3];
++        err += (diff * diff);
++
++        if (i == 0 || err < error) {
++            error = err;
++            error_index = i;
++        }
++    }
++
++    b[4] = error_index;
++
++    // higher order coeffs b5
++    int ii = 1;
++    if (J[ii - 1] <= 2) {
++        b[4 + ii] = 0.0;
++    }
++    else {
++        int max_5 = 32;
++        for (int n = 0; n < max_5; n++) {
++            float err = 0.0;
++            float diff;
++            for (int j = 1; j <= J[ii - 1] - 2 && j <= 4; j++) {
++                diff = AmbeHOCb5[n][j - 1] - C[ii - 1][j + 2 - 1];
++                err += (diff * diff);
++            }
++            if (n == 0 || err < error) {
++                error = err;
++                error_index = n;
++            }
++        }
++        b[4 + ii] = error_index;
++    }
++
++    // higher order coeffs b6
++    ii = 2;
++    if (J[ii - 1] <= 2) {
++        b[4 + ii] = 0.0;
++    }
++    else {
++        for (int n = 0; n < 16; n++) {
++            float err = 0.0;
++            float diff;
++            for (int j = 1; j <= J[ii - 1] - 2 && j <= 4; j++) {
++                diff = AmbeHOCb6[n][j - 1] - C[ii - 1][j + 2 - 1];
++                err += (diff * diff);
++            }
++            if (n == 0 || err < error) {
++                error = err;
++                error_index = n;
++            }
++        }
++        b[4 + ii] = error_index;
++    }
++
++    // higher order coeffs b7
++    ii = 3;
++    if (J[ii - 1] <= 2) {
++        b[4 + ii] = 0.0;
++    }
++    else {
++        for (int n = 0; n < 16; n++) {
++            float err = 0.0;
++            float diff;
++            for (int j = 1; j <= J[ii - 1] - 2 && j <= 4; j++) {
++                diff = AmbeHOCb7[n][j - 1] - C[ii - 1][j + 2 - 1];
++                err += (diff * diff);
++            }
++            if (n == 0 || err < error) {
++                error = err;
++                error_index = n;
++            }
++        }
++        b[4 + ii] = error_index;
++    }
++
++    // higher order coeffs b8
++    ii = 4;
++    if (J[ii - 1] <= 2) {
++        b[4 + ii] = 0.0;
++    }
++    else {
++        int max_8 = 8;
++        for (int n = 0; n < max_8; n++) {
++            float err = 0.0;
++            float diff;
++            for (int j = 1; j <= J[ii - 1] - 2 && j <= 4; j++) {
++                diff = AmbeHOCb8[n][j - 1] - C[ii - 1][j + 2 - 1];
++                err += (diff * diff);
++            }
++            if (n == 0 || err < error) {
++                error = err;
++                error_index = n;
++            }
++        }
++        b[4 + ii] = error_index;
++    }
++
++    mbe_dequantizeAmbe2250Parms(cur_mp, prev_mp, b);
++    mbe_moveMbeParms(cur_mp, prev_mp);
++}
++
++/**
++ * @brief 
++ * @param bits 
++ * @param b 
++ */
++static void encode49bit(uint8_t bits[49], const int b[9])
++{
++    bits[0] = (b[0] >> 6) & 1;
++    bits[1] = (b[0] >> 5) & 1;
++    bits[2] = (b[0] >> 4) & 1;
++    bits[3] = (b[0] >> 3) & 1;
++    bits[4] = (b[1] >> 4) & 1;
++    bits[5] = (b[1] >> 3) & 1;
++    bits[6] = (b[1] >> 2) & 1;
++    bits[7] = (b[1] >> 1) & 1;
++    bits[8] = (b[2] >> 4) & 1;
++    bits[9] = (b[2] >> 3) & 1;
++    bits[10] = (b[2] >> 2) & 1;
++    bits[11] = (b[2] >> 1) & 1;
++    bits[12] = (b[3] >> 8) & 1;
++    bits[13] = (b[3] >> 7) & 1;
++    bits[14] = (b[3] >> 6) & 1;
++    bits[15] = (b[3] >> 5) & 1;
++    bits[16] = (b[3] >> 4) & 1;
++    bits[17] = (b[3] >> 3) & 1;
++    bits[18] = (b[3] >> 2) & 1;
++    bits[19] = (b[3] >> 1) & 1;
++    bits[20] = (b[4] >> 6) & 1;
++    bits[21] = (b[4] >> 5) & 1;
++    bits[22] = (b[4] >> 4) & 1;
++    bits[23] = (b[4] >> 3) & 1;
++    bits[24] = (b[5] >> 4) & 1;
++    bits[25] = (b[5] >> 3) & 1;
++    bits[26] = (b[5] >> 2) & 1;
++    bits[27] = (b[5] >> 1) & 1;
++    bits[28] = (b[6] >> 3) & 1;
++    bits[29] = (b[6] >> 2) & 1;
++    bits[30] = (b[6] >> 1) & 1;
++    bits[31] = (b[7] >> 3) & 1;
++    bits[32] = (b[7] >> 2) & 1;
++    bits[33] = (b[7] >> 1) & 1;
++    bits[34] = (b[8] >> 2) & 1;
++    bits[35] = b[1] & 1;
++    bits[36] = b[2] & 1;
++    bits[37] = (b[0] >> 2) & 1;
++    bits[38] = (b[0] >> 1) & 1;
++    bits[39] = b[0] & 1;
++    bits[40] = (b[4] >> 2) & 1;
++    bits[41] = (b[4] >> 1) & 1;
++    bits[42] = b[4] & 1;
++    bits[43] = b[3] & 1;
++    bits[44] = b[5] & 1;
++    bits[45] = b[6] & 1;
++    bits[46] = b[7] & 1;
++    bits[47] = (b[8] >> 1) & 1;
++    bits[48] = b[8] & 1;
++}
++
++/**
++ * @brief 
++ * @param[in] in 
++ * @param out 
++ */
++static void encodeDmrAMBE(const uint8_t* in, uint8_t* out)
++{
++    unsigned int aOrig = 0U;
++    unsigned int bOrig = 0U;
++    unsigned int cOrig = 0U;
++
++    unsigned int MASK = 0x000800U;
++    for (unsigned int i = 0U; i < 12U; i++, MASK >>= 1) {
++        unsigned int n1 = i;
++        unsigned int n2 = i + 12U;
++        if (READ_BIT(in, n1))
++            aOrig |= MASK;
++        if (READ_BIT(in, n2))
++            bOrig |= MASK;
++    }
++
++    MASK = 0x1000000U;
++    for (unsigned int i = 0U; i < 25U; i++, MASK >>= 1) {
++        unsigned int n = i + 24U;
++        if (READ_BIT(in, n))
++            cOrig |= MASK;
++    }
++
++    unsigned int a = Golay24128::encode24128(aOrig);
++
++    // The PRNG
++    unsigned int p = PRNG_TABLE[aOrig] >> 1;
++
++    unsigned int b = Golay24128::encode23127(bOrig) >> 1;
++    b ^= p;
++
++    MASK = 0x800000U;
++    for (unsigned int i = 0U; i < 24U; i++, MASK >>= 1) {
++        unsigned int aPos = AMBE_A_TABLE[i];
++        WRITE_BIT(out, aPos, a & MASK);
++    }
++
++    MASK = 0x400000U;
++    for (unsigned int i = 0U; i < 23U; i++, MASK >>= 1) {
++        unsigned int bPos = AMBE_B_TABLE[i];
++        WRITE_BIT(out, bPos, b & MASK);
++    }
++
++    MASK = 0x1000000U;
++    for (unsigned int i = 0U; i < 25U; i++, MASK >>= 1) {
++        unsigned int cPos = AMBE_C_TABLE[i];
++        WRITE_BIT(out, cPos, cOrig & MASK);
++    }
++}
++
++// ---------------------------------------------------------------------------
++
+diff --git a/src/vocoder/ReverseLevelerControl.inc b/src/vocoder/ReverseLevelerControl.inc
+new file mode 100644
+index 00000000..48dd0cd3
+--- /dev/null
++++ b/src/vocoder/ReverseLevelerControl.inc
+@@ -0,0 +1,298 @@
++// SPDX-License-Identifier: GPL-2.0-only
++// ONE per-call scalar controller, Root v4 independent rendering envelopes.
++// table changes, shared registry or source-predictor storage is used here.
++namespace {
++constexpr double LEVELER_REF_EV = 504188.0;
++constexpr double LEVELER_REF_DBFS = -29.5;
++constexpr double LEVELER_VOICE_FLOOR = 2007.2085810702672;
++constexpr double LEVELER_DB_PER_LOG2 = 6.020599913279624;
++constexpr double LEVELER_NOISE_V = 2.309693;
++constexpr double LEVELER_NOISE_U = 7.4231003;
++constexpr double LEVELER_ALPHA_CUT = 0.22119921692859512; // 1-exp(-20/80)
++constexpr double LEVELER_ALPHA_UP = 0.019801326693244747; // 1-exp(-20/1000)
++constexpr double LEVELER_ALPHA_ESTIMATE = 0.048770575499285984; // 400ms
++constexpr double LEVELER_ALPHA_NOISE_DOWN = 0.09516258196404048; // 200ms
++constexpr double LEVELER_ALPHA_NOISE_UP = 0.001998001332666921; // 10s
++double levelerClamp(double v, double lo, double hi) { return std::max(lo, std::min(hi, v)); }
++unsigned levelerAge(unsigned v) { return v < 3600000U ? v + 20U : 3600000U; }
++}
++
++bool AmbeToP25Float::setLevelerConfig(const LevelerConfig& config)
++{
++    if (!std::isfinite(config.targetDbfs) || config.targetDbfs < -45.0f || config.targetDbfs > -20.0f ||
++        !std::isfinite(config.maxBoostDb) || config.maxBoostDb < 0.0f || config.maxBoostDb > 12.0f ||
++        !std::isfinite(config.maxCutDb) || config.maxCutDb < 0.0f || config.maxCutDb > 18.0f)
++        return false;
++    m_levelerConfig = config;
++    resetLeveler();
++    return true;
++}
++
++void AmbeToP25Float::resetLeveler()
++{
++    m_levelerState = LevelerState();
++    ++m_levelerResetGeneration;
++    m_levelerState.reason = m_levelerConfig.enabled ? LevelerReason::Bootstrap : LevelerReason::Disabled;
++    m_levelerState.boostCapDb = std::min(6.0, static_cast<double>(m_levelerConfig.maxBoostDb));
++    m_levelerState.noiseAllowedGainDb = m_levelerState.boostCapDb;
++    m_levelerState.peakAllowedGainDb = m_levelerConfig.maxBoostDb;
++}
++
++AmbeToP25Float::LevelerDiagnostics AmbeToP25Float::getLevelerDiagnostics() const
++{
++    const LevelerState& x = m_levelerState;
++    LevelerDiagnostics d = {};
++    d.enabled = m_levelerConfig.enabled;
++    d.estimateReady = x.estimateReady;
++    d.noiseTrusted = x.noiseObservations >= 4U;
++    d.learnedThisFrame = x.learned;
++    d.noiseObservedThisFrame = x.noiseObserved;
++    d.peakLimited = x.peakLimited;
++    d.noiseLimited = x.noiseLimited;
++    d.ceilingUnsatisfied = x.ceilingUnsatisfied;
++    d.fadeActive = x.fading;
++    d.feedbackSaturated = x.saturated;
++    d.predictedSpeechEligible = x.predictedEligible;
++    d.framesEncoded = x.frames;
++    d.confirmedVoiceFrames = x.confirmedVoice;
++    d.learnedWindows = x.learnedWindows;
++    d.resetGeneration = m_levelerResetGeneration;
++    d.consecutiveVoiceFrames = x.voiceStreak;
++    d.noiseObservations = x.noiseObservations;
++    d.nonVoiceMs = x.nonVoiceMs;
++    d.levelGainDb = x.levelGainDb;
++    d.appliedGainDb = x.appliedGainDb;
++    d.estimatedEVBase = x.estimateEV;
++    d.estimatedLevelDbfs = x.estimateReady ?
++        LEVELER_REF_DBFS + 10.0 * std::log10(std::max(x.estimateEV, 1.0e-12) / LEVELER_REF_EV) : -120.0;
++    d.noiseFloorDbfs = x.noiseFloorDbfs;
++    d.boostCapDb = x.boostCapDb;
++    d.predictedPeakBound = x.peakBound;
++    d.peakCapDb = x.peakCapDb;
++    d.sourceVoicedFraction = x.sourceVoicedFraction;
++    d.targetPredVoicedFraction = x.targetPredVoicedFraction;
++    d.targetWireVoicedFraction = x.targetWireVoicedFraction;
++    d.feedbackEVBase = x.feedbackEVBase;
++    d.noisePowerBase = x.noisePowerBase;
++    d.activityGainDb = x.activityGainDb;
++    d.noiseAllowedGainDb = x.noiseAllowedGainDb;
++    d.peakAllowedGainDb = x.peakAllowedGainDb;
++    d.activityRecovering = x.activityRecovering;
++    d.normalControllerTick = x.normalControllerTick;
++    d.reason = x.reason;
++    return d;
++}
++
++double AmbeToP25Float::levelerBoostCap(const LevelerState& x) const
++{
++    double cap = x.confirmedVoice >= 50U && x.noiseObservations >= 4U ? 12.0 : 6.0;
++    if (x.noiseObservations >= 4U) {
++        const double noiseRms = std::max(1.0, x.noiseFloorRms);
++        const double noiseCap = levelerClamp(20.0 * std::log10(184.2680054383736 / noiseRms), 0.0, 12.0);
++        cap = std::min(cap, noiseCap);
++    }
++    return std::min(cap, static_cast<double>(m_levelerConfig.maxBoostDb));
++}
++
++void AmbeToP25Float::proposeLeveler(LevelerState& x, const LevelerMeter& meter,
++    const LevelerContext& context) const
++{
++    x.learned = x.noiseObserved = x.peakLimited = x.noiseLimited = false;
++    x.ceilingUnsatisfied = x.saturated = x.normalControllerTick = false;
++    x.sourceVoicedFraction = meter.sourceVoicedFraction;
++    x.targetPredVoicedFraction = meter.targetVoicedFraction;
++    x.targetWireVoicedFraction = 0.0;
++    x.feedbackEVBase = x.noisePowerBase = 0.0;
++    x.boostCapDb = levelerBoostCap(x);
++    const bool frozen = context.freeze || context.fec != 0U;
++    x.predictedEligible = !frozen && context.ordinary &&
++        meter.sourceVoicedFraction >= 0.5 && meter.targetVoicedFraction >= 0.5 &&
++        meter.EV >= LEVELER_VOICE_FLOOR;
++
++    // The learned station correction is NOT an activity envelope. Once the
++    // initial estimate exists, valid U/CN slots clock it toward that HELD
++    // estimate without learning a single new speech observation from noise.
++    if (!frozen && x.estimateReady) {
++        x.normalControllerTick = true;
++        const double targetEV = LEVELER_REF_EV *
++            std::pow(10.0, (static_cast<double>(m_levelerConfig.targetDbfs) - LEVELER_REF_DBFS) / 10.0);
++        const double desired = levelerClamp(10.0 * std::log10(targetEV / std::max(x.estimateEV, 1.0e-12)),
++            -static_cast<double>(m_levelerConfig.maxCutDb), static_cast<double>(m_levelerConfig.maxBoostDb));
++        const double error = desired - x.levelGainDb;
++        if (std::fabs(error) > 1.0)
++            x.levelGainDb += (error < 0.0 ? LEVELER_ALPHA_CUT : LEVELER_ALPHA_UP) * error;
++    }
++
++    // Noise/confidence is a rendering constraint, independent of the station
++    // estimate and the CN/activity override. In particular 6->12 never jumps.
++    if (x.boostCapDb < x.noiseAllowedGainDb)
++        x.noiseAllowedGainDb = x.boostCapDb;
++    else if (!frozen)
++        x.noiseAllowedGainDb += LEVELER_ALPHA_UP * (x.boostCapDb - x.noiseAllowedGainDb);
++
++    if (x.predictedEligible) {
++        x.nonVoiceMs = 0U;
++        x.fading = false;
++        x.fadeMs = 0.0;
++        x.reason = x.estimateReady ? LevelerReason::Speech : LevelerReason::Bootstrap;
++        if (!x.estimateReady) {
++            // No positive station correction exists before four qualified
++            // bootstrap frames. Peak protection is already available below.
++            x.activityGainDb = x.levelGainDb;
++        } else if (x.activityGainDb >= x.levelGainDb) {
++            x.activityGainDb = x.levelGainDb;
++            x.activityRecovering = false;
++        } else if (x.activityRecovering) {
++            // This80ms reapplication clock is separate from normal1s gain
++            // convergence and from the independent slow safety envelopes.
++            x.activityGainDb += LEVELER_ALPHA_CUT * (x.levelGainDb - x.activityGainDb);
++            const float activityCode = static_cast<float>(static_cast<double>(m_encodedGain) - x.activityGainDb / LEVELER_DB_PER_LOG2);
++            const float stationCode = static_cast<float>(static_cast<double>(m_encodedGain) - x.levelGainDb / LEVELER_DB_PER_LOG2);
++            if (activityCode == stationCode) {
++                x.activityGainDb = x.levelGainDb;
++                x.activityRecovering = false;
++            }
++        } else {
++            x.activityGainDb = x.levelGainDb;
++        }
++    } else {
++        // EVERY non-speech frame holds at most the prior ACTUAL render. A
++        // peak/noise constraint that fell during U may not later release
++        // underneath a stale higher activity snapshot and lift that noise.
++        x.activityGainDb = std::min(x.activityGainDb, m_levelerState.appliedGainDb);
++        x.voiceStreak = x.voiceCount = x.voicePosition = 0U;
++        if (frozen) {
++            x.reason = context.fec != 0U ? LevelerReason::Fec : LevelerReason::Concealment;
++        } else {
++            x.nonVoiceMs = levelerAge(x.nonVoiceMs);
++            x.reason = context.extra ? LevelerReason::Extra : context.codedSilence ?
++                LevelerReason::CodedSilence : LevelerReason::Unvoiced;
++            const double proxyEV = meter.EV + LEVELER_NOISE_U / LEVELER_NOISE_V * meter.omega * meter.EU;
++            if (proxyEV < LEVELER_VOICE_FLOOR && !context.extra && !context.codedSilence)
++                x.reason = LevelerReason::LowEnergy;
++            if (x.nonVoiceMs >= 300U || x.fading) {
++                if (!x.fading) {
++                    x.fading = true;
++                    x.fadeMs = 0.0;
++                    x.fadeAppliedStart = std::max(0.0, x.activityGainDb);
++                } else {
++                    x.fadeMs = std::min(300.0, x.fadeMs + 20.0);
++                }
++                const double remain = std::max(0.0, 1.0 - x.fadeMs / 300.0);
++                if (x.activityGainDb > 0.0)
++                    x.activityGainDb = std::min(x.activityGainDb, x.fadeAppliedStart * remain);
++            }
++        }
++        if (context.codedSilence)
++            x.activityGainDb = std::min(x.activityGainDb, 0.0);
++        const float activityCode = static_cast<float>(static_cast<double>(m_encodedGain) - x.activityGainDb / LEVELER_DB_PER_LOG2);
++        const float stationCode = static_cast<float>(static_cast<double>(m_encodedGain) - x.levelGainDb / LEVELER_DB_PER_LOG2);
++        if (x.activityGainDb < x.levelGainDb && activityCode != stationCode)
++            x.activityRecovering = true;
++    }
++
++    double maxSV = meter.SV, maxWU = meter.omega * meter.EU;
++    for (unsigned i = 0; i < x.peakCount; ++i) {
++        maxSV = std::max(maxSV, x.peakSV[i]);
++        maxWU = std::max(maxWU, x.peakWU[i]);
++    }
++    x.peakBound = 3.0 * maxSV + 24.0 * std::sqrt(std::max(0.0, maxWU)) + 1024.0;
++    x.peakCapDb = 20.0 * std::log10(24000.0 / x.peakBound);
++    const double emergencyFloor = std::max(-42.0,
++        (static_cast<double>(m_encodedGain) - 8.0) * LEVELER_DB_PER_LOG2);
++    const double peakGoal = std::max(emergencyFloor, x.peakCapDb);
++    if (peakGoal < x.peakAllowedGainDb)
++        x.peakAllowedGainDb = peakGoal;
++    else if (!frozen)
++        x.peakAllowedGainDb += LEVELER_ALPHA_UP * (peakGoal - x.peakAllowedGainDb);
++    x.noiseLimited = x.activityGainDb > x.noiseAllowedGainDb + 1.0e-9;
++    x.peakLimited = x.activityGainDb > x.peakAllowedGainDb + 1.0e-9;
++    x.appliedGainDb = std::min(x.activityGainDb, std::min(x.noiseAllowedGainDb, x.peakAllowedGainDb));
++    x.appliedGainDb = std::max(x.appliedGainDb, emergencyFloor);
++    x.ceilingUnsatisfied = x.appliedGainDb > x.peakCapDb + 1.0e-6;
++}
++
++float AmbeToP25Float::effectiveLevelerGain(LevelerState& x) const
++{
++    const float effective = std::min(8.0f, static_cast<float>(
++        static_cast<double>(m_encodedGain) - x.appliedGainDb / LEVELER_DB_PER_LOG2));
++    // Feedback must remove the actual float gain given to the quantizer,
++    // rather than an ever-so-slightly different desired scalar.
++    x.appliedGainDb = (static_cast<double>(m_encodedGain) - effective) * LEVELER_DB_PER_LOG2;
++    return effective;
++}
++
++void AmbeToP25Float::finishLeveler(LevelerState& x, const LevelerMeter& meter,
++    const LevelerContext& context)
++{
++    ++x.frames;
++    const IMBE_PARAM* wire = m_target.param();
++    double EV = 0.0, EU = 0.0, SV = 0.0;
++    bool saturated = false;
++    for (int i = 0; i < wire->num_harms; ++i) {
++        const int sa = wire->sa[i];
++        saturated = saturated || sa >= 32767 || sa < 0;
++        const double a = std::max(0, sa) / 4.0;
++        if (wire->v_uv_dsn[i] != 0) { EV += a * a; SV += a; }
++        else EU += a * a;
++    }
++    const double undo = std::pow(10.0, -x.appliedGainDb / 10.0);
++    EV *= undo; EU *= undo; SV *= std::sqrt(undo);
++    const double omega = static_cast<double>(wire->fund_freq) / 2147483648.0 * PI;
++    x.saturated = saturated;
++    x.feedbackEVBase = EV;
++    x.targetWireVoicedFraction = EV + EU > 0.0 ? EV / (EV + EU) : 0.0;
++    x.noisePowerBase = LEVELER_NOISE_V * EV + LEVELER_NOISE_U * omega * EU;
++
++    // A saturated Word16 amplitude is not valid feedback. Retain a conservative
++    // requested-model guard record for that unsupported observation only.
++    x.peakSV[x.peakPosition] = saturated ? meter.SV : SV;
++    x.peakWU[x.peakPosition] = saturated ? meter.omega * meter.EU : omega * EU;
++    x.peakPosition = (x.peakPosition + 1U) % 3U;
++    x.peakCount = std::min(3U, x.peakCount + 1U);
++    if (context.freeze || context.fec != 0U)
++        return;
++
++    const bool speech = x.predictedEligible && !saturated &&
++        x.targetWireVoicedFraction >= 0.5 && EV > LEVELER_VOICE_FLOOR;
++    if (speech) {
++        x.nonVoiceMs = 0U;
++        x.fading = false;
++        x.voicePower[x.voicePosition] = EV;
++        x.voicePosition = (x.voicePosition + 1U) % 4U;
++        x.voiceCount = std::min(4U, x.voiceCount + 1U);
++        if (x.voiceStreak < 1000000U) ++x.voiceStreak;
++        ++x.confirmedVoice;
++        if (x.voiceCount == 4U && x.voiceStreak >= 4U) {
++            double power = 0.0;
++            for (double v : x.voicePower) power += v * 0.25;
++            if (!x.estimateReady) { x.estimateEV = power; x.estimateReady = true; }
++            else x.estimateEV += LEVELER_ALPHA_ESTIMATE * (power - x.estimateEV);
++            x.learned = true;
++            ++x.learnedWindows;
++        }
++        x.reason = x.estimateReady ? LevelerReason::Speech : LevelerReason::Bootstrap;
++    } else {
++        // The current requested model can pass the pre-encode gate while
++        // quantization/saturation vetoes its feedback. Do not learn it.
++        x.nonVoiceMs = levelerAge(m_levelerState.nonVoiceMs);
++        x.voiceStreak = x.voiceCount = x.voicePosition = 0U;
++        if (saturated) x.reason = LevelerReason::SaturatedFeedback;
++        const bool ordinaryQuiet = context.ordinary && meter.sourceVoicedFraction < 0.1 &&
++            x.targetWireVoicedFraction < 0.1;
++        if (!saturated && !context.extra &&
++            (context.codedSilence || (ordinaryQuiet && x.nonVoiceMs >= 300U))) {
++            const double observedRms = std::sqrt(std::max(x.noisePowerBase, 0.0));
++            if (x.noiseObservations == 0U) x.noiseFloorRms = observedRms;
++            else if (x.noiseObservations < 4U) x.noiseFloorRms = std::min(x.noiseFloorRms, observedRms);
++            else {
++                x.noiseFloorRms += (observedRms < x.noiseFloorRms ?
++                    LEVELER_ALPHA_NOISE_DOWN : LEVELER_ALPHA_NOISE_UP) * (observedRms - x.noiseFloorRms);
++            }
++            x.noiseFloorDbfs = 20.0 * std::log10(std::max(x.noiseFloorRms, 1.0e-12) / 32768.0);
++            if (x.noiseObservations < 1000000U) ++x.noiseObservations;
++            x.noiseObserved = true;
++        }
++    }
++    x.boostCapDb = levelerBoostCap(x);
++}
+diff --git a/src/vocoder/SourceGridModelDecode.inc b/src/vocoder/SourceGridModelDecode.inc
+new file mode 100644
+index 00000000..fce22bb6
+--- /dev/null
++++ b/src/vocoder/SourceGridModelDecode.inc
+@@ -0,0 +1,432 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Digital Voice Modem - MBE Vocoder
++ * GPLv2 Open Source. Use is subject to license terms.
++ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
++ *
++ */
++
++/*
++ * Copyright (C) 2010 mbelib Author
++ * GPG Key ID: 0xEA5EFE2C (9E7A 5527 9CDC EBF7 BF1B  D772 4F98 E863 EA5E FE2C)
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND ISC DISCLAIMS ALL WARRANTIES WITH
++ * REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
++ * AND FITNESS.  IN NO EVENT SHALL ISC BE LIABLE FOR ANY SPECIAL, DIRECT,
++ * INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
++ * LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
++ * OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
++ * PERFORMANCE OF THIS SOFTWARE.
++ */
++
++
++// Private CPP-local copy of the pinned legacy PARAMETER decoder only.
++// Global mbelib is unchanged. Original math/tables retained except the two
++// independently verified grid/predictor clauses below.
++#include "vocoder/ambe3600x2450_const.h"
++
++int decodeSourceGridParms(char* ambe_d, mbe_parms* cur_mp, mbe_parms* prev_mp, bool nativeExtraGrid)
++{
++    int ji, i, j, k, l, L, L9, m, am, ak;
++    int intkl[57];
++    int b0, b1, b2, b3, b4, b5, b6, b7, b8;
++    float f0, Cik[5][18], flokl[57], deltal[57];
++    float Sum42, Sum43, Tl[57], Gm[9], Ri[9], sum, c1, c2;
++    int silence;
++    int Ji[5], jl;
++    float deltaGamma, BigGamma;
++    float unvc, rconst;
++
++    silence = 0;
++
++    // copy repeat from prev_mp
++    cur_mp->repeat = prev_mp->repeat;
++
++    // decode fundamental frequency w0 from b0
++    b0 = 0;
++    b0 |= ambe_d[0] << 6;
++    b0 |= ambe_d[1] << 5;
++    b0 |= ambe_d[2] << 4;
++    b0 |= ambe_d[3] << 3;
++    b0 |= ambe_d[37] << 2;
++    b0 |= ambe_d[38] << 1;
++    b0 |= ambe_d[39];
++    if ((b0 >= 120) && (b0 <= 123)) { 
++        // if w0 bits are 1111000, 1111001, 1111010 or 1111011, frame is erasure
++#ifdef AMBE_DEBUG
++        fprintf(stderr, "MBE: AMBE: Erasure Frame");
++#endif
++        return (2);
++    }
++    else if ((b0 == 124) || (b0 == 125)) {
++        // if w0 bits are 1111100 or 1111101, frame is silence
++#ifdef AMBE_DEBUG
++        fprintf(stderr, "MBE: AMBE: Silence Frame");
++#endif
++        silence = 1;
++        cur_mp->w0 = ((float)2 * M_PI) / (float)32;
++        f0 = (float)1 / (float)32;
++        L = 14;
++        cur_mp->L = 14;
++        for (l = 1; l <= L; l++) {
++            cur_mp->Vl[l] = 0;
++        }
++    }
++    else if ((b0 == 126) || (b0 == 127)) {
++        // if w0 bits are 1111110 or 1111111, frame is tone
++#ifdef AMBE_DEBUG
++        fprintf(stderr, "MBE: AMBE: Tone Frame");
++#endif
++        return (3);
++    }
++
++    if (silence == 0) {
++        // w0 from specification document
++        f0 = AmbeW0table[b0];
++        cur_mp->w0 = f0 * (float)2 * M_PI;
++        // w0 from patent filings
++        //f0 = powf (2, ((float) b0 + (float) 195.626) / -(float) 45.368);
++        //cur_mp->w0 = f0 * (float) 2 *M_PI;
++    }
++
++    unvc = (float)0.2046 / sqrtf(cur_mp->w0);
++    //unvc = (float) 1;
++    //unvc = (float) 0.2046 / sqrtf (f0);
++
++    // decode L
++    if (silence == 0) {
++        // L from specification document
++        // lookup L in tabl3
++        L = AmbeLtable[b0];
++        // L formula from patent filings
++        //L=(int)((float)0.4627 / f0);
++        cur_mp->L = L;
++    }
++    // Native split-code mode selects this grid BEFORE spectral reconstruction.
++    // 4217 is cycles/sample Q19; mbe w0 is RADIANS/sample. This does not
++    // implement the native two-subframe fixed-frequency excitation alphabet.
++    if (nativeExtraGrid && silence == 0) {
++        f0 = 4217.0f / 524288.0f;
++        cur_mp->w0 = f0 * (float)2 * M_PI;
++        L = 56;
++        cur_mp->L = L;
++        unvc = (float)0.2046 / sqrtf(cur_mp->w0);
++    }
++    L9 = L - 9;
++
++    // decode V/UV parameters
++    // load b1 from ambe_d
++    b1 = 0;
++    b1 |= ambe_d[4] << 4;
++    b1 |= ambe_d[5] << 3;
++    b1 |= ambe_d[6] << 2;
++    b1 |= ambe_d[7] << 1;
++    b1 |= ambe_d[35];
++
++    for (l = 1; l <= L; l++) {
++        // jl from specification document
++        jl = (int)((float)l * (float)16.0 * f0);
++        // jl from patent filings?
++        //jl = (int)(((float)l * (float)16.0 * f0) + 0.25);
++
++        if (silence == 0)
++        {
++            cur_mp->Vl[l] = AmbeVuv[b1][jl];
++        }
++#ifdef AMBE_DEBUG
++        fprintf(stderr, "MBE: AMBE: jl[%i]:%i Vl[%i]:%i", l, jl, l, cur_mp->Vl[l]);
++#endif
++    }
++
++#ifdef AMBE_DEBUG
++    fprintf(stderr, "MBE: AMBE: b0:%i w0:%f L:%i b1:%i\n", b0, cur_mp->w0, L, b1);
++#endif
++
++    // decode gain vector
++    // load b2 from ambe_d
++    b2 = 0;
++    b2 |= ambe_d[8] << 4;
++    b2 |= ambe_d[9] << 3;
++    b2 |= ambe_d[10] << 2;
++    b2 |= ambe_d[11] << 1;
++    b2 |= ambe_d[36];
++
++    deltaGamma = AmbeDg[b2];
++    cur_mp->gamma = deltaGamma + ((float)0.5 * prev_mp->gamma);
++#ifdef AMBE_DEBUG
++    fprintf(stderr, "MBE: AMBE: b2: %i, deltaGamma: %f gamma: %f gamma-1: %f\n", b2, deltaGamma, cur_mp->gamma, prev_mp->gamma);
++#endif
++
++    // decode PRBA vectors
++    Gm[1] = 0;
++
++    // load b3 from ambe_d
++    b3 = 0;
++    b3 |= ambe_d[12] << 8;
++    b3 |= ambe_d[13] << 7;
++    b3 |= ambe_d[14] << 6;
++    b3 |= ambe_d[15] << 5;
++    b3 |= ambe_d[16] << 4;
++    b3 |= ambe_d[17] << 3;
++    b3 |= ambe_d[18] << 2;
++    b3 |= ambe_d[19] << 1;
++    b3 |= ambe_d[40];
++    Gm[2] = AmbePRBA24[b3][0];
++    Gm[3] = AmbePRBA24[b3][1];
++    Gm[4] = AmbePRBA24[b3][2];
++
++    // load b4 from ambe_d
++    b4 = 0;
++    b4 |= ambe_d[20] << 6;
++    b4 |= ambe_d[21] << 5;
++    b4 |= ambe_d[22] << 4;
++    b4 |= ambe_d[23] << 3;
++    b4 |= ambe_d[41] << 2;
++    b4 |= ambe_d[42] << 1;
++    b4 |= ambe_d[43];
++    Gm[5] = AmbePRBA58[b4][0];
++    Gm[6] = AmbePRBA58[b4][1];
++    Gm[7] = AmbePRBA58[b4][2];
++    Gm[8] = AmbePRBA58[b4][3];
++
++#ifdef AMBE_DEBUG
++    fprintf(stderr, "MBE: AMBE: b3: %i Gm[2]: %f Gm[3]: %f Gm[4]: %f b4: %i Gm[5]: %f Gm[6]: %f Gm[7]: %f Gm[8]: %f\n", b3, Gm[2], Gm[3], Gm[4], b4, Gm[5], Gm[6], Gm[7], Gm[8]);
++#endif
++
++    // compute Ri
++    for (i = 1; i <= 8; i++) {
++        sum = 0;
++        for (m = 1; m <= 8; m++) {
++            if (m == 1) {
++                am = 1;
++            }
++            else {
++                am = 2;
++            }
++            sum = sum + ((float)am * Gm[m] * cosf((M_PI * (float)(m - 1) * ((float)i - (float)0.5)) / (float)8));
++        }
++        Ri[i] = sum;
++#ifdef AMBE_DEBUG
++        fprintf(stderr, "MBE: AMBE: R%i: %f ", i, Ri[i]);
++#endif
++    }
++
++    // generate first to elements of each Ci,k block from PRBA vector
++    rconst = ((float)1 / ((float)2 * M_SQRT2));
++    Cik[1][1] = (float)0.5 * (Ri[1] + Ri[2]);
++    Cik[1][2] = rconst * (Ri[1] - Ri[2]);
++    Cik[2][1] = (float)0.5 * (Ri[3] + Ri[4]);
++    Cik[2][2] = rconst * (Ri[3] - Ri[4]);
++    Cik[3][1] = (float)0.5 * (Ri[5] + Ri[6]);
++    Cik[3][2] = rconst * (Ri[5] - Ri[6]);
++    Cik[4][1] = (float)0.5 * (Ri[7] + Ri[8]);
++    Cik[4][2] = rconst * (Ri[7] - Ri[8]);
++
++    // decode HOC
++
++    // load b5 from ambe_d
++    b5 = 0;
++    b5 |= ambe_d[24] << 4;
++    b5 |= ambe_d[25] << 3;
++    b5 |= ambe_d[26] << 2;
++    b5 |= ambe_d[27] << 1;
++    b5 |= ambe_d[44];
++
++    // load b6 from ambe_d
++    b6 = 0;
++    b6 |= ambe_d[28] << 3;
++    b6 |= ambe_d[29] << 2;
++    b6 |= ambe_d[30] << 1;
++    b6 |= ambe_d[45];
++
++    // load b7 from ambe_d
++    b7 = 0;
++    b7 |= ambe_d[31] << 3;
++    b7 |= ambe_d[32] << 2;
++    b7 |= ambe_d[33] << 1;
++    b7 |= ambe_d[46];
++
++    // load b8 from ambe_d
++    b8 = 0;
++    b8 |= ambe_d[34] << 2;
++    b8 |= ambe_d[47] << 1;
++    b8 |= ambe_d[48];
++
++    // lookup Ji
++    Ji[1] = AmbeLmprbl[L][0];
++    Ji[2] = AmbeLmprbl[L][1];
++    Ji[3] = AmbeLmprbl[L][2];
++    Ji[4] = AmbeLmprbl[L][3];
++#ifdef AMBE_DEBUG
++    fprintf(stderr, "MBE: AMBE: Ji[1]: %i Ji[2]: %i Ji[3]: %i Ji[4]: %i", Ji[1], Ji[2], Ji[3], Ji[4]);
++    fprintf(stderr, "MBE: AMBE: b5: %i b6: %i b7: %i b8: %i", b5, b6, b7, b8);
++#endif
++
++    // Load Ci,k with the values from the HOC tables
++    // there appear to be a couple typos in eq. 37 so we will just do what makes sense
++    // (3 <= k <= Ji and k<=6)
++    for (k = 3; k <= Ji[1]; k++) {
++        if (k > 6) {
++            Cik[1][k] = 0;
++        }
++        else {
++            Cik[1][k] = AmbeHOCb5[b5][k - 3];
++#ifdef AMBE_DEBUG
++            fprintf(stderr, "MBE: AMBE: C1,%i: %f ", k, Cik[1][k]);
++#endif
++        }
++    }
++
++    for (k = 3; k <= Ji[2]; k++) {
++        if (k > 6) {
++            Cik[2][k] = 0;
++        }
++        else {
++            Cik[2][k] = AmbeHOCb6[b6][k - 3];
++#ifdef AMBE_DEBUG
++            fprintf(stderr, "MBE: AMBE: C2,%i: %f ", k, Cik[2][k]);
++#endif
++        }
++    }
++
++    for (k = 3; k <= Ji[3]; k++) {
++        if (k > 6) {
++            Cik[3][k] = 0;
++        }
++        else {
++            Cik[3][k] = AmbeHOCb7[b7][k - 3];
++#ifdef AMBE_DEBUG
++            fprintf(stderr, "MBE: AMBE: C3,%i: %f ", k, Cik[3][k]);
++#endif
++        }
++    }
++
++    for (k = 3; k <= Ji[4]; k++) {
++        if (k > 6) {
++            Cik[4][k] = 0;
++        }
++        else {
++            Cik[4][k] = AmbeHOCb8[b8][k - 3];
++#ifdef AMBE_DEBUG
++            fprintf(stderr, "MBE: AMBE: C4,%i: %f ", k, Cik[4][k]);
++#endif
++        }
++    }
++
++    // inverse DCT each Ci,k to give ci,j (Tl)
++    l = 1;
++    for (i = 1; i <= 4; i++) {
++        ji = Ji[i];
++        for (j = 1; j <= ji; j++) {
++            sum = 0;
++            for (k = 1; k <= ji; k++) {
++                if (k == 1) {
++                    ak = 1;
++                }
++                else {
++                    ak = 2;
++                }
++#ifdef AMBE_DEBUG
++                fprintf(stderr, "MBE: AMBE: j: %i Cik[%i][%i]: %f ", j, i, k, Cik[i][k]);
++#endif
++                sum = sum + ((float)ak * Cik[i][k] * cosf((M_PI * (float)(k - 1) * ((float)j - (float)0.5)) / (float)ji));
++            }
++            Tl[l] = sum;
++#ifdef AMBE_DEBUG
++            fprintf(stderr, "MBE: AMBE: Tl[%i]: %f", l, Tl[l]);
++#endif
++            l++;
++        }
++    }
++
++    // determine log2Ml by applying ci,j to previous log2Ml
++
++    // fix for when L > L(-1)
++    if (cur_mp->L > prev_mp->L) {
++        for (l = (prev_mp->L) + 1; l <= cur_mp->L; l++) {
++            prev_mp->Ml[l] = prev_mp->Ml[prev_mp->L];
++            prev_mp->log2Ml[l] = prev_mp->log2Ml[prev_mp->L];
++        }
++    }
++
++    prev_mp->log2Ml[0] = prev_mp->log2Ml[1];
++    prev_mp->Ml[0] = prev_mp->Ml[1];
++
++    // Part 1
++    Sum43 = 0;
++    for (l = 1; l <= cur_mp->L; l++) {
++        // eq. 40
++        flokl[l] = ((float)prev_mp->L / (float)cur_mp->L) * (float)l;
++        intkl[l] = (int)(flokl[l]);
++#ifdef AMBE_DEBUG
++        fprintf(stderr, "MBE: AMBE: flok%i: %f, intk%i: %i ", l, flokl[l], l, intkl[l]);
++#endif
++        // eq. 41
++        deltal[l] = flokl[l] - (float)intkl[l];
++        // Native resample_lerp uses a truncated Q16 phase step and caps the
++        // zero-based upper tap at55. At56->32 this deliberately selects the
++        // penultimate prior harmonic at the exact endpoint, unlike the Annex
++        // floating formula above. Preserve the SAME raw-log predictor rule,
++        // without adding a gain, filter or changing the voicing alphabet.
++        if (prev_mp->L == 56) {
++            const unsigned d = 262144U / static_cast<unsigned>(L);
++            const unsigned step = (d * 56U) / 4U;
++            const unsigned phase = step * static_cast<unsigned>(l);
++            const unsigned hi = phase >> 16;
++            if (hi == 0) {
++                intkl[l] = 1;
++                deltal[l] = 0.0f;
++            } else {
++                intkl[l] = static_cast<int>(std::min(hi, 55U));
++                deltal[l] = static_cast<float>((phase >> 1) & 32767U) / 32768.0f;
++            }
++        }
++#ifdef AMBE_DEBUG
++        fprintf(stderr, "MBE: AMBE: delta%i: %f ", l, deltal[l]);
++#endif
++        // eq 43
++        Sum43 = Sum43 + ((((float)1 - deltal[l]) * prev_mp->log2Ml[intkl[l]]) + (deltal[l] * prev_mp->log2Ml[intkl[l] + 1]));
++    }
++
++    Sum43 = (((float)0.65 / (float)cur_mp->L) * Sum43);
++#ifdef AMBE_DEBUG
++    fprintf(stderr, "MBE: AMBE: Sum43: %f", Sum43);
++#endif
++
++    // Part 2
++    Sum42 = 0;
++    for (l = 1; l <= cur_mp->L; l++) {
++        Sum42 += Tl[l];
++    }
++
++    Sum42 = Sum42 / (float)cur_mp->L;
++    BigGamma = cur_mp->gamma - ((float)0.5 * (log((float)cur_mp->L) / log((float)2))) - Sum42;
++    //BigGamma=cur_mp->gamma - ((float)0.5 * log((float)cur_mp->L)) - Sum42;
++
++    // Part 3
++    for (l = 1; l <= cur_mp->L; l++) {
++        c1 = ((float)0.65 * ((float)1 - deltal[l]) * prev_mp->log2Ml[intkl[l]]);
++        c2 = ((float)0.65 * deltal[l] * prev_mp->log2Ml[intkl[l] + 1]);
++        cur_mp->log2Ml[l] = Tl[l] + c1 + c2 - Sum43 + BigGamma;
++        // inverse log to generate spectral amplitudes
++        if (cur_mp->Vl[l] == 1) {
++            cur_mp->Ml[l] = exp((float)0.693 * cur_mp->log2Ml[l]);
++        }
++        else {
++            cur_mp->Ml[l] = unvc * exp((float)0.693 * cur_mp->log2Ml[l]);
++        }
++#ifdef AMBE_DEBUG
++        fprintf(stderr, "MBE: AMBE: flokl[%i]: %f, intkl[%i]: %i", l, flokl[l], l, intkl[l]);
++        fprintf(stderr, "MBE: AMBE: deltal[%i]: %f", l, deltal[l]);
++        fprintf(stderr, "MBE: AMBE: prev_mp->log2Ml[%i]: %f", l, prev_mp->log2Ml[intkl[l]]);
++        fprintf(stderr, "MBE: AMBE: BigGamma: %f c1: %f c2: %f Sum43: %f Tl[%i]: %f log2Ml[%i]: %f Ml[%i]: %f", BigGamma, c1, c2, Sum43, l, Tl[l], l, cur_mp->log2Ml[l], l, cur_mp->Ml[l]);
++#endif
++    }
++
++    return (0);
++}
++
 diff --git a/src/vocoder/imbe/imbe_vocoder.h b/src/vocoder/imbe/imbe_vocoder.h
-index fc43ab62..faec62d5 100644
+index fc43ab62..2ee712b5 100644
 --- a/src/vocoder/imbe/imbe_vocoder.h
 +++ b/src/vocoder/imbe/imbe_vocoder.h
-@@ -29,6 +29,7 @@
- #include <string.h>
- 
- #include "vocoder/imbe/imbe.h"
-+#include "vocoder/imbe/ch_encode.h"
- #include "vocoder/imbe/basic_op.h"
- #include "vocoder/imbe/math_sub.h"
- 
-@@ -60,6 +61,8 @@ public:
+@@ -60,6 +60,14 @@ public:
      const IMBE_PARAM* param(void) { return &my_imbe_param; }
      void set_gain_adjust(float gain_adjust) { d_gain_adjust = gain_adjust; }
  
-+    void encode_parameters(IMBE_PARAM* p, int16_t* vector) { sa_encode(p); encode_frame_vector(p, vector); }
++    // Model-only encoding: spectralLogs contains physical log2 amplitudes in
++    // signed Q10.22, NOT Word16 Q14.2 amplitudes. No PCM analysis is performed.
++    bool imbe_encode_model_log(IMBE_PARAM* model, const Word32* spectralLogs, Word16* frame_vector);
++    // Advance the reconstruction history from exactly the emitted clear frame,
++    // including canonical null/padding frames. No speech synthesis is performed.
++    bool imbe_track_encoded_model(const Word16* frame_vector);
++    void reset_model_predictors();
 +
  private:
      IMBE_PARAM my_imbe_param;
  
+@@ -101,6 +109,7 @@ private:
+     void sa_decode(IMBE_PARAM *imbe_param);
+     void sa_encode_init(void);
+     void sa_encode(IMBE_PARAM *imbe_param);
++    void sa_encode_log(IMBE_PARAM* imbe_param, const Word32* spectralLogs);
+     void uv_synt_init(void);
+     void uv_synt(IMBE_PARAM *imbe_param, Word16 *snd);
+     void v_synt_init(void);
+diff --git a/src/vocoder/imbe/sa_encode.cpp b/src/vocoder/imbe/sa_encode.cpp
+index 31162a88..b6df80d8 100644
+--- a/src/vocoder/imbe/sa_encode.cpp
++++ b/src/vocoder/imbe/sa_encode.cpp
+@@ -31,6 +31,8 @@
+ #include <stdio.h>
+ #include <math.h>
+ #include "vocoder/imbe/imbe_vocoder.h"
++#include "vocoder/imbe/ch_decode.h"
++#include "vocoder/imbe/ch_encode.h"
+ 
+ // ---------------------------------------------------------------------------
+ //  Private Class Members
+@@ -44,6 +46,108 @@ void imbe_vocoder::sa_encode_init(void)
+         sa_prev2[i] = 0;
+ }
+ 
++void imbe_vocoder::reset_model_predictors()
++{
++    decode_init(&my_imbe_param);
++    sa_encode_init();
++}
++
++bool imbe_vocoder::imbe_track_encoded_model(const Word16* frame_vector)
++{
++    if (frame_vector == nullptr)
++        return false;
++    const unsigned widths[8] = {12,12,12,12,11,11,11,7};
++    Word16 frame[8];
++    for (unsigned i = 0; i < 8; ++i) {
++        if (frame_vector[i] < 0 || static_cast<unsigned>(frame_vector[i]) >= (1U << widths[i]))
++            return false;
++        frame[i] = frame_vector[i];
++    }
++    const int b0 = ((frame[0] >> 4) & 0xFC) | ((frame[7] >> 1) & 3);
++    if (b0 > 207)
++        return false;
++    decode_frame_vector(&my_imbe_param, frame);
++    v_uv_decode(&my_imbe_param);
++    sa_decode(&my_imbe_param);
++    num_harms_prev2 = num_harms_prev1;
++    ::memcpy(sa_prev2, sa_prev1, sizeof(sa_prev2));
++    return true;
++}
++
++bool imbe_vocoder::imbe_encode_model_log(IMBE_PARAM* model, const Word32* spectralLogs, Word16* frame_vector)
++{
++    if (model == nullptr || spectralLogs == nullptr || frame_vector == nullptr)
++        return false;
++    const int b0 = model->b_vec[0];
++    if (b0 < 0 || b0 > 207 || model->num_harms < 9 || model->num_harms > 56)
++        return false;
++    IMBE_PARAM pitch = {};
++    Word16 check[8] = {};
++    check[0] = static_cast<Word16>((b0 & 0xFC) << 4);
++    check[7] = static_cast<Word16>((b0 & 3) << 1);
++    decode_frame_vector(&pitch, check);
++    if (model->num_harms != pitch.num_harms || model->num_bands != pitch.num_bands ||
++        model->b_vec[1] < 0 || static_cast<unsigned>(model->b_vec[1]) >= (1U << model->num_bands))
++        return false;
++    // Quantize normally, then evaluate legal adjacent spectral indices against
++    // the actual decoder reconstruction from this SAME pre-frame history.
++    // Pitch, voicing, bit allocation and the requested gain are unchanged.
++    const imbe_vocoder beforeFrame = *this;
++    IMBE_PARAM working = *model;
++    sa_encode_log(&working, spectralLogs);
++    const int L = working.num_harms;
++    const auto distortion = [&](IMBE_PARAM trial) -> double {
++        Word16 encoded[8] = {};
++        encode_frame_vector(&trial, encoded);
++        imbe_vocoder decoded = beforeFrame;
++        if (!decoded.imbe_track_encoded_model(encoded))
++            return 1.0e100;
++        double sum = 0.0;
++        for (int i = 0; i < L; ++i) {
++            const double desired = static_cast<double>(spectralLogs[i]) / 4194304.0 - d_gain_adjust;
++            const double actual = static_cast<double>(decoded.sa_prev1[i + 1]) / 4194304.0;
++            const double error = actual - desired;
++            sum += error * error;
++        }
++        return sum;
++    };
++    double best = distortion(working);
++    // A fixed two-pass coordinate neighbourhood bounds CPU cost; strict
++    // improvement keeps ties and the ordinary quantizer result deterministic.
++    for (int pass = 0; pass < 2; ++pass) {
++        bool improved = false;
++        for (int index = 2; index <= L + 1; ++index) {
++            const int width = index == 2 ? 6 : working.bit_alloc[index - 3];
++            if (width <= 0 || width > 15)
++                continue;
++            const int maximum = (1 << width) - 1;
++            const Word16 old = working.b_vec[index];
++            Word16 selected = old;
++            for (int step = -1; step <= 1; step += 2) {
++                const int value = old + step;
++                if (value < 0 || value > maximum)
++                    continue;
++                IMBE_PARAM trial = working;
++                trial.b_vec[index] = static_cast<Word16>(value);
++                const double score = distortion(trial);
++                if (score + 1.0e-12 < best) {
++                    best = score;
++                    selected = static_cast<Word16>(value);
++                }
++            }
++            if (selected != old) {
++                working.b_vec[index] = selected;
++                improved = true;
++            }
++        }
++        if (!improved)
++            break;
++    }
++    encode_frame_vector(&working, frame_vector);
++    // Commit only the exact selected wire frame to BOTH predictor histories.
++    return imbe_track_encoded_model(frame_vector);
++}
++
+ void imbe_vocoder::sa_encode(IMBE_PARAM* imbe_param)
+ {
+     Word16 gain_vec[6], gain_r[6];
+@@ -89,19 +193,242 @@ void imbe_vocoder::sa_encode(IMBE_PARAM* imbe_param)
+     sa_ptr = imbe_param->sa;
+     vec32_ptr = vec32_tmp;
+     for (i = 0; i < num_harms; i++) {
++        // Word16 spectral amplitudes are Q14.2. Log2(0) returns zero
++        // (amplitude 1), whereas Log2(1) is -2 (amplitude 0.25).
++        // Use the smallest representable positive value for empty bins.
++        const Word16 spectralAmplitude = *sa_ptr++;
++        const Word32 logAmplitude = Log2(spectralAmplitude > 0 ? spectralAmplitude : 1);
++        index = (UWord16)(k_acc >> 24);                    // Get integer part
++        si_coef = (Word16)((k_acc - ((UWord32)index << 24)) >> 9); // Get fractional part 
++
++
++        if (si_coef == 0) {
++            tmp_word32 = L_mpy_ls(sa_prev2[index], ro_coef);                        // sa_prev2 here is in Q10.22 format 
++            *vec32_ptr = L_sub(logAmplitude, tmp_word32);
++            sum = L_add(sum, sa_prev2[index]);                                      // sum in Q10.22 format
++        }
++        else {
++            tmp_word32 = L_mpy_ls(sa_prev2[index], sub(0x7FFF, si_coef));
++            sum = L_add(sum, tmp_word32);
++            *vec32_ptr = L_sub(logAmplitude, L_mpy_ls(tmp_word32, ro_coef));
++
++            tmp_word32 = L_mpy_ls(sa_prev2[index + 1], si_coef);
++            sum = L_add(sum, tmp_word32);
++            *vec32_ptr = L_sub(*vec32_ptr, L_mpy_ls(tmp_word32, ro_coef));
++
++        }
++        if (d_gain_adjust)
++            *vec32_ptr = L_sub(*vec32_ptr, (Word32)(d_gain_adjust * float(1 << 22)));
++        vec32_ptr++;
++
++        k_acc += k_coef;
++    }
++
++    imbe_param->div_one_by_num_harm_sh = tmp = norm_s(num_harms);
++    imbe_param->div_one_by_num_harm = tmp1 = div_s(0x4000, num_harms << tmp); // calculate 1/num_harms with scaling for better pricision
++                                                                              // save result to use late  
++    sum = L_shr(L_mpy_ls(L_mpy_ls(sum, ro_coef), tmp1), (14 - tmp));
++
++    for (i = 0; i < num_harms; i++)
++        t_vec[i] = extract_h(L_shl(L_add(vec32_tmp[i], sum), 5));		                     // t_vec has Q5.11 format
++    //////////////////////////////////////////////
++    //
++    //  Encode T vector
++    //
++    //////////////////////////////////////////////
++    index = num_harms - NUM_HARMS_MIN;
++
++    // Unpack bit allocation table's item
++    get_bit_allocation(num_harms, imbe_param->bit_alloc);
++    lmprbl_item = lmprbl_tbl[index];
++
++    // Encoding the Higher Order DCT Coefficients
++    t_vec_ptr = t_vec;
++    b_vec_ptr = &imbe_param->b_vec[8];
++    ba_ptr = &imbe_param->bit_alloc[5];
++    for (i = 0; i < NUM_PRED_RES_BLKS; i++) {
++        bl_len = (lmprbl_item >> 28) & 0xF; lmprbl_item <<= 4;
++
++        dct(t_vec_ptr, bl_len, bl_len, c_vec);
++        gain_vec[i] = c_vec[0];
++        /*
++                for(j = 0; j < bl_len; j++)
++                    printf("%g ", (double)t_vec_ptr[j]/2048.);
++                printf("\n");
++                for(j = 0; j < bl_len; j++)
++                    printf("%g ", (double)c_vec[j]/2048.);
++                printf("\n");
++                printf("\n");
++        */
++        for (j = 1; j < bl_len; j++) {
++            num_bits = *ba_ptr++;
++            if (num_bits) {
++                step_size = extract_h(((Word32)hi_ord_std_tbl[j - 1] * hi_ord_step_size_tbl[num_bits - 1]) << 1);
++                *b_vec_ptr = qnt_by_step(c_vec[j], step_size, num_bits);
++            }
++            else
++                *b_vec_ptr = 0;
++
++            b_vec_ptr++;
++        }
++        t_vec_ptr += bl_len;
++    }
++
++    // Encoding the Gain Vector
++    dct(gain_vec, NUM_PRED_RES_BLKS, NUM_PRED_RES_BLKS, gain_r);
++
++    b_vec_ptr = &imbe_param->b_vec[2];
++    ba_ptr = &imbe_param->bit_alloc[0];
++    gss_ptr = (Word16*)&gain_step_size_tbl[index * 5];
++
++    *b_vec_ptr++ = tbl_quant(gain_r[0], (Word16*)&gain_qnt_tbl[0], GAIN_QNT_TBL_SIZE);
++    for (j = 1; j < 6; j++)
++        *b_vec_ptr++ = qnt_by_step(gain_r[j], *gss_ptr++, *ba_ptr++);
++
++    //////////////////////////////////////////////
++    //
++    //  Decode T vector
++    //
++    //////////////////////////////////////////////
++    ba_ptr = imbe_param->bit_alloc;
++    b_vec_ptr = &imbe_param->b_vec[2];
++
++    // Decoding the Gain Vector. gain_vec has signed Q5.11 format
++    gss_ptr = (Word16*)&gain_step_size_tbl[index * 5];
++    gain_vec[0] = gain_qnt_tbl[*b_vec_ptr++];
++
++    for (i = 1; i < 6; i++)
++        gain_vec[i] = extract_l(L_shr(deqnt_by_step(*b_vec_ptr++, *gss_ptr++, *ba_ptr++), 5));
++
++    idct(gain_vec, NUM_PRED_RES_BLKS, NUM_PRED_RES_BLKS, gain_r);
++
++    v_zap(t_vec, NUM_HARMS_MAX);
++    lmprbl_item = lmprbl_tbl[index];
++
++    // Decoding the Higher Order DCT Coefficients
++    t_vec_ptr = t_vec;
++    for (i = 0; i < NUM_PRED_RES_BLKS; i++) {
++        bl_len = (lmprbl_item >> 28) & 0xF; lmprbl_item <<= 4;
++        v_zap(c_vec, MAX_BLOCK_LEN);
++        c_vec[0] = gain_r[i];
++        for (j = 1; j < bl_len; j++) {
++            num_bits = *ba_ptr++;
++            if (num_bits) {
++                step_size = extract_h(((Word32)hi_ord_std_tbl[j - 1] * hi_ord_step_size_tbl[num_bits - 1]) << 1);
++                c_vec[j] = extract_l(L_shr(deqnt_by_step(*b_vec_ptr, step_size, num_bits), 5));
++            }
++            else
++                c_vec[j] = 0;
++
++            b_vec_ptr++;
++        }
++
++        idct(c_vec, bl_len, bl_len, t_vec_ptr);
++        t_vec_ptr += bl_len;
++    }
++
++    //////////////////////////////////////////////
++    //
++    //  Reconstruct Spectral Amplitudes
++    //
++    //////////////////////////////////////////////
++    k_acc = k_coef;
++    vec32_ptr = vec32_tmp;
++
++    for (i = num_harms_prev2 + 1; i < NUM_HARMS_MAX + 2; i++)
++        sa_prev2[i] = sa_prev2[num_harms_prev2];
++
++    for (i = 0; i < num_harms; i++) {
++        index = (UWord16)(k_acc >> 24);                    // Get integer part
++        si_coef = (Word16)((k_acc - ((UWord32)index << 24)) >> 9); // Get fractional part 
++
++        if (si_coef == 0) {
++            tmp_word32 = L_mpy_ls(sa_prev2[index], ro_coef);                        // sa_prev2 here is in Q10.22 format 
++            *vec32_ptr++ = L_add(L_shr(L_deposit_h(t_vec[i]), 5), tmp_word32);     // Convert t_vec to Q10.22 and add ...
++        }
++        else {
++            tmp_word32 = L_mpy_ls(sa_prev2[index], sub(0x7FFF, si_coef));
++            *vec32_ptr = L_add(L_shr(L_deposit_h(t_vec[i]), 5), L_mpy_ls(tmp_word32, ro_coef));
++
++            tmp_word32 = L_mpy_ls(sa_prev2[index + 1], si_coef);
++            *vec32_ptr = L_add(*vec32_ptr, L_mpy_ls(tmp_word32, ro_coef));
++
++            vec32_ptr++;
++        }
++
++        k_acc += k_coef;
++    }
++
++    for (i = 1; i <= num_harms; i++)
++        sa_prev2[i] = L_sub(vec32_tmp[i - 1], sum);
++
++    num_harms_prev2 = num_harms;
++}
++
++
++// Model-domain counterpart using precomputed signed Q10.22 log amplitudes.
++void imbe_vocoder::sa_encode_log(IMBE_PARAM* imbe_param, const Word32* spectralLogs)
++{
++    Word16 gain_vec[6], gain_r[6];
++    UWord16 index, i, j, num_harms;
++    Word16* ba_ptr, *t_vec_ptr, *b_vec_ptr, *gss_ptr;
++    Word16 t_vec[NUM_HARMS_MAX], c_vec[MAX_BLOCK_LEN];
++    Word32 lmprbl_item;
++    Word16 bl_len, step_size, num_bits, tmp, ro_coef, si_coef, tmp1;
++    UWord32 k_coef, k_acc;
++    Word32 sum, tmp_word32, vec32_tmp[NUM_HARMS_MAX], * vec32_ptr;
++
++    num_harms = imbe_param->num_harms;
++
++    // Calculate num_harms_prev2/num_harms. Result save in unsigned format Q8.24
++    if (num_harms == num_harms_prev2)
++        k_coef = (Word32)CNST_ONE_Q8_24;
++    else if (num_harms > num_harms_prev2)
++        k_coef = (Word32)div_s(num_harms_prev2 << 9, num_harms << 9) << 9;
++    else {
++        // imbe_param->num_harms < num_harms_prev2
++        k_coef = 0;
++        tmp = num_harms_prev2;
++        while (tmp > num_harms) {
++            tmp -= num_harms;
++            k_coef += (Word32)CNST_ONE_Q8_24;
++        }
++        k_coef += (Word32)div_s(tmp << 9, num_harms << 9) << 9;
++    }
++
++    // Calculate prediction coefficient
++    if (num_harms <= 15)
++        ro_coef = CNST_0_4_Q1_15;
++    else if (num_harms <= 24)
++        ro_coef = num_harms * CNST_0_03_Q1_15 - CNST_0_05_Q1_15;
++    else
++        ro_coef = CNST_0_7_Q1_15;
++
++    for (i = num_harms_prev2 + 1; i < NUM_HARMS_MAX + 2; i++)
++        sa_prev2[i] = sa_prev2[num_harms_prev2];
++
++    k_acc = k_coef;
++    sum = 0;
++
++    vec32_ptr = vec32_tmp;
++    for (i = 0; i < num_harms; i++) {
++        // Word16 spectral amplitudes are Q14.2. Log2(0) returns zero
++        // (amplitude 1), whereas Log2(1) is -2 (amplitude 0.25).
++        // Use the smallest representable positive value for empty bins.
++        const Word32 logAmplitude = spectralLogs[i];
+         index = (UWord16)(k_acc >> 24);                    // Get integer part
+         si_coef = (Word16)((k_acc - ((UWord32)index << 24)) >> 9); // Get fractional part 
+ 
+ 
+         if (si_coef == 0) {
+             tmp_word32 = L_mpy_ls(sa_prev2[index], ro_coef);                        // sa_prev2 here is in Q10.22 format 
+-            *vec32_ptr = L_sub(Log2(*sa_ptr++), tmp_word32);
++            *vec32_ptr = L_sub(logAmplitude, tmp_word32);
+             sum = L_add(sum, sa_prev2[index]);                                      // sum in Q10.22 format
+         }
+         else {
+             tmp_word32 = L_mpy_ls(sa_prev2[index], sub(0x7FFF, si_coef));
+             sum = L_add(sum, tmp_word32);
+-            *vec32_ptr = L_sub(Log2(*sa_ptr++), L_mpy_ls(tmp_word32, ro_coef));
++            *vec32_ptr = L_sub(logAmplitude, L_mpy_ls(tmp_word32, ro_coef));
+ 
+             tmp_word32 = L_mpy_ls(sa_prev2[index + 1], si_coef);
+             sum = L_add(sum, tmp_word32);
+diff --git a/src/vocoder/imbe7200x4400_const.h b/src/vocoder/imbe7200x4400_const.h
+index 51360ea5..3d537149 100644
+--- a/src/vocoder/imbe7200x4400_const.h
++++ b/src/vocoder/imbe7200x4400_const.h
+@@ -109,7 +109,7 @@ const float ba[48][5][2] = {
+     // L=22
+     {{5, 0.086800}, {5, 0.056280}, {4, 0.067200}, {4, 0.058000}, {4, 0.052800}},
+     // L=23
+-    {{5, 0.086800}, {4, 0.080400}, {4, 0.067200}, {4, 0.068000}, {4, 0.052800}},
++    {{5, 0.086800}, {4, 0.080400}, {4, 0.067200}, {4, 0.058000}, {4, 0.052800}},
+     // L=24
+     {{5, 0.086800}, {4, 0.080400}, {4, 0.067200}, {4, 0.058000}, {4, 0.052800}},
+     // L=25

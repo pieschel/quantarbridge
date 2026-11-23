@@ -5,6 +5,12 @@ This image contains prebuilt ARM64 versions of QuantarBridge, the pinned
 DVMHost stack, and optional tetra-codec. Private radio, BrandMeister, dashboard,
 and location settings are deliberately not embedded.
 
+Release v0.1.6 includes the corrected direct converters in both directions,
+automatic incoming DMR-to-P25 level adjustment, and the direct BrandMeister
+dashboard service-status correction. The accepted running-system audio
+settings are supplied as defaults. This installation image is separate from
+the private station backup; it requires fresh station configuration.
+
 Supported image target
 ----------------------
 
@@ -37,6 +43,10 @@ First configuration
 4. Enter the assigned repeater, frequency, P25, and BrandMeister values.
    Voice, TMS, and LRRP use the direct BrandMeister connection by default.
 5. Verify voice and packet data in both directions before enabling watchdogs.
+
+Flashing replaces the target card. Keep an existing station backup separate.
+Automated ARM64, SSH/sudo, configuration and filesystem checks do not replace
+a physical Raspberry Pi boot and RF test of this image.
 
 The setup command stores credentials only under
 /home/quantar/quantar-runtime with restrictive permissions. To reconfigure,
