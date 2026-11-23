@@ -1,0 +1,51 @@
+{
+  "upstream_commit": "01979084df9fc6a5737fac9efb213430268377c9",
+  "patch": "dvmhost-immediate-response.patch",
+  "patch_sha256": "d89909d7041c0c5003d7414967ed60eb38f16f357b4a316d540c9b75b2064bce",
+  "source_files": {
+    "src/host/p25/packet/Data.cpp": "ada9bf5e867a0e622b6fbdde1363378c4e3ce71ec4b37797497275897a602238",
+    "src/host/p25/packet/Data.h": "6f374230c025b9bb7affa3b8e6b0146788fc79824bbec7107ed5b96232178bd6"
+  },
+  "public_transforms": [
+    "Retain configurable ARS server and peer address API with generic defaults.",
+    "Restore existing public synthetic helpers in place of disabled station-specific raw-frame replay experiments.",
+    "Remove private raw packet artifacts, decoded text diagnostics and diagnostic transmit probe.",
+    "Preserve metadata-only TMS text length logging."
+  ],
+  "equivalence": {
+    "accepted_response_guard_methods": 21,
+    "all_equal_after_configurable_address_symbol_normalization": true,
+    "synthetic_runtime_harness": "43 cases / 351 checks",
+    "methods": {
+      "bool Data::hasLLIdFNEReg(": "e0048c879623f7538ea57272f2f4d135aae2ef9386566b06efbe86895a067328",
+      "bool Data::processConvDataReg(": "e31f93357556d5181b3b46a1a71dda035e0d23386a4f0969cb301c9f6a5dde06",
+      "bool Data::handleMotorolaScepArsRegistration(": "87145073e650aa54047679913d41a995a52c19223554ef7b16160bef1db1d3bd",
+      "bool Data::handleMotorolaArsRefresh(": "47191314808f1c9341ad7ad6c62281950fdc5a6a14b77082732588131990f21c",
+      "void Data::writeMotorolaTmsServiceAvailability(": "e8baa15e85aa648e487e9c64d37bdde32ee14ccc3cce2a865f58eac0450b74a6",
+      "void Data::writeRF_PDU_User(": "a37b38dacae18576ef81b8be575145c05082bbd07707054e5ae96140f4c0d89e",
+      "void Data::writeRF_PDU(": "402235a297dee6f5363cd5c4ff88374a1b867ca91168969ee6f21faaf1b1399c",
+      "void Data::writeRF_PDU_Reg_Response(": "1c4f9a8ad2c718f81a06a73affbe7c8f2b52f71ebcbacbf0110c8add71854530",
+      "void Data::writeRF_PDU_Ack_Response(": "f5ceceba736dc939bd25220773c33fc2d26f3d9b9a0488233af14c4e3f147289",
+      "bool Data::beginImmediateResponse(": "9b93048fea445556252533a95d0517af10390e0470d4bb9e039b4dcf0f4053d7",
+      "void Data::commitImmediateResponse(": "d77f236ae2f1d7af5499ad943e74fb41d5ba11c3a1e0bfe6c55bf0af8cafa324",
+      "void Data::forgetImmediateRetry(": "5b9acc90f0640178c5ad7fd4a75ff86396b3d6cdab841de0a668c697ca1cb5de",
+      "bool Data::immediateRetryAckMatches(": "34103c015a28736ffba7139be2553ee15b9301c536bd493a67a55a1615667d93",
+      "bool Data::hasPendingImmediateSession(": "ba8541792562e302afc7cbc0d62f6b217172c7098418d801a0028c9eccc1778b",
+      "void Data::requestImmediateReplay(": "356fc65ce0ef5f5c40643c0bafcb6dff106220282aad476ac1b5bdd4279c9649",
+      "void Data::requestImmediateRetry(": "2bec958db4e38eb252fbce8ca69cc7ff635d794e765c51234a9ec02422c7052f",
+      "void Data::queueImmediateTimeoutRetry(": "b83e5cab9f928fae117e6685459a1b6e55510f905e68e89c9031a8e8e054e741",
+      "bool Data::serviceImmediateResponses(": "f4cd7226eb5c7264efa3a7d49da6d32021e1b810307871e4b7b8d5a4d4c1c7a7",
+      "bool Data::deferMotorolaDataForNetworkVoice(": "f0be4635dd75699d58fe818a4b149253fce8c9d72931978ad6ce3530f4417f76",
+      "decoded_RSP_callback": "e5d55121b3716e0c0efe983a8ad085f4053fd509bd6cbb8c357e23e8939d5a6d",
+      "clock_prefix": "8d8f3800d23e9e330270e60a7e2edceef7486f78c77ff7357388b724b5195c3b"
+    }
+  },
+  "required_configuration": {
+    "protocols.p25.repeatDataPacket": false
+  },
+  "limits": [
+    "Protects immediate conventional registration and recognized paired Motorola SCEP/ARS responses, their owned retries and existing timed voice guard.",
+    "Does not claim that every generic PDU writer is gated.",
+    "Synthetic harness stubs parser, assembler, FEC, modem and lookup leaves; no physical RF or concurrency validation is claimed."
+  ]
+}

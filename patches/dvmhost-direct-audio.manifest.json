@@ -1,0 +1,177 @@
+{
+  "schema": 1,
+  "upstream": {
+    "repository": "https://github.com/DVMProject/dvmhost",
+    "commit": "01979084df9fc6a5737fac9efb213430268377c9"
+  },
+  "apply_after": [
+    "dvmhost.patch",
+    "dvmhost-quantar-rssi.patch"
+  ],
+  "patch": "dvmhost-direct-audio.patch",
+  "patch_sha256": "89dfe38b75c39d7954fb9d34d300809d9baa2a165bc6c46be263ce0f9704088a",
+  "scope": "Accepted bidirectional direct model conversion and automatic DMR-to-P25 leveler. Numerical source code is unchanged; no private recordings, firmware, runtime configuration or backup copies are included.",
+  "files": {
+    "src/bridge/HostBridge.cpp": {
+      "accepted_source_sha256": "89153dfb223cbc2e4d19922e100c0313f94ef2044abdb22a8c8e5040d2bfd122",
+      "public_source_sha256": "159bfd10c640df509d7fbda0129565e8d56075875b79470707572b6cf3195865",
+      "transformations": [
+        "CRLF to LF",
+        "Merge the accepted forward transport idle cadence and immediate full-burst flush with the accepted reverse leveler/call code"
+      ],
+      "accepted_forward_transport_source_sha256": "27d79c920838c9a483ef89d9f81f379e73374064a4ae785753ba0db91b40ec58"
+    },
+    "src/bridge/HostBridge.h": {
+      "accepted_source_sha256": "b66ebe42e245af99ad9c1f9c291ca39850d840f63d9fe5f9ad2d602aecb77fe2",
+      "public_source_sha256": "e5099f8e7bbe2d93725018cdc506ebb19a4ee01a9530d576eeb7eb4a6063d85e",
+      "transformations": [
+        "CRLF to LF",
+        "Merge the accepted forward transport idle cadence and immediate full-burst flush with the accepted reverse leveler/call code"
+      ],
+      "accepted_forward_transport_source_sha256": "e5099f8e7bbe2d93725018cdc506ebb19a4ee01a9530d576eeb7eb4a6063d85e"
+    },
+    "src/bridge/HostBridge.DMR.cpp": {
+      "accepted_source_sha256": "5689ae11515d954c29eaea50929984c34ac2228f84628b88ac7b472162b20f8a",
+      "public_source_sha256": "2109f1ee8af81904c283945cf226e2909b468c346b74afc83efb29cb6a34dd43",
+      "transformations": [
+        "CRLF to LF",
+        "Remove three station-specific diagnostic-only logging blocks",
+        "Merge the accepted forward transport idle cadence and immediate full-burst flush with the accepted reverse leveler/call code"
+      ],
+      "accepted_forward_transport_source_sha256": "8f6a7e96bbe69c63fb5cc9288d66181ac79ecba8ac4f18519ffa4ebbace2c395"
+    },
+    "src/bridge/HostBridge.P25.cpp": {
+      "accepted_source_sha256": "7639a8f50899723e273aa84b46f84558fbb9499806fc2e74101e22fca789065f",
+      "public_source_sha256": "7639a8f50899723e273aa84b46f84558fbb9499806fc2e74101e22fca789065f",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/bridge/P25ImbeSync.h": {
+      "accepted_source_sha256": "0ba4007d1d63ce6b764f5782dc46760ee73f746f6ec1a9bb1f8655e9340d9fe9",
+      "public_source_sha256": "0f607ab2222b70ad71f12214295b87305e9d50dc51e2015534417339634ed711",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/bridge/network/PeerNetwork.cpp": {
+      "accepted_source_sha256": "ab2a9b51050848360899c6671b798092fc455015d77e1c3dd79e809c79c8d06f",
+      "public_source_sha256": "3134ac7e3d11713017b77fdd836818460620c8f029ff94e3203bfafc0707f503",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/bridge/network/PeerNetwork.h": {
+      "accepted_source_sha256": "c5fdcff773fe12c4a294c79c9d5a184d55af9bd7e62cc9428b84fe9fbd44f405",
+      "public_source_sha256": "c5fdcff773fe12c4a294c79c9d5a184d55af9bd7e62cc9428b84fe9fbd44f405",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/common/network/BaseNetwork.cpp": {
+      "accepted_source_sha256": "3834d6f87a2434ce8132089963acee81c9af5f6bd959160c3acc84b422c6947b",
+      "public_source_sha256": "3834d6f87a2434ce8132089963acee81c9af5f6bd959160c3acc84b422c6947b",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/common/network/BaseNetwork.h": {
+      "accepted_source_sha256": "4849440a5a46cbc91400031d84ad37cc4640f71b682b9d761412b3c5e84172eb",
+      "public_source_sha256": "4849440a5a46cbc91400031d84ad37cc4640f71b682b9d761412b3c5e84172eb",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/common/network/Network.cpp": {
+      "accepted_source_sha256": "172870433b450e20d2ba74ca603da5add839bd72e01192e506870389a08efb00",
+      "public_source_sha256": "172870433b450e20d2ba74ca603da5add839bd72e01192e506870389a08efb00",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/common/network/Network.h": {
+      "accepted_source_sha256": "3bf53ebd3421221a8435e236991d35f525d7b7ebb920b1df2928310d001a35eb",
+      "public_source_sha256": "3bf53ebd3421221a8435e236991d35f525d7b7ebb920b1df2928310d001a35eb",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/MBEEncoder.cpp": {
+      "accepted_source_sha256": "1abdc3a3ec5afcc0d52c0e3c8b98838cf957655837f4e0ef54504d58a21ac818",
+      "public_source_sha256": "1abdc3a3ec5afcc0d52c0e3c8b98838cf957655837f4e0ef54504d58a21ac818",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/imbe/imbe_vocoder.h": {
+      "accepted_source_sha256": "a8fbeb7a2bfd17d0552f4fc8a7fffa6d756fffba7a796ed009f857838693bc52",
+      "public_source_sha256": "a8fbeb7a2bfd17d0552f4fc8a7fffa6d756fffba7a796ed009f857838693bc52",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/imbe/sa_encode.cpp": {
+      "accepted_source_sha256": "eaa0ec03945ac0ef90711d2a2da6aa5ffc3505c5e8ef31b883064c9966c9dda1",
+      "public_source_sha256": "5259ff0fc7f87accc310b2c02d91f7c52a310b0f191925f2889e111f06c544b6",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/AmbeToP25Float.cpp": {
+      "accepted_source_sha256": "8a552efb4ae2e1521703e2867c9b731ad812dc3606c568d108cfdce191f4e537",
+      "public_source_sha256": "ec20d386f787aa66625fc1071772ad2d4247613fdcf954d01c42679e729f6314",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/AmbeToP25Float.h": {
+      "accepted_source_sha256": "ef1d8c7312baf6ba57a45b6356b2b5df544d119ad63104148df90d30b9ca6005",
+      "public_source_sha256": "ef1d8c7312baf6ba57a45b6356b2b5df544d119ad63104148df90d30b9ca6005",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/P25ToAmbeFloat.cpp": {
+      "accepted_source_sha256": "c16e0c63d40b9ea9ff305e25d386d8391b91aab431a7acc2a52adefde9f0abe4",
+      "public_source_sha256": "ac6224ba972f58ca1eef60f4f4bf72337d3b2796e42f5421a31f88f7f29c97f0",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/P25ToAmbeFloat.h": {
+      "accepted_source_sha256": "65f2b5ff57c6505fa958685113493d21265e36c5dbe6ae795d0a4130b957f5fe",
+      "public_source_sha256": "65f2b5ff57c6505fa958685113493d21265e36c5dbe6ae795d0a4130b957f5fe",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/P25ToAmbeFloatQuantizer.inc": {
+      "accepted_source_sha256": "f10f341a41e631ccfb41947039d61d4750e2c95320e470e2714e811322014085",
+      "public_source_sha256": "cb2206835a98b93652d3c6bec41fa3af1e60b0678da1b52a6530693bdfe9fc83",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/ReverseLevelerControl.inc": {
+      "accepted_source_sha256": "00e5cc3902f10c70046084f6c589e17856a9a8cfdbbd9994fddf0df6044aa4c7",
+      "public_source_sha256": "0915e51fec0aad5ddac36fe0d889a406498d7b409fabe25dd6e57566322edae2",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/SourceGridModelDecode.inc": {
+      "accepted_source_sha256": "adc775012f84ca231e41be4bcb5782aba4fa02c2f76e458797a86dd50e28678d",
+      "public_source_sha256": "dcc4f387d8342215362c269080dcf88e33f07bd2da98d421d9fe830554af2614",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    },
+    "src/vocoder/imbe7200x4400_const.h": {
+      "accepted_source_sha256": "0741ba15036000aeb0dbece74aafdf8b2db9fbd87c50d159cdcfce96db844983",
+      "public_source_sha256": "0741ba15036000aeb0dbece74aafdf8b2db9fbd87c50d159cdcfce96db844983",
+      "transformations": [
+        "CRLF to LF"
+      ]
+    }
+  }
+}

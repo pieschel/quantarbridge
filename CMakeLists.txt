@@ -113,6 +113,9 @@ if(BUILD_TESTING)
 
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
+    add_test(NAME p25_immediate_response_guard
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/immediate-response/build_test.py"
+        --dvmhost-source "${DVMHOST_SOURCE_DIR}" --compiler "${CMAKE_CXX_COMPILER}")
     add_executable(dvm_yaml_config_test tests/DvmYamlConfigTest.cpp)
     target_include_directories(dvm_yaml_config_test PRIVATE "${DVMHOST_SOURCE_DIR}/src")
     target_link_libraries(dvm_yaml_config_test PRIVATE

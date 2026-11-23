@@ -46,10 +46,11 @@ jobs:
         run: |
           git clone https://github.com/DVMProject/dvmhost.git "$RUNNER_TEMP/dvmhost"
           git -C "$RUNNER_TEMP/dvmhost" checkout --detach 01979084df9fc6a5737fac9efb213430268377c9
-          for patch in dvmhost.patch dvmhost-quantar-rssi.patch dvmhost-direct-audio.patch; do
+          for patch in dvmhost.patch dvmhost-quantar-rssi.patch dvmhost-direct-audio.patch dvmhost-immediate-response.patch; do
             git -C "$RUNNER_TEMP/dvmhost" apply --check "$GITHUB_WORKSPACE/patches/$patch"
             git -C "$RUNNER_TEMP/dvmhost" apply "$GITHUB_WORKSPACE/patches/$patch"
           done
+          python3 "$GITHUB_WORKSPACE/scripts/verify_audio_source.py" "$RUNNER_TEMP/dvmhost"
           cmake -S "$RUNNER_TEMP/dvmhost" -B "$RUNNER_TEMP/dvmhost/build" \
             -DCMAKE_BUILD_TYPE=Release -DENABLE_TUI_SUPPORT=0 -DENABLE_SETUP_TUI=0
           cmake --build "$RUNNER_TEMP/dvmhost/build" --parallel 2

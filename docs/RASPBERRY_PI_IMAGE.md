@@ -95,6 +95,10 @@ direct-converter flags. P25 to DMR uses `directP25ToAmbe: true`,
 high-cut and de-esser disabled. DMR to P25 uses `directAmbeToP25: true`,
 `directReverseScale: 4.0` and `directReverseGain: -0.15956886662028558`.
 
+The matching DVMHost patch also defers immediate registration and ARS
+responses until P25 network voice and its queued transmit tail have finished,
+preserving their acknowledgement/retry state rather than interrupting voice.
+
 Incoming DMR level adjustment is enabled with:
 
 ```yaml
@@ -117,6 +121,10 @@ timestamp, without replaying older calls or subscriptions.
 
 Existing installations need the matching DVMHost patch and converter settings
 together; copying only the new flags into an older binary is insufficient.
+An older private dashboard `serviceUnits` list may also require removal of an
+obsolete critical DMR Gateway entry when using direct BrandMeister. Fresh
+setup already generates the five required services; the dashboard continues
+to honor explicitly configured critical services.
 Do not overwrite a private runtime configuration with a public example or
 rerun setup with guessed station values. See the
 [v0.1.6 release notes](../release-notes/v0.1.6.md).

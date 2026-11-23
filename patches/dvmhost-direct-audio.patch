@@ -1,5 +1,5 @@
 diff --git a/src/bridge/HostBridge.DMR.cpp b/src/bridge/HostBridge.DMR.cpp
-index c1d22921..959b297b 100644
+index c1d22921..f8495908 100644
 --- a/src/bridge/HostBridge.DMR.cpp
 +++ b/src/bridge/HostBridge.DMR.cpp
 @@ -95,15 +95,26 @@ namespace
@@ -426,7 +426,7 @@ index c1d22921..959b297b 100644
          dmrData.setN(m_dmrN);
          dmrData.setSeqNo(m_dmrSeqNo);
          dmrData.setBER(0U);
-@@ -596,14 +640,89 @@ void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
+@@ -596,14 +640,95 @@ void HostBridge::encodeDMRAudioFrame(uint8_t* pcm, uint32_t forcedSrcId, uint32_
  
          dmrData.setData(data);
  
@@ -488,6 +488,8 @@ index c1d22921..959b297b 100644
 +
 +    m_network->writeDMR(dmrData, false);
 +    m_txStreamId = m_network->getDMRStreamId(m_slot);
++    if (m_directP25ToAmbeEnabled)
++        m_directForwardNextIdleMs = directAudioNowMs() + 90U;
 +
 +    m_dmrSeqNo++;
 +    ::memset(m_ambeBuffer, 0x00U, 27U);
@@ -511,6 +513,10 @@ index c1d22921..959b297b 100644
 +    if (encodedAmbe != nullptr) {
 +        ::memcpy(m_ambeBuffer + m_ambeCount * RAW_AMBE_LENGTH_BYTES, encodedAmbe, RAW_AMBE_LENGTH_BYTES);
 +        ++m_ambeCount;
++        // Direct input is already encoded. Do not retain the last complete
++        // 60 ms speech burst until a future source LDU or watchdog callback.
++        if (m_directP25ToAmbeEnabled && m_ambeCount == AMBE_PER_SLOT)
++            flushPendingDMRFrame(forcedSrcId, forcedDstId);
 +        return;
      }
  
@@ -978,7 +984,7 @@ index 11af4ee0..1432114d 100644
 +    m_p25ToAmbeFloat->resetCall();
 +}
 diff --git a/src/bridge/HostBridge.cpp b/src/bridge/HostBridge.cpp
-index 77f46801..eb660999 100644
+index 77f46801..103319fb 100644
 --- a/src/bridge/HostBridge.cpp
 +++ b/src/bridge/HostBridge.cpp
 @@ -29,6 +29,7 @@
@@ -989,15 +995,16 @@ index 77f46801..eb660999 100644
  #include "BridgeMain.h"
  
  using namespace analog;
-@@ -41,6 +42,7 @@ using namespace network::udp;
+@@ -41,6 +42,8 @@ using namespace network::udp;
  #include <algorithm>
  #include <functional>
  #include <random>
 +#include <cmath>
++#include <chrono>
  
  #if !defined(_WIN32)
  #include <unistd.h>
-@@ -222,6 +224,17 @@ HostBridge::HostBridge(const std::string& confFile) :
+@@ -222,6 +225,18 @@ HostBridge::HostBridge(const std::string& confFile) :
      m_udpPackets(),
      m_decoder(nullptr),
      m_encoder(nullptr),
@@ -1011,11 +1018,12 @@ index 77f46801..eb660999 100644
 +    m_directForwardScale(0.9f),
 +    m_directReverseScale(4.0f),
 +    m_directReverseGain(0.0f),
++    m_directForwardNextIdleMs(0U),
 +    m_directCodecMutex(),
      m_mdcDecoder(nullptr),
      m_udpAudio(false),
      m_udpMetadata(false),
-@@ -536,6 +549,35 @@ int HostBridge::run()
+@@ -536,6 +551,35 @@ int HostBridge::run()
          m_encoder->setGainAdjust(m_vocoderEncoderAudioGain);
      }
  
@@ -1051,7 +1059,7 @@ index 77f46801..eb660999 100644
  #if defined(_WIN32)
      initializeAMBEDLL();
      if (m_useExternalVocoder) {
-@@ -649,6 +691,9 @@ int HostBridge::run()
+@@ -649,6 +693,9 @@ int HostBridge::run()
          // ------------------------------------------------------
  
          if (m_network != nullptr) {
@@ -1061,7 +1069,7 @@ index 77f46801..eb660999 100644
              std::lock_guard<std::mutex> lock(HostBridge::s_networkMutex);
              m_network->clock(ms);
  
-@@ -656,7 +701,7 @@ int HostBridge::run()
+@@ -656,7 +703,7 @@ int HostBridge::run()
                  m_networkWatchdog.clock(ms);
  
                  if (m_networkWatchdog.isRunning() && m_networkWatchdog.hasExpired()) {
@@ -1070,7 +1078,15 @@ index 77f46801..eb660999 100644
                          m_networkWatchdog.start();
                          continue;
                      }
-@@ -688,6 +733,14 @@ int HostBridge::run()
+@@ -674,6 +721,7 @@ int HostBridge::run()
+                     }
+ 
+                     m_networkWatchdog.stop();
++                    m_directForwardNextIdleMs = 0U;
+ 
+                     if (m_txMode == TX_MODE_DMR) {
+                         uint32_t endSrcId = m_srcIdOverride != 0U ? m_srcIdOverride : m_srcId;
+@@ -688,6 +736,14 @@ int HostBridge::run()
  
                          callEnd(endSrcId, endDstId);
                      }
@@ -1085,7 +1101,7 @@ index 77f46801..eb660999 100644
  
                      m_callInProgress = false;
                      m_ignoreCall = false;
-@@ -727,12 +780,12 @@ int HostBridge::run()
+@@ -727,12 +783,12 @@ int HostBridge::run()
                      m_p25Crypto->clearMI();
                      m_p25Crypto->resetKeystream();
  
@@ -1104,7 +1120,7 @@ index 77f46801..eb660999 100644
                  }
              }
          }
-@@ -1050,7 +1103,8 @@ bool HostBridge::readParams()
+@@ -1050,7 +1106,8 @@ bool HostBridge::readParams()
          m_vocoderDecoderUvQuality = 64U;
      m_txAudioGain = systemConf["txAudioGain"].as<float>(1.0f);
      m_vocoderEncoderAudioGain = systemConf["vocoderEncoderAudioGain"].as<float>(3.0f);
@@ -1114,7 +1130,7 @@ index 77f46801..eb660999 100644
      if (m_dmrEncodeHighCutHz < 0.0f)
          m_dmrEncodeHighCutHz = 0.0f;
      if (m_dmrEncodeHighCutHz > 3500.0f)
-@@ -1161,6 +1215,46 @@ bool HostBridge::readParams()
+@@ -1161,6 +1218,46 @@ bool HostBridge::readParams()
  
      m_udpAudio = systemConf["udpAudio"].as<bool>(false);
      m_udpMetadata = systemConf["udpMetadata"].as<bool>(false);
@@ -1161,7 +1177,7 @@ index 77f46801..eb660999 100644
      m_udpSendPort = (uint16_t)systemConf["udpSendPort"].as<uint32_t>(34001);
      m_udpSendAddress = systemConf["udpSendAddress"].as<std::string>();
      m_udpReceivePort = (uint16_t)systemConf["udpReceivePort"].as<uint32_t>(34001);
-@@ -1480,6 +1574,12 @@ bool HostBridge::createNetwork()
+@@ -1480,6 +1577,12 @@ bool HostBridge::createNetwork()
  
      // initialize networking
      m_network = new PeerNetwork(address, port, local, id, password, true, debug, dmr, p25, false, analog, true, true, true, allowDiagnosticTransfer, true, false);
@@ -1174,7 +1190,7 @@ index 77f46801..eb660999 100644
  
      m_network->setPacketDump(packetDump);
      m_network->setMetadata(m_identity, 0U, 0U, 0.0F, 0.0F, 0, 0, 0, 0.0F, 0.0F, 0, "");
-@@ -1856,6 +1956,9 @@ uint8_t* HostBridge::generateRTPHeaders(uint8_t msgLen, uint16_t& rtpSeq)
+@@ -1856,6 +1959,9 @@ uint8_t* HostBridge::generateRTPHeaders(uint8_t msgLen, uint16_t& rtpSeq)
  
  void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
  {
@@ -1184,7 +1200,7 @@ index 77f46801..eb660999 100644
      std::string trafficType = LOCAL_CALL;
      if (m_trafficFromUDP) {
          srcId = m_udpSrcId;
-@@ -1892,7 +1995,10 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+@@ -1892,7 +1998,10 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
              if (endDstId == 0U)
                  endDstId = dstId;
  
@@ -1196,7 +1212,7 @@ index 77f46801..eb660999 100644
  
              DMRDEF::DataType::E dataType = DMRDEF::DataType::VOICE_SYNC;
              if (m_dmrN == 0)
-@@ -1914,7 +2020,7 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+@@ -1914,7 +2023,7 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
  
              LogInfoEx(LOG_HOST, DMR_DT_TERMINATOR_WITH_LC ", slot = %u, srcId = %u, dstId = %u, hadCallInProgress = %u", m_slot, endSrcId, endDstId, hadCallInProgress ? 1U : 0U);
  
@@ -1205,11 +1221,12 @@ index 77f46801..eb660999 100644
              srcId = endSrcId;
              dstId = endDstId;
          }
-@@ -1977,6 +2083,23 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+@@ -1977,6 +2086,24 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
      m_p25SeqNo = 0U;
      m_p25N = 0U;
      m_analogN = 0U;
 +    if (m_directP25ToAmbeEnabled || m_directAmbeToP25Enabled) {
++        m_directForwardNextIdleMs = 0U;
 +        m_ambeCount = 0U;
 +        if (m_ambeBuffer != nullptr)
 +            ::memset(m_ambeBuffer, 0x00U, 27U);
@@ -1229,7 +1246,7 @@ index 77f46801..eb660999 100644
      m_dmrEncodeLowPassState1 = 0.0f;
      m_dmrEncodeLowPassState2 = 0.0f;
      m_p25EncodeAgcCurrentGain = 1.0f;
-@@ -1993,9 +2116,17 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
+@@ -1993,9 +2120,17 @@ void HostBridge::callEnd(uint32_t srcId, uint32_t dstId)
      m_p25Crypto->clearMI();
      m_p25Crypto->resetKeystream();
  
@@ -1250,7 +1267,64 @@ index 77f46801..eb660999 100644
  }
  
  /* Helper to process a FNE KMM TEK response. */
-@@ -2834,6 +2965,9 @@ void HostBridge::resetWithNullAudio(uint8_t* data, bool encrypted)
+@@ -2686,6 +2821,47 @@ void* HostBridge::threadUDPAudioProcess(void* arg)
+     return nullptr;
+ }
+ 
++/* Monotonic clock for transport cadence, independent of wall-clock changes. */
++uint64_t HostBridge::directAudioNowMs()
++{
++    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count());
++}
++
++/* Keep a confirmed direct call alive until its unchanged source watchdog ends. */
++void HostBridge::serviceDirectP25ToDmrIdle()
++{
++    std::unique_lock<std::recursive_mutex> directLock(m_directCodecMutex);
++    if (!m_directP25ToAmbeEnabled || m_txMode != TX_MODE_DMR ||
++        m_p25ToAmbeFloat == nullptr || !m_p25ToAmbeFloat->enabled() ||
++        m_network == nullptr || !m_callInProgress || m_ignoreCall ||
++        m_callAlgoId != P25DEF::ALGO_UNENCRYPT || !m_networkWatchdog.isRunning() ||
++        m_networkWatchdog.hasExpired() || m_txStreamId == 0U || m_ambeCount != 0U ||
++        m_directForwardNextIdleMs == 0U || directAudioNowMs() < m_directForwardNextIdleMs)
++        return;
++
++    // Same direct->network lock order as the network clock. The serial receive
++    // thread calls this only after processing any packet it already dequeued.
++    std::lock_guard<std::mutex> networkLock(HostBridge::s_networkMutex);
++    if (m_network->getStatus() != NET_STAT_RUNNING || m_network->hasP25Data())
++        return;
++    std::unique_ptr<dmr::lc::LC> currentLC = m_dmrEmbeddedData.getLC();
++    if (currentLC == nullptr || currentLC->getSrcId() == 0U || currentLC->getDstId() == 0U)
++        return;
++    for (unsigned i = 0U; i < 3U; ++i) {
++        vocoder::P25ToAmbeFloat::Frame frame;
++        m_p25ToAmbeFloat->idleFrame(frame);
++        if (!frame.hasFrame()) {
++            m_directForwardNextIdleMs = 0U;
++            return;
++        }
++        encodeDMRAudioFrame(nullptr, currentLC->getSrcId(), currentLC->getDstId(), frame.bytes.data());
++    }
++    // One burst per tick; no catch-up loop after a scheduling delay. This does
++    // not restart the source watchdog or change its 750 ms timeout.
++    m_directForwardNextIdleMs = directAudioNowMs() + 60U;
++}
++
+ /* Entry point to network processing thread. */
+ 
+ void* HostBridge::threadNetworkProcess(void* arg)
+@@ -2764,6 +2940,8 @@ void* HostBridge::threadNetworkProcess(void* arg)
+                 if (netReadRet && p25Buffer != nullptr) {
+                     bridge->processP25Network(p25Buffer.get(), length);
+                 }
++                if (bridge->m_directP25ToAmbeEnabled)
++                    bridge->serviceDirectP25ToDmrIdle();
+             }
+ 
+             // is the bridge in analog mode?
+@@ -2834,6 +3012,9 @@ void HostBridge::resetWithNullAudio(uint8_t* data, bool encrypted)
  
  void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
  {
@@ -1260,7 +1334,7 @@ index 77f46801..eb660999 100644
      switch (m_txMode) {
      case TX_MODE_DMR:
          {
-@@ -2945,7 +3079,7 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
+@@ -2945,7 +3126,7 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
                  }
  
                  // LDU2
@@ -1269,7 +1343,7 @@ index 77f46801..eb660999 100644
                      for (uint8_t n = m_p25N; n < 18U; n++) {
                          switch (n) {
                          case 9:
-@@ -2989,7 +3123,7 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
+@@ -2989,7 +3170,7 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
                  }
  
                  // LDU2
@@ -1278,7 +1352,7 @@ index 77f46801..eb660999 100644
                      resetWithNullAudio(m_netLDU2, false);
                      m_p25N = 17U;
                  }
-@@ -3022,6 +3156,9 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
+@@ -3022,6 +3203,9 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
              // send P25 LDU1
              if (m_p25N == 8U) {
                  LogInfoEx(LOG_HOST, P25_LDU1_STR " audio (silence padded %u), srcId = %u, dstId = %u", 8U - n, srcId, dstId);
@@ -1288,7 +1362,7 @@ index 77f46801..eb660999 100644
                  m_network->writeP25LDU1(lc, lsd, m_netLDU1, FrameType::DATA_UNIT);
                  m_p25N = 9U;
                  break;
-@@ -3030,6 +3167,9 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
+@@ -3030,6 +3214,9 @@ void HostBridge::padSilenceAudio(uint32_t srcId, uint32_t dstId)
              // send P25 LDU2
              if (m_p25N == 17U) {
                  LogInfoEx(LOG_HOST, P25_LDU2_STR " audio (silence padded %u), algo = $%02X, kid = $%04X", 17U - n, ALGO_UNENCRYPT, 0U);
@@ -1298,7 +1372,7 @@ index 77f46801..eb660999 100644
                  m_network->writeP25LDU2(lc, lsd, m_netLDU2);
                  m_p25N = 0U;
                  break;
-@@ -3081,6 +3221,10 @@ void* HostBridge::threadCallWatchdog(void* arg)
+@@ -3081,6 +3268,10 @@ void* HostBridge::threadCallWatchdog(void* arg)
              uint32_t ms = stopWatch.elapsed();
              stopWatch.start();
  
@@ -1309,7 +1383,7 @@ index 77f46801..eb660999 100644
              if (!bridge->m_trafficFromUDP) {
                  if (bridge->m_localDropTime.isRunning())
                      bridge->m_localDropTime.clock(ms);
-@@ -3133,6 +3277,8 @@ void* HostBridge::threadCallWatchdog(void* arg)
+@@ -3133,6 +3324,8 @@ void* HostBridge::threadCallWatchdog(void* arg)
                  }
              }
  
@@ -1319,7 +1393,7 @@ index 77f46801..eb660999 100644
          }
  
 diff --git a/src/bridge/HostBridge.h b/src/bridge/HostBridge.h
-index ec146e31..6a84da13 100644
+index ec146e31..1b8a32b2 100644
 --- a/src/bridge/HostBridge.h
 +++ b/src/bridge/HostBridge.h
 @@ -30,6 +30,8 @@
@@ -1339,7 +1413,7 @@ index ec146e31..6a84da13 100644
  
  #if defined(_WIN32)
  #define WIN32_LEAN_AND_MEAN
-@@ -232,6 +235,18 @@ private:
+@@ -232,6 +235,19 @@ private:
      vocoder::MBEDecoder* m_decoder;
      vocoder::MBEEncoder* m_encoder;
  
@@ -1353,12 +1427,13 @@ index ec146e31..6a84da13 100644
 +    float m_directForwardScale;
 +    float m_directReverseScale;
 +    float m_directReverseGain;
++    uint64_t m_directForwardNextIdleMs;
 +    std::recursive_mutex m_directCodecMutex;
 +
      mdc_decoder_t* m_mdcDecoder;
      
      bool m_udpAudio;
-@@ -609,7 +624,10 @@ private:
+@@ -609,7 +625,12 @@ private:
       * @param forcedSrcId 
       * @param forcedDstId 
       */
@@ -1367,10 +1442,12 @@ index ec146e31..6a84da13 100644
 +        const uint8_t* encodedAmbe = nullptr);
 +    bool flushPendingDMRFrame(uint32_t srcId, uint32_t dstId);
 +    void finishDirectP25ToDmr(uint32_t srcId, uint32_t dstId);
++    static uint64_t directAudioNowMs();
++    void serviceDirectP25ToDmrIdle();
  
      // Project 25 (HostBridge.P25.cpp)
      /**
-@@ -632,7 +650,8 @@ private:
+@@ -632,7 +653,8 @@ private:
       * @param forcedSrcId 
       * @param forcedDstId 
       */
@@ -2525,10 +2602,10 @@ index 00000000..ada7dab8
 +} // namespace vocoder
 diff --git a/src/vocoder/P25ToAmbeFloat.h b/src/vocoder/P25ToAmbeFloat.h
 new file mode 100644
-index 00000000..e308472a
+index 00000000..51453c15
 --- /dev/null
 +++ b/src/vocoder/P25ToAmbeFloat.h
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,73 @@
 +#pragma once
 +#include <array>
 +#include <cstddef>
@@ -2575,6 +2652,9 @@ index 00000000..e308472a
 +    Status concealErasure(Frame& out);
 +    // Canonical silence also advances the target predictor; used for final slot padding.
 +    Status silenceFrame(Frame& out);
++    // Transport idle: advance only the emitted AMBE predictor. Preserve the
++    // continuing source call and cached speech/erasure state for the next LDU.
++    Status idleFrame(Frame& out);
 +
 +private:
 +    struct Model {

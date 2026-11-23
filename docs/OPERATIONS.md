@@ -16,12 +16,18 @@ The dashboard shows:
 - Last LRRP position for each radio
 - Public ARS server address and bidirectional talkgroup mappings
 
-The direct BrandMeister profile has five required services: DVMHost, DVMFNE,
+The default direct BrandMeister profile has five required services: DVMHost, DVMFNE,
 both DVMBridge directions and QuantarBridge. It does not require a separate
 DMR Gateway. Optional services keep their own status without degrading the
 core-service summary. BrandMeister connection status follows actual log events;
 when recent logs contain none, startup can restore the latest timestamped
 event from an older log without replaying historical calls or subscriptions.
+
+An older private `quantar-dashboard.json` may still list an unused DMR Gateway
+under `serviceUnits` as critical. For a direct BrandMeister installation,
+remove that obsolete entry while preserving the five actual required services
+and any optional services. Updating program files alone does not migrate a
+custom service list or suppress failures of services it still marks critical.
 
 The ARS address is read from `protocols.p25.motorolaPacketData.arsServerAddress`
 when that key exists. Installations whose DVMHost configuration does not expose
@@ -67,6 +73,13 @@ from the runtime YAML files and then reconnects both DVMBridge directions.
 
 Do not tune gain while a recovery timer is restarting services. Fix service
 stability first, then compare the same source audio in both directions.
+
+Registration and ARS replies are held while P25 network voice or its queued
+tail is active. The response queue releases each complete reply only after
+voice, RF state and the transmit queues are idle. Confirmed replies keep their
+own acknowledgement/retry ownership. This prevents those immediate data
+responses from cutting into a DMR-to-P25 voice call; it does not disable all
+P25 packet-data traffic.
 
 ## Direct Audio and Automatic Level Adjustment
 

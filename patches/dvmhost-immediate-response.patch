@@ -1,0 +1,1368 @@
+diff --git a/src/host/p25/packet/Data.cpp b/src/host/p25/packet/Data.cpp
+index 309b701c..fb881867 100644
+--- a/src/host/p25/packet/Data.cpp
++++ b/src/host/p25/packet/Data.cpp
+@@ -52,6 +52,7 @@ using namespace p25::packet;
+ 
+ namespace {
+ constexpr bool kEnableMotorolaTms = false;
++constexpr bool kMotorolaRawCaptureMode = false;
+ uint32_t g_motorolaArsServerIp = 0x0A000002U;
+ uint32_t g_motorolaArsPeerIp = 0x0A000001U;
+ constexpr uint16_t kMotorolaArsPort = 4005U;
+@@ -69,6 +70,15 @@ constexpr const char* kMotorolaTmsP25SentPath = "/home/quantar/quantar-runtime/s
+ constexpr const char* kMotorolaTmsP25FailedPath = "/home/quantar/quantar-runtime/sms/p25-failed";
+ constexpr uint32_t kMotorolaTmsP25OutboxPollMs = 250U;
+ constexpr size_t kMotorolaTmsP25MaxFilesPerPoll = 4U;
++
++constexpr bool isMotorolaShortArsRequest(uint8_t opcode)
++{
++    return opcode == 0x20U || opcode == 0x40U;
++}
++
++static_assert(isMotorolaShortArsRequest(0x20U), "legacy F020 ARS registration must remain supported");
++static_assert(isMotorolaShortArsRequest(0x40U), "F040 ARS refresh must remain supported");
++static_assert(!isMotorolaShortArsRequest(0x00U), "unrecognized ARS requests must remain rejected");
+ // 76 user bytes plus the packet CRC fill exactly five confirmed P25 blocks.
+ // This keeps every RF fragment in the Quantar's proven header/end V.24 path.
+ constexpr size_t kMotorolaTmsP25FragmentBytes = 76U;
+@@ -96,10 +106,12 @@ constexpr uint32_t kMotorolaArpFollowupDelayMs = 8700U;
+ constexpr uint32_t kMotorolaPostArpReplyFollowupDelayMs = 4000U;
+ constexpr uint32_t kMotorolaPostArpReplyArsDelayMs = 4000U;
+ constexpr uint32_t kMotorolaPeerFollowupRetryDelayMs = 4425U;
++constexpr bool kMotorolaReplayRawPeerArp = false;
+ constexpr bool kMotorolaUsePhysicalRfProxy = false;
+ constexpr uint32_t kMotorolaExternalRfProxyRid = 1000002U;
+ constexpr uint32_t kMotorolaPrimarySubscriberRid = 1000001U;
+ constexpr uint32_t kMotorolaBootstrapVirtualPeerRid = 262993U;
++constexpr uint16_t kMotorolaExternalRfProxyArsChecksum = 0xCA4CU;
+ constexpr const char* kMotorolaVirtualPeerCachePath = "/home/quantar/quantar-runtime/log/tms_virtual_peer_targets.txt";
+ std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> g_localSmsRids;
+ std::unordered_map<std::string, uint8_t> g_motorolaPacketNsByDirection;
+@@ -993,6 +1005,8 @@ uint16_t updateChecksum16(uint16_t checksum, const std::vector<uint8_t>& from, c
+     return static_cast<uint16_t>(~sum);
+ }
+ 
++
++
+ uint16_t motorolaPeerChecksumForRidText(const std::string& ridText)
+ {
+     const bool sixDigitRid = ridText.size() == 6U;
+@@ -1003,6 +1017,118 @@ uint16_t motorolaPeerChecksumForRidText(const std::string& ridText)
+         std::vector<uint8_t>(ridText.begin(), ridText.end()));
+ }
+ 
++bool rewriteMotorolaArsTargetIpPacket(const uint8_t* data, uint32_t length, uint32_t targetRid, std::vector<uint8_t>& output)
++{
++    if (data == nullptr || length < 34U || data[0U] != 0x45U || data[9U] != 0x11U) {
++        return false;
++    }
++
++    const uint16_t srcPort = (static_cast<uint16_t>(data[20U]) << 8) | data[21U];
++    const uint16_t dstPort = (static_cast<uint16_t>(data[22U]) << 8) | data[23U];
++    if (srcPort != 4005U || dstPort != 4005U) {
++        return false;
++    }
++
++    const uint8_t* udpPayload = data + 28U;
++    const uint32_t udpPayloadLength = length - 28U;
++    if (udpPayloadLength < 6U || udpPayload[0U] != 0x00U || udpPayload[2U] != 0x72U) {
++        return false;
++    }
++
++    const uint32_t sourceLen = udpPayload[3U];
++    const uint32_t targetLenOffset = 4U + sourceLen;
++    if (sourceLen == 0U || sourceLen > 10U || targetLenOffset >= udpPayloadLength) {
++        return false;
++    }
++
++    const std::string sourceText(reinterpret_cast<const char*>(udpPayload + 4U), sourceLen);
++    if (sourceText.find_first_not_of("0123456789") != std::string::npos) {
++        return false;
++    }
++
++    const std::string targetText = std::to_string(targetRid);
++    if (targetText.empty() || targetText.size() > 10U) {
++        return false;
++    }
++
++    std::vector<uint8_t> payload;
++    payload.reserve(5U + sourceText.size() + targetText.size());
++    payload.push_back(0x00U);
++    payload.push_back(0x00U);
++    payload.push_back(0x72U);
++    payload.push_back(static_cast<uint8_t>(sourceText.size()));
++    payload.insert(payload.end(), sourceText.begin(), sourceText.end());
++    payload.push_back(static_cast<uint8_t>(targetText.size()));
++    payload.insert(payload.end(), targetText.begin(), targetText.end());
++    payload[1U] = static_cast<uint8_t>(payload.size() - 2U);
++
++    const uint32_t packetLength = 28U + static_cast<uint32_t>(payload.size());
++    if (packetLength > 0xFFFFU) {
++        return false;
++    }
++
++    output.assign(data, data + std::min<uint32_t>(length, 28U));
++    output.resize(packetLength, 0x00U);
++    output[2U] = static_cast<uint8_t>((packetLength >> 8) & 0xFFU);
++    output[3U] = static_cast<uint8_t>(packetLength & 0xFFU);
++    output[10U] = 0x00U;
++    output[11U] = 0x00U;
++    const uint16_t udpLength = static_cast<uint16_t>(8U + payload.size());
++    output[24U] = static_cast<uint8_t>((udpLength >> 8) & 0xFFU);
++    output[25U] = static_cast<uint8_t>(udpLength & 0xFFU);
++    output[26U] = 0x00U;
++    output[27U] = 0x00U;
++    std::copy(payload.begin(), payload.end(), output.begin() + 28U);
++
++    const uint16_t ipCsum = checksum16(output.data(), 20U);
++    output[10U] = static_cast<uint8_t>((ipCsum >> 8) & 0xFFU);
++    output[11U] = static_cast<uint8_t>(ipCsum & 0xFFU);
++
++    std::vector<uint8_t> pseudo;
++    pseudo.reserve(12U + udpLength);
++    pseudo.insert(pseudo.end(), output.begin() + 12U, output.begin() + 20U);
++    pseudo.push_back(0x00U);
++    pseudo.push_back(0x11U);
++    pseudo.push_back(static_cast<uint8_t>((udpLength >> 8) & 0xFFU));
++    pseudo.push_back(static_cast<uint8_t>(udpLength & 0xFFU));
++    pseudo.insert(pseudo.end(), output.begin() + 20U, output.end());
++    const uint16_t udpCsum = checksum16(pseudo.data(), pseudo.size());
++    output[26U] = static_cast<uint8_t>((udpCsum >> 8) & 0xFFU);
++    output[27U] = static_cast<uint8_t>(udpCsum & 0xFFU);
++    return true;
++}
++
++std::string trimCandidate(const std::string& value)
++{
++    const auto begin = value.find_first_not_of(' ');
++    if (begin == std::string::npos) {
++        return {};
++    }
++    const auto end = value.find_last_not_of(' ');
++    return value.substr(begin, end - begin + 1U);
++}
++
++std::vector<std::string> extractUtf16LeCandidates(const uint8_t* data, uint32_t length)
++{
++    return {};
++}
++
++std::vector<std::string> extractAsciiCandidates(const uint8_t* data, uint32_t length)
++{
++    return {};
++}
++
++
++void writeP25AssembledArtifact(const std::string& label, const uint8_t* data, uint32_t bitLength)
++{
++    // Runtime wire-data diagnostics are disabled in public builds.
++}
++
++void writeP25RawFrameArtifact(const std::string& label, const uint8_t* data, uint32_t length)
++{
++    // Runtime wire-data diagnostics are disabled in public builds.
++}
++
+ UInt8Array assembleConfirmedPduWithRawUserData(data::DataHeader& dataHeader, const std::vector<uint8_t>& pduUserData,
+     uint32_t* assembledBitLength)
+ {
+@@ -1045,6 +1171,17 @@ UInt8Array assembleConfirmedPduWithRawUserData(data::DataHeader& dataHeader, con
+     return dataArray;
+ }
+ 
++void writeMotorolaSessionTrace(uint32_t llId, const char* event, uint8_t state, uint8_t repeatCount = 0U)
++{
++    // Runtime wire-data diagnostics are disabled in public builds.
++}
++
++void writeRfPacketDataArtifact(const char* label, const uint8_t* data, uint32_t length,
++    bool crcFailed, uint8_t sap, uint32_t srcId, uint32_t dstId, uint32_t blocksToFollow)
++{
++    // Runtime wire-data diagnostics are disabled in public builds.
++}
++
+ bool parseMotorolaArs(const uint8_t* data, uint32_t length, uint32_t& sourceRid, uint32_t& targetRid)
+ {
+     if (data == nullptr || length < 34U) return false;
+@@ -1077,7 +1214,7 @@ bool parseMotorolaArs(const uint8_t* data, uint32_t length, uint32_t& sourceRid,
+ }
+ 
+ bool parseMotorolaArsRefresh(const uint8_t* data, uint32_t length, uint32_t sourceRid,
+-    uint32_t& subscriberIp, uint16_t& requestIpId)
++    uint32_t& subscriberIp, uint16_t& requestIpId, uint8_t& requestOpcode)
+ {
+     if (data == nullptr || length < 42U || sourceRid == 0U || sourceRid > 9999999U) {
+         return false;
+@@ -1099,7 +1236,7 @@ bool parseMotorolaArsRefresh(const uint8_t* data, uint32_t length, uint32_t sour
+     const bool dualIdentity = payloadLength == 21U && payload[12U] == 0x07U &&
+         std::equal(ridText.begin(), ridText.end(), payload + 13U) && payload[20U] == 0x00U;
+     if (ridText.size() != 7U || readUint16BE(payload) != payloadLength - 2U ||
+-        payload[2U] != 0xF0U || (payload[3U] != 0x20U && payload[3U] != 0x40U) ||
++        payload[2U] != 0xF0U || !isMotorolaShortArsRequest(payload[3U]) ||
+         payload[4U] != 0x07U || !std::equal(ridText.begin(), ridText.end(), payload + 5U) ||
+         (!compactIdentity && !dualIdentity)) {
+         return false;
+@@ -1112,6 +1249,7 @@ bool parseMotorolaArsRefresh(const uint8_t* data, uint32_t length, uint32_t sour
+     pseudo.insert(pseudo.end(), data + 20U, data + packetLength);
+     if (readUint16BE(data + 26U) != 0U && checksum16(pseudo.data(), pseudo.size()) != 0U) return false;
+     subscriberIp = readUint32BE(data + 12U); requestIpId = readUint16BE(data + 4U);
++    requestOpcode = payload[3U];
+     return subscriberIp != 0U && subscriberIp != 0xFFFFFFFFU;
+ }
+ 
+@@ -1417,6 +1555,7 @@ const uint32_t SNDCP_STANDBY_TIMEOUT = 60U;
+ 
+ void Data::resetRF()
+ {
++    std::lock_guard<std::recursive_mutex> responseLock(m_immediateResponseMutex);
+     m_rfPDUCount = 0U;
+     m_rfPDUBits = 0U;
+ }
+@@ -1425,6 +1564,7 @@ void Data::resetRF()
+ 
+ bool Data::process(uint8_t* data, uint32_t len)
+ {
++    std::lock_guard<std::recursive_mutex> responseLock(m_immediateResponseMutex);
+     assert(data != nullptr);
+ 
+     // decode the NID
+@@ -1516,12 +1656,19 @@ bool Data::process(uint8_t* data, uint32_t len)
+                     return m_motorolaSessions.end();
+                 };
+                 const uint32_t responseLlId = m_rfAssembler->dataHeader.getLLId();
++                const bool scopedRetryBeforeAck = m_immediateRetryOwned;
++                const bool retryAckMatches = immediateRetryAckMatches(responseLlId, m_rfAssembler->dataHeader.getResponseStatus());
+ 
++                if (!retryAckMatches) {
++                    LogWarning(LOG_RF, P25_PDU_STR ", scoped response ignored: owner/Ns mismatch, llId = %u, n = %u",
++                        responseLlId, m_rfAssembler->dataHeader.getResponseStatus());
++                } else {
+                     if (m_rfAssembler->dataHeader.getResponseClass() == PDUAckClass::ACK && m_rfAssembler->dataHeader.getResponseType() == PDUAckType::ACK) {
+                         LogInfoEx(LOG_RF, P25_PDU_STR ", ISP, response, OSP ACK, llId = %u, all blocks received OK, n = %u",
+                             responseLlId, m_rfAssembler->dataHeader.getResponseStatus());
+                         auto ackSession = findMotorolaResponseSession(responseLlId);
+-                        if (ackSession != m_motorolaSessions.end()) {
++                        if (ackSession != m_motorolaSessions.end() &&
++                            !hasPendingImmediateSession(responseLlId) && !hasPendingImmediateSession(ackSession->first)) {
+                             if (ackSession->second.peerArpResponderRid == responseLlId ||
+                                 ackSession->second.serverIdentity == responseLlId) {
+                                 rememberMotorolaPacketNs(responseLlId, ackSession->first,
+@@ -1549,6 +1696,7 @@ bool Data::process(uint8_t* data, uint32_t len)
+                             m_rfAssembler->dataHeader.getResponseStatus() >= 5U) {
+                             ackSession->second.state = MotorolaSessionState::TMS_AVAILABLE;
+                             LogInfoEx(LOG_RF, "Motorola session reached TMS_AVAILABLE, llId = %u", responseLlId);
++                            writeMotorolaSessionTrace(responseLlId, "tms_available_from_ack", static_cast<uint8_t>(ackSession->second.state));
+                         }
+                         if (ackSession->second.state == MotorolaSessionState::TMS_AVAILABLE && !ackSession->second.sentTmsReadyNotice) {
+                             std::unique_ptr<lc::tsbk::IOSP_MSG_UPDT> msg = std::make_unique<lc::tsbk::IOSP_MSG_UPDT>();
+@@ -1577,15 +1725,17 @@ bool Data::process(uint8_t* data, uint32_t len)
+                             }
+                         }
+                     }
+-                    if (m_retryPDUData != nullptr && m_retryPDUBitLength > 0U) {
++                    if (retryAckMatches && m_retryPDUData != nullptr && m_retryPDUBitLength > 0U) {
+                         delete[] m_retryPDUData;
+                         m_retryPDUData = nullptr;
++                        forgetImmediateRetry();
+ 
+                         m_retryPDUBitLength = 0U;
+                         m_retryCount = 0U;
+                     }
+                     auto session = findMotorolaResponseSession(responseLlId);
+-                    if (session != m_motorolaSessions.end() &&
++                    if (retryAckMatches && session != m_motorolaSessions.end() &&
++                        !hasPendingImmediateSession(responseLlId) && !hasPendingImmediateSession(session->first) &&
+                         session->second.pendingServiceAvailability &&
+                         session->second.state == MotorolaSessionState::REGISTERED) {
+                         session->second.state = MotorolaSessionState::SERVICE_ANNOUNCED;
+@@ -1593,7 +1743,10 @@ bool Data::process(uint8_t* data, uint32_t len)
+                         session->second.serviceAvailabilityDelayMs = kMotorolaTmsServiceRetryDelayMs;
+                         LogInfoEx(LOG_RF, "Motorola ARS response acknowledged; advertising TMS service, llId = %u",
+                             session->first);
+-                        writeMotorolaTmsServiceAvailability(session->first);
++                        if (!scopedRetryBeforeAck)
++                            writeMotorolaTmsServiceAvailability(session->first);
++                        else if (retryAckMatches)
++                            session->second.serviceAvailabilityDelayMs = 0U; // existing guarded clock sends it.
+                     }
+                 } else {
+                     if (m_rfAssembler->dataHeader.getResponseClass() == PDUAckClass::NACK) {
+@@ -1608,6 +1761,7 @@ bool Data::process(uint8_t* data, uint32_t len)
+                                 {
+                                     auto nackSession = findMotorolaResponseSession(responseLlId);
+                                     if (nackSession != m_motorolaSessions.end() &&
++                                        !hasPendingImmediateSession(responseLlId) && !hasPendingImmediateSession(nackSession->first) &&
+                                         nackSession->second.state == MotorolaSessionState::CONTEXT_ACTIVE &&
+                                         m_rfAssembler->dataHeader.getResponseStatus() >= 7U) {
+                                         nackSession->second.state = MotorolaSessionState::TMS_AVAILABLE;
+@@ -1622,17 +1776,21 @@ bool Data::process(uint8_t* data, uint32_t len)
+                                 {
+                                     auto nackSession = findMotorolaResponseSession(responseLlId);
+                                     if (nackSession != m_motorolaSessions.end() &&
++                                        !hasPendingImmediateSession(responseLlId) && !hasPendingImmediateSession(nackSession->first) &&
+                                         !nackSession->second.pendingTmsFragments.empty()) {
+                                         LogWarning(LOG_RF, P25_PDU_STR ", restarting Motorola TMS fragmented delivery after out-of-sequence NACK, llId = %u, messageId = %u",
+                                             nackSession->first, nackSession->second.pendingTmsMessageId);
+                                         restartMotorolaTmsInboundDelivery(nackSession->second,
+                                             kMotorolaTmsP25FragmentRestartDelayMs);
+-                                        if (m_retryPDUData != nullptr) {
++                                        if (retryAckMatches && m_retryPDUData != nullptr) {
+                                             delete[] m_retryPDUData;
+                                             m_retryPDUData = nullptr;
++                        forgetImmediateRetry();
++                                        }
++                                        if (retryAckMatches) {
++                                            m_retryPDUBitLength = 0U;
++                                            m_retryCount = 0U;
+                                         }
+-                                        m_retryPDUBitLength = 0U;
+-                                        m_retryCount = 0U;
+                                     }
+                                 }
+                                 break;
+@@ -1651,7 +1809,9 @@ bool Data::process(uint8_t* data, uint32_t len)
+                         // really this is supposed to check the bit field in the included response 
+                         // and only return those bits -- but we're responding with the entire previous packet...
+                         if (m_retryPDUData != nullptr && m_retryPDUBitLength > 0U) {
+-                            if (m_retryCount < MAX_PDU_RETRY_CNT) {
++                            if (m_immediateRetryOwned) {
++                                requestImmediateRetry(responseLlId);
++                            } else if (m_retryCount < MAX_PDU_RETRY_CNT) {
+                                 m_p25->writeRF_Preamble();
+                                 writeRF_PDU(m_retryPDUData, m_retryPDUBitLength, false, true);
+                                 m_retryCount++;
+@@ -1659,6 +1819,7 @@ bool Data::process(uint8_t* data, uint32_t len)
+                             else {
+                                 delete[] m_retryPDUData;
+                                 m_retryPDUData = nullptr;
++                        forgetImmediateRetry();
+ 
+                                 m_retryPDUBitLength = 0U;
+                                 m_retryCount = 0U;
+@@ -1680,6 +1841,8 @@ bool Data::process(uint8_t* data, uint32_t len)
+                     }
+                 }
+ 
++                } // matched scoped response, or unchanged legacy unowned response.
++
+                 const auto responseSession = findMotorolaResponseSession(responseLlId);
+                 const bool suppressMotorolaResponseToNetwork = kEnableMotorolaTms &&
+                     responseSession != m_motorolaSessions.end() &&
+@@ -1759,6 +1922,27 @@ bool Data::process(uint8_t* data, uint32_t len)
+ 
+                 uint32_t srcId = (m_rfAssembler->getExtendedAddress()) ? m_rfAssembler->dataHeader.getSrcLLId() : m_rfAssembler->dataHeader.getLLId();
+                 uint32_t dstId = m_rfAssembler->dataHeader.getLLId();
++                if (sap == PDUSAP::PACKET_DATA) {
++                    const uint32_t completeBitLength =
++                        ((m_rfAssembler->dataHeader.getBlocksToFollow() + 1U) * P25_PDU_FEC_LENGTH_BITS) + P25_PREAMBLE_LENGTH_BITS;
++                    std::ostringstream rawLabel;
++                    rawLabel << "rf_packet_data_src" << srcId
++                             << "_dst" << dstId
++                             << "_fmt" << std::hex << static_cast<uint32_t>(m_rfAssembler->dataHeader.getFormat())
++                             << "_sap" << static_cast<uint32_t>(sap)
++                             << std::dec << "_btf" << m_rfAssembler->dataHeader.getBlocksToFollow()
++                             << "_crc" << (m_rfAssembler->getPacketCRCFailed() ? 1U : 0U);
++                    writeP25AssembledArtifact(rawLabel.str(), m_rfPDU, completeBitLength);
++                    std::ostringstream frameLabel;
++                    frameLabel << "rf_frame_packet_data_src" << srcId
++                               << "_dst" << dstId
++                               << "_fmt" << std::hex << static_cast<uint32_t>(m_rfAssembler->dataHeader.getFormat())
++                               << "_sap" << static_cast<uint32_t>(sap)
++                               << std::dec << "_btf" << static_cast<uint32_t>(m_rfAssembler->dataHeader.getBlocksToFollow())
++                               << "_crc" << (m_rfAssembler->getPacketCRCFailed() ? 1U : 0U);
++                    writeP25RawFrameArtifact(frameLabel.str(), data, len);
++                }
++
+                 // handle standard P25 service access points
+                 switch (sap) {
+                 case PDUSAP::ARP:
+@@ -1877,6 +2061,9 @@ bool Data::process(uint8_t* data, uint32_t len)
+                 break;
+                 case PDUSAP::PACKET_DATA:
+                 {
++                    writeRfPacketDataArtifact("rf_packet_data", m_rfPduUserData, m_rfPduUserDataLength,
++                        m_rfAssembler->getPacketCRCFailed(), sap, srcId, dstId, m_rfAssembler->dataHeader.getBlocksToFollow());
++
+                     LogInfoEx(LOG_RF, P25_PDU_STR ", RF PACKET_DATA, srcId = %u, dstId = %u, len = %u, crcFailed = %u, extended = %u",
+                         srcId, dstId, m_rfPduUserDataLength, m_rfAssembler->getPacketCRCFailed() ? 1U : 0U,
+                         m_rfAssembler->getExtendedAddress() ? 1U : 0U);
+@@ -1916,21 +2103,25 @@ bool Data::process(uint8_t* data, uint32_t len)
+                                 m_rfAssembler->dataHeader.getNs() == 1U) {
+                                 writeSyntheticMotorolaServiceReady(srcId, session->second.serverIdentity);
+                                 session->second.state = MotorolaSessionState::READY_FOR_TMS;
++                writeMotorolaSessionTrace(srcId, "service_ready_sent", static_cast<uint8_t>(session->second.state));
+                             } else if (session->second.state == MotorolaSessionState::READY_FOR_TMS &&
+                                 m_rfAssembler->dataHeader.getNs() == 2U) {
+                                 session->second.state = MotorolaSessionState::CONTEXT_ACTIVE;
+                                 session->second.postPhase2Repeats = 0U;
+                                 LogInfoEx(LOG_RF, P25_PDU_STR ", no extra post-reply payload, entering post-phase2 wait, llId = %u", srcId);
++                                writeMotorolaSessionTrace(srcId, "entered_context_active", static_cast<uint8_t>(session->second.state));
+                             } else if (session->second.state == MotorolaSessionState::CONTEXT_ACTIVE &&
+                                 m_rfAssembler->dataHeader.getNs() == 2U) {
+                                 session->second.postPhase2Repeats++;
+                                 LogInfoEx(LOG_RF, P25_PDU_STR ", post-phase2 repeat, llId = %u, count = %u",
+                                     srcId, session->second.postPhase2Repeats);
++                                writeMotorolaSessionTrace(srcId, "post_phase2_repeat", static_cast<uint8_t>(session->second.state), session->second.postPhase2Repeats);
+                                 if (session->second.postPhase2Repeats >= 2U) {
+                                     if (!session->second.sentTmsReadyNotice) {
+                                         session->second.sentTmsReadyNotice = true;
+                                         session->second.state = MotorolaSessionState::TMS_AVAILABLE;
+                                         LogInfoEx(LOG_RF, "Motorola post-phase2 steady state reached, llId = %u, count = %u", srcId, session->second.postPhase2Repeats);
++                                        writeMotorolaSessionTrace(srcId, "steady_state", static_cast<uint8_t>(session->second.state), session->second.postPhase2Repeats);
+                                     }
+                                 }
+                             } else if (session->second.state == MotorolaSessionState::CONTEXT_ACTIVE &&
+@@ -1941,6 +2132,15 @@ bool Data::process(uint8_t* data, uint32_t len)
+                         }
+                     }
+ 
++                    const auto utf16Candidates = extractUtf16LeCandidates(m_rfPduUserData, m_rfPduUserDataLength);
++                    for (const auto& candidate : utf16Candidates) {
++                        LogInfoEx(LOG_RF, P25_PDU_STR ", RF PACKET_DATA UTF16-LE candidate: %s", candidate.c_str());
++                    }
++                    const auto asciiCandidates = extractAsciiCandidates(m_rfPduUserData, m_rfPduUserDataLength);
++                    for (const auto& candidate : asciiCandidates) {
++                        LogInfoEx(LOG_RF, P25_PDU_STR ", RF PACKET_DATA ASCII candidate: %s", candidate.c_str());
++                    }
++
+                     uint32_t arsSrcRid = 0U;
+                     uint32_t arsDstRid = 0U;
+                     bool parsedMotorolaArs = false;
+@@ -2180,6 +2380,8 @@ bool Data::process(uint8_t* data, uint32_t len)
+                         if (rawMotorolaPeerControl && packetSession != m_motorolaSessions.end()) {
+                             packetSession->second.virtualPeerPrimed = true;
+                             packetSession->second.state = MotorolaSessionState::CONTEXT_ACTIVE;
++                            writeMotorolaSessionTrace(srcId, "peer_control_service_status", static_cast<uint8_t>(packetSession->second.state),
++                                m_rfAssembler->dataHeader.getNs());
+                             const uint8_t serviceNs = nextMotorolaPacketNs(dstId, srcId, 0U);
+                             writeSyntheticMotorolaPeerServiceStatus(srcId, dstId, serviceNs, true);
+                         }
+@@ -2556,6 +2758,16 @@ void Data::writeSyntheticMotorolaServiceReady(uint32_t sourceRid, uint32_t respo
+     writeSyntheticMotorolaPeerServiceStatus(sourceRid, responderRid, 0U, true);
+ }
+ 
++void Data::writeSyntheticSndcpCtxAccept(uint32_t sourceRid, uint32_t responderRid)
++{
++    // Runtime wire-data diagnostics are disabled in public builds.
++}
++
++void Data::writeSyntheticMotorolaServicePhase2(uint32_t sourceRid, uint32_t responderRid, const data::DataHeader* templateHeader, const uint8_t* templateData, uint32_t templateLength, uint8_t ns)
++{
++    // Runtime wire-data diagnostics are disabled in public builds.
++}
++
+ void Data::writeSyntheticMotorolaArsResponse(uint32_t sourceRid, uint32_t targetRid, const uint8_t* pduUserData, uint32_t length)
+ {
+     if (pduUserData != nullptr && length < 28U) {
+@@ -2848,6 +3060,7 @@ void Data::writeSyntheticMotorolaTmsDeliveryAck(uint32_t sourceRid, uint32_t res
+ 
+ bool Data::processNetwork(uint8_t* data, uint32_t len, uint8_t currentBlock, uint32_t blockLength, uint16_t totalBlocks)
+ {
++    std::lock_guard<std::recursive_mutex> responseLock(m_immediateResponseMutex);
+     if (m_p25->m_netState != RS_NET_DATA) {
+         m_p25->m_netState = RS_NET_DATA;
+         m_inbound = false;
+@@ -3070,6 +3283,9 @@ bool Data::handleMotorolaScepArsRegistration(uint32_t sourceRid, uint32_t target
+         return false;
+     }
+ 
++    ImmediateRfResponse responseBundle;
++    if (!beginImmediateResponse("SCEP", rawBlocks.data(), rawBlocks.size(), sourceRid, targetRid, responseBundle))
++        return true; // no ACK/state/NS commit and no generic RF fallback on overload.
+     m_fneRegTable[sourceRid] = subscriberIp;
+     rememberLocalSmsRid(sourceRid);
+     auto& session = m_motorolaSessions[sourceRid];
+@@ -3089,7 +3305,7 @@ bool Data::handleMotorolaScepArsRegistration(uint32_t sourceRid, uint32_t target
+         m_rfAssembler->dataHeader.getNs());
+ 
+     writeRF_PDU_Ack_Response(PDUAckClass::ACK, PDUAckType::ACK,
+-        m_rfAssembler->dataHeader.getNs(), sourceRid, false);
++        m_rfAssembler->dataHeader.getNs(), sourceRid, false, 0U, &responseBundle);
+ 
+     std::vector<uint8_t> response = buildMotorolaArsSuccess(subscriberIp, requestIpId);
+     data::DataHeader rspHeader = data::DataHeader();
+@@ -3105,13 +3321,17 @@ bool Data::handleMotorolaScepArsRegistration(uint32_t sourceRid, uint32_t target
+     rspHeader.setFSN(0U);
+     rspHeader.calculateLength(static_cast<uint32_t>(response.size()));
+ 
++    writeRfPacketDataArtifact("motorola_scep_ars_success", response.data(), static_cast<uint32_t>(response.size()),
++        false, PDUSAP::PACKET_DATA, WUID_FNE, sourceRid, rspHeader.getBlocksToFollow());
+     uint32_t bitLength = 0U;
+     UInt8Array assembled = m_rfAssembler->assemble(rspHeader, false, false, response.data(), &bitLength);
+ 
+     LogInfoEx(LOG_RF, P25_PDU_STR ", sending Motorola ARS registration success 0002BF01, llId = %u, subscriberIp = %s, bits = %u, packetLength = %u, pad = %u",
+         sourceRid, __IP_FROM_UINT(subscriberIp).c_str(), bitLength, rspHeader.getPacketLength(), rspHeader.getPadLength());
+-    m_p25->writeRF_TDU(true, false);
+-    writeRF_PDU(assembled.get(), bitLength, false);
++    writeP25AssembledArtifact("motorola_scep_ars_success_trimmed", assembled.get(), bitLength);
++    responseBundle.expectedAckNs = rspHeader.getNs();
++    writeRF_PDU(assembled.get(), bitLength, false, false, true, &responseBundle, 1U);
++    commitImmediateResponse(std::move(responseBundle));
+     return true;
+ }
+ 
+@@ -3125,15 +3345,19 @@ bool Data::handleMotorolaArsRefresh(uint32_t sourceRid, uint32_t targetRid)
+ 
+     uint32_t subscriberIp = 0U;
+     uint16_t requestIpId = 0U;
++    uint8_t requestOpcode = 0U;
+     if (!parseMotorolaArsRefresh(m_rfPduUserData, m_rfPduUserDataLength,
+-        sourceRid, subscriberIp, requestIpId)) {
++        sourceRid, subscriberIp, requestIpId, requestOpcode)) {
+         return false;
+     }
+ 
++    ImmediateRfResponse responseBundle;
++    if (!beginImmediateResponse("ARS", m_rfPduUserData, m_rfPduUserDataLength, sourceRid, targetRid, responseBundle))
++        return true; // no ACK/state/NS commit and no generic RF fallback on overload.
+     m_fneRegTable[sourceRid] = subscriberIp;
+     rememberLocalSmsRid(sourceRid);
+     auto& session = m_motorolaSessions[sourceRid];
+-    if (m_rfPduUserData[31U] == 0x20U || session.state == MotorolaSessionState::IDLE) {
++    if (requestOpcode == 0x20U || session.state == MotorolaSessionState::IDLE) {
+         session.state = MotorolaSessionState::REGISTERED;
+         session.pendingServiceAvailability = true;
+         session.serviceAvailabilityDelayMs = kMotorolaTmsServiceFallbackDelayMs;
+@@ -3149,7 +3373,7 @@ bool Data::handleMotorolaArsRefresh(uint32_t sourceRid, uint32_t targetRid)
+ 
+     if (m_rfAssembler->dataHeader.getAckNeeded()) {
+         writeRF_PDU_Ack_Response(PDUAckClass::ACK, PDUAckType::ACK,
+-            m_rfAssembler->dataHeader.getNs(), sourceRid, false);
++            m_rfAssembler->dataHeader.getNs(), sourceRid, false, 0U, &responseBundle);
+     }
+ 
+     std::vector<uint8_t> response = buildMotorolaArsSuccess(subscriberIp, requestIpId);
+@@ -3168,14 +3392,18 @@ bool Data::handleMotorolaArsRefresh(uint32_t sourceRid, uint32_t targetRid)
+     rspHeader.setFSN(0U);
+     rspHeader.calculateLength(static_cast<uint32_t>(response.size()));
+ 
++    writeRfPacketDataArtifact("motorola_ars_refresh_success", response.data(),
++        static_cast<uint32_t>(response.size()), false, PDUSAP::PACKET_DATA,
++        WUID_FNE, sourceRid, rspHeader.getBlocksToFollow());
+     uint32_t bitLength = 0U;
+     UInt8Array assembled = m_rfAssembler->assemble(rspHeader, false, false,
+         response.data(), &bitLength);
+ 
+     LogInfoEx(LOG_RF, P25_PDU_STR ", accepted Motorola ARS refresh/registration F0%02X, llId = %u, subscriberIp = %s, n = %u",
+-        m_rfPduUserData[31U], sourceRid, __IP_FROM_UINT(subscriberIp).c_str(), ns);
+-    m_p25->writeRF_TDU(true, false);
+-    writeRF_PDU(assembled.get(), bitLength, false);
++        requestOpcode, sourceRid, __IP_FROM_UINT(subscriberIp).c_str(), ns);
++    responseBundle.expectedAckNs = rspHeader.getNs();
++    writeRF_PDU(assembled.get(), bitLength, false, false, true, &responseBundle, 1U);
++    commitImmediateResponse(std::move(responseBundle));
+     return true;
+ }
+ 
+@@ -3206,17 +3434,42 @@ void Data::writeMotorolaTmsServiceAvailability(uint32_t sourceRid)
+     rspHeader.setFSN(0U);
+     rspHeader.calculateLength(static_cast<uint32_t>(response.size()));
+ 
++    writeRfPacketDataArtifact("motorola_tms_service_availability", response.data(),
++        static_cast<uint32_t>(response.size()), false, PDUSAP::PACKET_DATA,
++        WUID_FNE, sourceRid, rspHeader.getBlocksToFollow());
+     uint32_t bitLength = 0U;
+     UInt8Array assembled = m_rfAssembler->assemble(rspHeader, false, false, response.data(), &bitLength);
+ 
+     LogInfoEx(LOG_RF, P25_PDU_STR ", sending Motorola TMS service availability 0003F00003 (priority, full routing), llId = %u, bits = %u, packetLength = %u, pad = %u",
+         sourceRid, bitLength, rspHeader.getPacketLength(), rspHeader.getPadLength());
++    writeP25AssembledArtifact("motorola_tms_service_availability", assembled.get(), bitLength);
+     m_p25->writeRF_TDU(true, false);
+     writeRF_PDU(assembled.get(), bitLength, false);
+ }
+ 
++/* Defer timed Motorola data until network voice and its queued tail finish. */
++bool Data::deferMotorolaDataForNetworkVoice()
++{
++    if (m_p25->m_netState == RS_NET_AUDIO) {
++        m_motorolaNetworkVoiceDrainPending = true;
++        return true;
++    }
++    if (!m_motorolaNetworkVoiceDrainPending)
++        return false;
++    if (m_p25->m_netState != RS_NET_IDLE)
++        return true;
++    std::lock_guard<std::mutex> lock(Control::s_queueLock);
++    if (!m_p25->m_txQueue.isEmpty() || !m_p25->m_txImmQueue.isEmpty())
++        return true;
++    m_motorolaNetworkVoiceDrainPending = false;
++    return false;
++}
++
+ bool Data::writeMotorolaLocationRequest(uint32_t sourceRid)
+ {
++    if (deferMotorolaDataForNetworkVoice())
++        return false;
++
+     const auto registration = m_fneRegTable.find(sourceRid);
+     auto session = m_motorolaSessions.find(sourceRid);
+     if (registration == m_fneRegTable.end() || registration->second == 0U ||
+@@ -3248,6 +3501,9 @@ bool Data::writeMotorolaLocationRequest(uint32_t sourceRid)
+     uint32_t bitLength = 0U;
+     UInt8Array assembled = m_rfAssembler->assemble(rspHeader, false, false,
+         request.data(), &bitLength);
++    writeRfPacketDataArtifact("motorola_lrrp_immediate_request", request.data(),
++        static_cast<uint32_t>(request.size()), false, PDUSAP::PACKET_DATA,
++        WUID_FNE, sourceRid, rspHeader.getBlocksToFollow());
+     LogInfoEx(LOG_RF, P25_PDU_STR ", sending Motorola LRRP immediate location request, llId = %u, requestId = %u, subscriberIp = %s, port = %u, n = %u",
+         sourceRid, requestId, __IP_FROM_UINT(registration->second).c_str(),
+         kMotorolaLegacyLocationPort, ns);
+@@ -3344,6 +3600,7 @@ bool Data::handleMotorolaTmsServiceAcknowledgement(uint32_t sourceRid, uint32_t
+     if (m_retryPDUData != nullptr) {
+         delete[] m_retryPDUData;
+         m_retryPDUData = nullptr;
++                        forgetImmediateRetry();
+         m_retryPDUBitLength = 0U;
+         m_retryCount = 0U;
+     }
+@@ -3386,6 +3643,11 @@ bool Data::handleMotorolaTmsMessageAcknowledgement(uint32_t sourceRid, uint32_t
+     return true;
+ }
+ 
++void Data::writeMotorolaTmsInboundProbe(uint32_t sourceRid)
++{
++    // Runtime wire-data diagnostics are disabled in public builds.
++}
++
+ bool Data::writeMotorolaTmsInboundDelivery(uint32_t targetRid, uint32_t senderRid, const std::string& text)
+ {
+     const auto registration = m_fneRegTable.find(targetRid);
+@@ -3421,6 +3683,9 @@ bool Data::writeMotorolaTmsInboundDelivery(uint32_t targetRid, uint32_t senderRi
+     session->second.pendingTmsFragmentDelayMs = 0U;
+     session->second.pendingTmsApplicationAckMs = 0U;
+ 
++    writeRfPacketDataArtifact("motorola_tms_inbound_delivery", response.data(),
++        static_cast<uint32_t>(response.size()), false, PDUSAP::PACKET_DATA,
++        WUID_FNE, targetRid, static_cast<uint32_t>(session->second.pendingTmsFragments.size()));
+     LogInfoEx(LOG_RF, P25_PDU_STR ", queued Motorola TMS inbound delivery, targetRid = %u, senderRid = %u, messageId = %u, textLen = %u, packetBytes = %u, fragments = %u",
+         targetRid, senderRid, messageId, static_cast<uint32_t>(text.size()),
+         static_cast<uint32_t>(response.size()),
+@@ -3469,6 +3734,11 @@ bool Data::writeNextMotorolaTmsInboundFragment(uint32_t targetRid)
+     uint32_t bitLength = 0U;
+     UInt8Array assembled = m_rfAssembler->assemble(rspHeader, false, false,
+         fragment.data(), &bitLength);
++    std::ostringstream artifactLabel;
++    artifactLabel << "motorola_tms_inbound_fragment_" << (fragmentIndex + 1U);
++    writeRfPacketDataArtifact(artifactLabel.str().c_str(), fragment.data(),
++        static_cast<uint32_t>(fragment.size()), false, PDUSAP::PACKET_DATA,
++        WUID_FNE, targetRid, rspHeader.getBlocksToFollow());
+     LogInfoEx(LOG_RF, P25_PDU_STR ", sending Motorola TMS inbound fragment, targetRid = %u, messageId = %u, fragment = %u/%u, bytes = %u, blocks = %u, n = %u, fsn = %u, last = %u",
+         targetRid, session->second.pendingTmsMessageId,
+         static_cast<uint32_t>(fragmentIndex + 1U),
+@@ -3638,6 +3908,9 @@ void Data::writeMotorolaTmsMessageAcknowledgement(uint32_t sourceRid,
+     uint32_t bitLength = 0U;
+     UInt8Array assembled = m_rfAssembler->assemble(rspHeader, false, false,
+         response.data(), &bitLength);
++    writeRfPacketDataArtifact("motorola_tms_message_ack", response.data(),
++        static_cast<uint32_t>(response.size()), false, PDUSAP::PACKET_DATA,
++        WUID_FNE, sourceRid, rspHeader.getBlocksToFollow());
+     LogInfoEx(LOG_RF, P25_PDU_STR ", sending Motorola TMS message acknowledgement, llId = %u, messageId = %u, n = %u",
+         sourceRid, messageId, ns);
+     m_p25->writeRF_TDU(true, false);
+@@ -3684,6 +3957,9 @@ void Data::writeMotorolaTmsDirectMessageAcknowledgement(uint32_t sourceRid,
+     uint32_t bitLength = 0U;
+     UInt8Array assembled = m_rfAssembler->assemble(rspHeader, extendedAddress,
+         false, response.data(), &bitLength);
++    writeRfPacketDataArtifact("motorola_tms_direct_message_ack", response.data(),
++        static_cast<uint32_t>(response.size()), false, PDUSAP::PACKET_DATA,
++        responderRid, sourceRid, rspHeader.getBlocksToFollow());
+     LogInfoEx(LOG_RF, P25_PDU_STR ", sending direct Motorola TMS message acknowledgement, llId = %u, responderRid = %u, responderIp = %s, messageId = %u, n = %u",
+         sourceRid, responderRid, __IP_FROM_UINT(responderIp).c_str(), messageId, ns);
+     m_p25->writeRF_TDU(true, false);
+@@ -3769,16 +4045,19 @@ bool Data::handleMotorolaTmsMessage(uint32_t sourceRid, uint32_t targetRid)
+ 
+ /* Helper to write user data as a P25 PDU packet. */
+ 
+-void Data::writeRF_PDU_User(data::DataHeader& dataHeader, bool extendedAddress, bool auxiliaryES, uint8_t* pduUserData, bool imm)
++void Data::writeRF_PDU_User(data::DataHeader& dataHeader, bool extendedAddress, bool auxiliaryES, uint8_t* pduUserData, bool imm, ImmediateRfResponse* response)
+ {
+     assert(pduUserData != nullptr);
+ 
+-    m_p25->writeRF_TDU(true, imm);
++    if (response == nullptr)
++        m_p25->writeRF_TDU(true, imm);
++    else
++        response->expectedAckNs = dataHeader.getNs();
+ 
+     uint32_t bitLength = 0U;
+     UInt8Array data = m_rfAssembler->assemble(dataHeader, extendedAddress, auxiliaryES, pduUserData, &bitLength);
+ 
+-    writeRF_PDU(data.get(), bitLength, imm);
++    writeRF_PDU(data.get(), bitLength, imm, false, true, response, response != nullptr ? 1U : 0U);
+ }
+ 
+ /* Helper to write user data as a P25 PDU packet. */
+@@ -3795,6 +4074,7 @@ void Data::writeNet_PDU_User(data::DataHeader& dataHeader, bool extendedAddress,
+ 
+ void Data::clock(uint32_t ms)
+ {
++    std::lock_guard<std::recursive_mutex> responseLock(m_immediateResponseMutex);
+     if (m_p25->m_sndcpSupport) {
+         // clock all the SNDCP ready timers
+         std::vector<uint32_t> sndcpReadyExpired = std::vector<uint32_t>();
+@@ -3868,6 +4148,14 @@ void Data::clock(uint32_t ms)
+         }
+     }
+ 
++    if (serviceImmediateResponses(ms))
++        return; // pending responses outrank timed Motorola producers, without consuming their timers.
++
++    // Keep due work and all retry budgets intact while voice owns the output.
++    // SNDCP maintenance above retains its existing behaviour.
++    if (deferMotorolaDataForNetworkVoice())
++        return;
++
+     for (auto& entry : m_motorolaSessions) {
+         MotorolaSession& session = entry.second;
+         if (session.pendingServiceAvailability &&
+@@ -3898,8 +4186,8 @@ void Data::clock(uint32_t ms)
+                 session.locationRequestDelayMs -= ms;
+             } else if (m_p25->m_rfState == RS_RF_LISTENING &&
+                 m_retryPDUData == nullptr) {
+-                session.locationRequestDelayMs = kMotorolaLocationRetryDelayMs;
+-                writeMotorolaLocationRequest(entry.first);
++                if (!writeMotorolaLocationRequest(entry.first))
++                    session.locationRequestDelayMs = kMotorolaLocationRetryDelayMs;
+             }
+         }
+ 
+@@ -3925,6 +4213,7 @@ void Data::clock(uint32_t ms)
+                 } else {
+                     delete[] m_retryPDUData;
+                     m_retryPDUData = nullptr;
++                        forgetImmediateRetry();
+                     m_retryPDUBitLength = 0U;
+                     m_retryCount = 0U;
+                     LogWarning(LOG_RF, P25_PDU_STR ", Motorola TMS fragment acknowledgement timed out; aborting delivery, llId = %u, messageId = %u, fragment = %u/%u",
+@@ -4072,8 +4361,7 @@ void Data::clock(uint32_t ms)
+             LogInfoEx(LOG_RF, P25_PDU_STR ", scheduled Motorola peer presence+ARP firing, targetRid = %u, responderRid = %u",
+                 presence.first, presence.second);
+             writeSyntheticMotorolaArsPresence(presence.second, presence.first);
+-            writeSyntheticMotorolaArpReply(presence.first, presence.second,
+-                g_motorolaArsServerIp, g_motorolaArsPeerIp);
++            writeSyntheticMotorolaArpReply(presence.first, presence.second, g_motorolaArsServerIp, g_motorolaArsPeerIp);
+         }
+ 
+         for (const auto& arp : duePeerArps) {
+@@ -4243,6 +4531,7 @@ Data::Data(Control* p25, bool dumpPDUData, bool repeatPDU, bool debug, bool verb
+     m_sndcpStateTable(),
+     m_sndcpReadyTimers(),
+     m_sndcpStandbyTimers(),
++    m_motorolaNetworkVoiceDrainPending(false),
+     m_motorolaTmsOutboxPollMs(0U),
+     m_motorolaLocationInitialDelayMs(kMotorolaLocationInitialDelayDefaultMs),
+     m_motorolaLocationIntervalMs(kMotorolaLocationIntervalDefaultMs),
+@@ -4291,14 +4580,6 @@ void Data::setMotorolaLocationTiming(uint32_t initialDelaySeconds,
+     m_motorolaLocationNoFixRetryMs = noFixRetrySeconds * 1000U;
+ }
+ 
+-/* Sets the Motorola packet-data service addresses. */
+-
+-void Data::setMotorolaPacketDataAddresses(uint32_t arsServerIp, uint32_t arsPeerIp)
+-{
+-    g_motorolaArsServerIp = arsServerIp;
+-    g_motorolaArsPeerIp = arsPeerIp;
+-}
+-
+ /* Finalizes a instance of the Data class. */
+ 
+ Data::~Data()
+@@ -4317,6 +4598,12 @@ Data::~Data()
+ 
+ /* Helper used to process conventional data registration from PDU data. */
+ 
++void Data::setMotorolaPacketDataAddresses(uint32_t arsServerIp, uint32_t arsPeerIp)
++{
++    g_motorolaArsServerIp = arsServerIp;
++    g_motorolaArsPeerIp = arsPeerIp;
++}
++
+ bool Data::processConvDataReg(const uint8_t* pduUserData)
+ {
+     LogInfoEx(LOG_RF, P25_PDU_STR ", registration request bytes = %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+@@ -4325,6 +4612,11 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
+         pduUserData[8U], pduUserData[9U], pduUserData[10U], pduUserData[11U]);
+ 
+     uint8_t regType = (pduUserData[0U] >> 4) & 0x0F;
++    ImmediateRfResponse response;
++    const bool scoped = regType == PDURegType::CONNECT || regType == PDURegType::DISCONNECT;
++    const uint32_t requestRid = (pduUserData[1U] << 16) | (pduUserData[2U] << 8) | pduUserData[3U];
++    if (scoped && !beginImmediateResponse("REG", pduUserData, 12U, requestRid, requestRid, response))
++        return true; // duplicate or explicitly rejected overload: consumed, not RF fallback.
+     switch (regType) {
+     case PDURegType::CONNECT:
+     {
+@@ -4352,12 +4644,12 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
+             LogInfoEx(LOG_RF, P25_PDU_STR ", acknowledging confirmed registration CONNECT, llId = %u, n = %u",
+                 llId, m_rfAssembler->dataHeader.getNs());
+             writeRF_PDU_Ack_Response(PDUAckClass::ACK, PDUAckType::ACK,
+-                m_rfAssembler->dataHeader.getNs(), llId, false);
++                m_rfAssembler->dataHeader.getNs(), llId, false, 0U, &response);
+         }
+ 
+         if (!acl::AccessControl::validateSrcId(llId)) {
+             LogWarning(LOG_RF, P25_PDU_STR ", DENY (Registration Response Deny), llId = %u, ipAddr = %s", llId, __IP_FROM_UINT(ipAddr).c_str());
+-            writeRF_PDU_Reg_Response(PDURegType::DENY, llId, requestedIpAddr);
++            writeRF_PDU_Reg_Response(PDURegType::DENY, llId, requestedIpAddr, &response);
+         }
+         else {
+             if (!hasLLIdFNEReg(llId)) {
+@@ -4368,7 +4660,7 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
+                 LogInfoEx(LOG_RF, P25_PDU_STR ", ACCEPT (Registration Response Accept), llId = %u, ipAddr = %s", llId, __IP_FROM_UINT(ipAddr).c_str());
+             }
+ 
+-            writeRF_PDU_Reg_Response(PDURegType::ACCEPT, llId, ipAddr);
++            writeRF_PDU_Reg_Response(PDURegType::ACCEPT, llId, ipAddr, &response);
+         }
+     }
+     break;
+@@ -4379,7 +4671,7 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
+         LogInfoEx(LOG_RF, P25_PDU_STR ", DISCONNECT (Registration Request Disconnect), llId = %u", llId);
+ 
+         // acknowledge
+-        writeRF_PDU_Ack_Response(PDUAckClass::ACK, PDUAckType::ACK, m_rfAssembler->dataHeader.getNs(), llId, false);
++        writeRF_PDU_Ack_Response(PDUAckClass::ACK, PDUAckType::ACK, m_rfAssembler->dataHeader.getNs(), llId, false, 0U, &response);
+ 
+         m_motorolaSessions.erase(llId);
+         if (m_fneRegTable.find(llId) != m_fneRegTable.end()) {
+@@ -4399,6 +4691,8 @@ bool Data::processConvDataReg(const uint8_t* pduUserData)
+         break;
+     }
+ 
++    if (scoped)
++        commitImmediateResponse(std::move(response));
+     return true;
+ }
+ 
+@@ -4485,13 +4779,339 @@ void Data::writeNetwork(const uint8_t currentBlock, const uint8_t* data, uint32_
+     m_p25->m_network->writeP25PDU(m_rfAssembler->dataHeader, currentBlock, data, len, lastBlock);
+ }
+ 
++
++/* Reserve before acknowledging or mutating a narrow RF registration/ARS request. */
++bool Data::beginImmediateResponse(const char* kind, const uint8_t* request, size_t length,
++    uint32_t source, uint32_t target, ImmediateRfResponse& out)
++{
++    uint8_t header[P25_PDU_HEADER_LENGTH_BYTES] = {};
++    m_rfAssembler->dataHeader.getData(header);
++    out.key.assign(kind);
++    out.key.append(reinterpret_cast<const char*>(header), sizeof(header));
++    out.key.append(reinterpret_cast<const char*>(&source), sizeof(source));
++    out.key.append(reinterpret_cast<const char*>(&target), sizeof(target));
++    out.key.append(reinterpret_cast<const char*>(request), length);
++    out.ownerRid = source;
++    if (m_immediateRetryOwned && m_immediateRetryOwner == out.key) {
++        requestImmediateReplay();
++        return false; // no second session/Ns commit for an already in-flight request.
++    }
++    for (const auto& queued : m_immediateResponses)
++        if (queued.key == out.key)
++            return false; // exact duplicate remains owned by the existing queue item.
++    const size_t reserve = out.key.size() + 2U * (P25_PDU_FRAME_LENGTH_BYTES + 1U);
++    const bool isRetry = ::strcmp(kind, "RETRY") == 0;
++    // Keep room for the in-flight owner's one retry even behind queued new owners.
++    const size_t retryReserve = m_immediateRetryOwned && !isRetry ? m_immediateRetryResponse.accountedBytes : 0U;
++    const size_t countLimit = m_immediateRetryOwned && !isRetry ? 15U : 16U;
++    if (m_immediateResponses.size() >= countLimit || reserve > 65536U - m_immediateResponseBytes ||
++        retryReserve > 65536U - m_immediateResponseBytes - reserve) {
++        LogWarning(LOG_RF, P25_PDU_STR ", RF response not accepted: deferred capacity busy, llId = %u", source);
++        return false;
++    }
++    out.accountedBytes = reserve;
++    return true;
++}
++
++void Data::commitImmediateResponse(ImmediateRfResponse&& response)
++{
++    size_t bytes = response.key.size();
++    for (const auto& pdu : response.pdus)
++        bytes += pdu.bytes.size();
++    assert(response.pdus.size() <= 2U && bytes <= response.accountedBytes);
++    m_immediateResponseBytes += response.accountedBytes;
++    m_immediateResponses.push_back(std::move(response));
++}
++
++void Data::forgetImmediateRetry()
++{
++    m_immediateRetryOwned = false;
++    m_immediateRetryOwner.clear();
++    m_immediateRetryNs = -1;
++    m_immediateRetryAckMs = 0U;
++    m_immediateRetryResponse = ImmediateRfResponse();
++    ++m_immediateRetryGeneration;
++}
++
++bool Data::immediateRetryAckMatches(uint32_t ownerRid, uint8_t ns) const
++{
++    return !m_immediateRetryOwned || (ownerRid == m_immediateRetryRid &&
++        (m_immediateRetryNs < 0 || m_immediateRetryNs == (ns & 0x07U)));
++}
++
++bool Data::hasPendingImmediateSession(uint32_t ownerRid) const
++{
++    return std::any_of(m_immediateResponses.begin(), m_immediateResponses.end(),
++        [&](const ImmediateRfResponse& item) { return item.ownerRid == ownerRid &&
++            !item.retryIncrement && !item.retryClear; });
++}
++
++/* One cached original bundle is retained while its confirmed PDU owns the retry
++ * slot. Exact request repeats replay that bundle without a second state commit. */
++void Data::requestImmediateReplay()
++{
++    if (!m_immediateRetryOwned)
++        return;
++    if (m_retryCount >= MAX_PDU_RETRY_CNT) {
++        requestImmediateRetry(m_immediateRetryRid, false);
++        return;
++    }
++    for (const auto& queued : m_immediateResponses)
++        if ((queued.retryIncrement || queued.retryClear) &&
++            queued.retryGeneration == m_immediateRetryGeneration)
++            return; // at most one resend/NACK for the in-flight owner.
++    const auto& cached = m_immediateRetryResponse;
++    if (m_immediateResponses.size() >= 16U || cached.accountedBytes > 65536U - m_immediateResponseBytes) {
++        LogWarning(LOG_RF, P25_PDU_STR ", scoped duplicate replay deferred capacity busy, llId = %u", m_immediateRetryRid);
++        return;
++    }
++    ImmediateRfResponse replay = cached;
++    replay.retryIncrement = true;
++    replay.retryGeneration = m_immediateRetryGeneration;
++    commitImmediateResponse(std::move(replay));
++}
++
++void Data::requestImmediateRetry(uint32_t ownerRid, bool validateNs)
++{
++    if (ownerRid != m_immediateRetryRid) {
++        LogWarning(LOG_RF, P25_PDU_STR ", scoped retry owner mismatch, llId = %u", ownerRid);
++        return;
++    }
++    if (validateNs && !immediateRetryAckMatches(ownerRid, m_rfAssembler->dataHeader.getResponseStatus()))
++        return;
++    for (const auto& queued : m_immediateResponses)
++        if ((queued.retryIncrement || queued.retryClear) &&
++            queued.retryGeneration == m_immediateRetryGeneration)
++            return;
++    ImmediateRfResponse response;
++    if (!beginImmediateResponse("RETRY", m_retryPDUData, (m_retryPDUBitLength + 7U) / 8U,
++        ownerRid, ownerRid, response))
++        return;
++    response.retryGeneration = m_immediateRetryGeneration;
++    if (m_retryCount < MAX_PDU_RETRY_CNT) {
++        response.preamble = true;
++        response.retryIncrement = true;
++        writeRF_PDU(m_retryPDUData, m_retryPDUBitLength, false, true, true, &response);
++    } else {
++        response.retryClear = true;
++        writeRF_PDU_Ack_Response(PDUAckClass::NACK, PDUAckType::NACK_UNDELIVERABLE,
++            m_rfAssembler->dataHeader.getNs(), ownerRid, false,
++            m_rfAssembler->dataHeader.getSrcLLId(), &response);
++    }
++    commitImmediateResponse(std::move(response));
++}
++
++/* Only new owned confirmed responses use this existing P25 link-ACK timeout.
++ * No RF NACK is fabricated when a locally observed ACK wait expires. */
++void Data::queueImmediateTimeoutRetry()
++{
++    for (const auto& queued : m_immediateResponses)
++        if ((queued.retryIncrement || queued.retryClear) &&
++            queued.retryGeneration == m_immediateRetryGeneration)
++            return;
++    const auto& cached = m_immediateRetryResponse;
++    if (m_immediateResponses.size() >= 16U || cached.accountedBytes > 65536U - m_immediateResponseBytes)
++        return; // expired stays pending; no retry budget is consumed.
++    ImmediateRfResponse retry;
++    retry.key = cached.key;
++    retry.ownerRid = cached.ownerRid;
++    retry.expectedAckNs = cached.expectedAckNs;
++    retry.preamble = true;
++    retry.retryIncrement = true;
++    retry.retryGeneration = m_immediateRetryGeneration;
++    retry.accountedBytes = cached.accountedBytes;
++    for (const auto& original : cached.pdus) {
++        if (!original.ackRetry && original.trackRetry) {
++            ImmediateRfPdu pdu = original;
++            pdu.ackRetry = true;
++            pdu.leadingTdus = 0U; // retry confirmed PDU, not its prior link ACK.
++            pdu.imm = false;
++            retry.pdus.push_back(std::move(pdu));
++        }
++    }
++    commitImmediateResponse(std::move(retry));
++}
++
++/* Main Control::clock calls processNetwork before this drain. RF process is
++ * serialized by the same recursive Data mutex; the writer only needs queueLock. */
++bool Data::serviceImmediateResponses(uint32_t ms)
++{
++    if (m_immediateResponses.empty() && !m_immediateRetryOwned)
++        return false;
++    if (deferMotorolaDataForNetworkVoice() || m_p25->m_netState != RS_NET_IDLE ||
++        m_p25->m_rfState != RS_RF_LISTENING)
++        return true;
++    {
++        std::lock_guard<std::mutex> queueLock(Control::s_queueLock);
++        if (!m_p25->m_txQueue.isEmpty() || !m_p25->m_txImmQueue.isEmpty() ||
++            (m_p25->m_rfTimeout.isRunning() && m_p25->m_rfTimeout.hasExpired()))
++            return true; // queued tail and RF busy pause the owned ACK budget.
++    }
++    if (m_immediateRetryOwned) {
++        const bool retryPending = std::any_of(m_immediateResponses.begin(), m_immediateResponses.end(),
++            [&](const ImmediateRfResponse& item) { return (item.retryIncrement || item.retryClear) &&
++                item.retryGeneration == m_immediateRetryGeneration; });
++        if (!retryPending) {
++            if (m_immediateRetryAckMs > ms)
++                m_immediateRetryAckMs -= ms;
++            else {
++                m_immediateRetryAckMs = 0U;
++                if (m_retryCount < MAX_PDU_RETRY_CNT)
++                    queueImmediateTimeoutRetry();
++                else {
++                    LogWarning(LOG_RF, P25_PDU_STR ", scoped confirmed response failed: link ACK timeout after retries, llId = %u, n = %d",
++                        m_immediateRetryRid, m_immediateRetryNs);
++                    delete[] m_retryPDUData; m_retryPDUData = nullptr;
++                    m_retryPDUBitLength = 0U; m_retryCount = 0U;
++                    forgetImmediateRetry();
++                }
++            }
++        }
++    }
++    if (m_immediateResponses.empty())
++        return m_immediateRetryOwned; // protect the current slot from timed producers.
++    // A second confirmed owner may not replace a buffer awaiting its RF ACK.
++    // Its current owner's retry/NACK must still pass that blocked queue head.
++    const auto needsSlot = [](const ImmediateRfResponse& item) {
++        if (item.retryIncrement || item.retryClear) return false;
++        for (const auto& pdu : item.pdus)
++            if (!pdu.ackRetry && pdu.trackRetry) return true;
++        return false;
++    };
++    auto selected = m_immediateResponses.begin();
++    if (m_immediateRetryOwned && needsSlot(*selected)) {
++        selected = std::find_if(m_immediateResponses.begin(), m_immediateResponses.end(),
++            [&](const ImmediateRfResponse& item) { return !needsSlot(item); });
++        if (selected == m_immediateResponses.end())
++            return true;
++    }
++    auto& response = *selected;
++    if ((response.retryIncrement || response.retryClear) &&
++        (!m_immediateRetryOwned || response.retryGeneration != m_immediateRetryGeneration)) {
++        m_immediateResponseBytes -= response.accountedBytes;
++        m_immediateResponses.erase(selected); // retry canceled by an ACK or newer tracked owner.
++        return true;
++    }
++    struct Frame { std::vector<uint8_t> bytes; bool imm; };
++    std::vector<Frame> frames;
++    const auto tdu = [&](bool imm) {
++        if (!m_p25->m_duplex) return;
++        Frame f {std::vector<uint8_t>(P25_TDU_FRAME_LENGTH_BYTES + 2U, 0U), imm};
++        f.bytes[0] = modem::TAG_EOT;
++        Sync::addP25Sync(f.bytes.data() + 2U);
++        m_p25->m_nid.encode(f.bytes.data() + 2U, DUID::TDU);
++        P25Utils::setStatusBitsAllIdle(f.bytes.data() + 2U, P25_TDU_FRAME_LENGTH_BITS);
++        frames.push_back(std::move(f));
++    };
++    if (response.preamble && !m_p25->m_isModemDFSI && !m_p25->m_modem->hasTX() && !m_p25->m_ccRunning) {
++        const unsigned count = std::min<unsigned>(m_p25->m_tduPreambleCount, 64U /* Control::writeRF_Preamble limit */);
++        for (unsigned i = 0; i < count; ++i) tdu(false);
++    }
++    for (const auto& pdu : response.pdus) {
++        for (unsigned i = 0; i < pdu.leadingTdus; ++i) tdu(pdu.imm);
++        tdu(pdu.imm);
++        for (unsigned i = 0; i < 5U; ++i) {
++            Frame f {std::vector<uint8_t>(27U, 0U), false};
++            f.bytes[0] = modem::TAG_EOT;
++            frames.push_back(std::move(f));
++        }
++        if (m_p25->m_duplex) {
++            Frame f {std::vector<uint8_t>(P25_PDU_FRAME_LENGTH_BYTES + 2U, 0U), pdu.imm};
++            const uint32_t bits = P25Utils::encodeByLength(pdu.bytes.data(), f.bytes.data() + 2U, pdu.bitLength);
++            f.bytes.resize((bits + 7U) / 8U + 2U);
++            f.bytes[0] = modem::TAG_DATA;
++            Sync::addP25Sync(f.bytes.data() + 2U);
++            m_p25->m_nid.encode(f.bytes.data() + 2U, DUID::PDU);
++            P25Utils::addStatusBits(f.bytes.data() + 2U, bits, pdu.inbound, true);
++            P25Utils::setStatusBitsStartIdle(f.bytes.data() + 2U);
++            frames.push_back(std::move(f));
++        }
++        tdu(pdu.imm);
++    }
++    size_t normal = 0U, immediate = 0U;
++    for (const auto& f : frames) (f.imm ? immediate : normal) += f.bytes.size() + 2U;
++    // Allocate all ownership state before any frame is admitted to the host queue.
++    UInt8Array nextRetry;
++    uint32_t nextRetryBits = 0U;
++    ImmediateRfResponse nextOwner;
++    std::string nextOwnerKey;
++    if (needsSlot(response)) {
++        for (const auto& pdu : response.pdus) {
++            if (!pdu.ackRetry && pdu.trackRetry) {
++                assert(nextRetryBits == 0U); // this narrow response has one confirmed PDU.
++                nextRetry = UInt8Array(new uint8_t[pdu.bytes.size()]);
++                ::memcpy(nextRetry.get(), pdu.bytes.data(), pdu.bytes.size());
++                nextRetryBits = pdu.bitLength;
++            }
++        }
++        nextOwner = response;
++        nextOwnerKey = response.key;
++    }
++    std::lock_guard<std::mutex> queueLock(Control::s_queueLock);
++    if (!m_p25->m_txQueue.isEmpty() || !m_p25->m_txImmQueue.isEmpty() ||
++        (m_p25->m_rfTimeout.isRunning() && m_p25->m_rfTimeout.hasExpired()))
++        return true;
++    // Never resize or purge an occupied queue. Empty queues can reserve the full
++    // batch, with a spare byte because this ring represents full==empty.
++    if (m_p25->m_txQueue.freeSpace() <= normal) m_p25->m_txQueue.resize(normal + 1U);
++    if (m_p25->m_txImmQueue.freeSpace() <= immediate) m_p25->m_txImmQueue.resize(immediate + 1U);
++    for (const auto& f : frames) {
++        auto& queue = f.imm ? m_p25->m_txImmQueue : m_p25->m_txQueue;
++        const uint8_t length[2] = {static_cast<uint8_t>(f.bytes.size() >> 8U), static_cast<uint8_t>(f.bytes.size())};
++        const bool a = queue.addData(length, 2U), b = queue.addData(f.bytes.data(), f.bytes.size());
++        assert(a && b); (void)a; (void)b;
++    }
++    if (nextRetryBits != 0U) {
++        assert(!m_immediateRetryOwned);
++        forgetImmediateRetry();
++        // Preserve the old immediate writer's replacement of an unowned legacy
++        // retry buffer; only newly scoped in-flight owners are protected.
++        delete[] m_retryPDUData;
++        m_retryPDUData = nextRetry.release();
++        m_retryPDUBitLength = nextRetryBits;
++        m_retryCount = 0U;
++        m_immediateRetryOwned = true;
++        m_immediateRetryOwner.swap(nextOwnerKey);
++        m_immediateRetryRid = response.ownerRid;
++        m_immediateRetryNs = response.expectedAckNs;
++        m_immediateRetryAckMs = kMotorolaTmsP25FragmentAckTimeoutMs;
++        m_immediateRetryResponse = std::move(nextOwner);
++    }
++    if (response.retryIncrement) {
++        ++m_retryCount;
++        m_immediateRetryAckMs = kMotorolaTmsP25FragmentAckTimeoutMs;
++    }
++    if (response.retryClear) {
++        delete[] m_retryPDUData; m_retryPDUData = nullptr;
++        m_retryPDUBitLength = 0U; m_retryCount = 0U; forgetImmediateRetry();
++        auto session = m_motorolaSessions.find(response.ownerRid);
++        if (!hasPendingImmediateSession(response.ownerRid) &&
++            session != m_motorolaSessions.end() && session->second.pendingTmsFragmentAck)
++            resetMotorolaTmsInboundDelivery(session->second);
++    }
++    m_immediateResponseBytes -= response.accountedBytes;
++    m_immediateResponses.erase(selected);
++    return true;
++}
++
+ /* Helper to write a P25 PDU packet. */
+ 
+ void Data::writeRF_PDU(const uint8_t* pdu, uint32_t bitLength, bool imm, bool ackRetry,
+-    bool trackRetry)
++    bool trackRetry, ImmediateRfResponse* response, unsigned leadingTdus)
+ {
+     assert(pdu != nullptr);
+     assert(bitLength > 0U);
++    std::lock_guard<std::recursive_mutex> responseLock(m_immediateResponseMutex);
++    if (response != nullptr) {
++        ImmediateRfPdu item;
++        item.bytes.assign(pdu, pdu + ((bitLength + 7U) / 8U));
++        item.bitLength = bitLength; item.inbound = m_inbound; item.imm = imm;
++        item.ackRetry = ackRetry; item.trackRetry = trackRetry; item.leadingTdus = leadingTdus;
++        response->pdus.push_back(std::move(item));
++        return;
++    }
++
++    writeP25AssembledArtifact(ackRetry ? "osp_pdu_prestatus_ackretry" : "osp_pdu_prestatus", pdu, bitLength);
+ 
+     m_p25->writeRF_TDU(true, imm);
+ 
+@@ -4499,6 +5119,7 @@ void Data::writeRF_PDU(const uint8_t* pdu, uint32_t bitLength, bool imm, bool ac
+         m_p25->writeRF_Nulls();
+ 
+     if (!ackRetry && trackRetry) {
++        forgetImmediateRetry();
+         if (m_retryPDUData != nullptr)
+             delete[] m_retryPDUData;
+ 
+@@ -4539,6 +5160,7 @@ void Data::writeRF_PDU(const uint8_t* pdu, uint32_t bitLength, bool imm, bool ac
+         data[0U] = modem::TAG_DATA;
+         data[1U] = 0x00U;
+ 
++        writeP25RawFrameArtifact(ackRetry ? "osp_frame_poststatus_ackretry" : "osp_frame_poststatus", data, newByteLength + 2U);
+         m_p25->addFrame(data, newByteLength + 2U, false, imm);
+     }
+ 
+@@ -4565,7 +5187,7 @@ void Data::writeRF_PDU_Buffered()
+ 
+ /* Helper to write a PDU registration response. */
+ 
+-void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipAddr)
++void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipAddr, ImmediateRfResponse* response)
+ {
+     if ((regType != PDURegType::ACCEPT) && (regType != PDURegType::DENY))
+         return;
+@@ -4605,12 +5227,12 @@ void Data::writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipA
+         pduUserData[8U], pduUserData[9U], pduUserData[10U], pduUserData[11U]);
+ 
+     rspHeader.calculateLength(12U);
+-    writeRF_PDU_User(rspHeader, false, false, pduUserData);
++    writeRF_PDU_User(rspHeader, false, false, pduUserData, false, response);
+ }
+ 
+ /* Helper to write a PDU acknowledge response. */
+ 
+-void Data::writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t ackStatus, uint32_t llId, bool extendedAddress, uint32_t srcLlId)
++void Data::writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t ackStatus, uint32_t llId, bool extendedAddress, uint32_t srcLlId, ImmediateRfResponse* response)
+ {
+     if (ackClass == PDUAckClass::ACK && ackType != PDUAckType::ACK)
+         return;
+@@ -4653,13 +5275,5 @@ void Data::writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t a
+ 
+     // A response PDU is terminal link-layer signalling and must not wait for
+     // another response of its own.
+-    writeRF_PDU(data, bitLength, false, false, false);
+-}
+-
+-#if defined(CATCH2_TEST_COMPILATION)
+-bool parseMotorolaShortArsRequestForTest(const uint8_t* data, uint32_t length,
+-    uint32_t sourceRid, uint32_t& subscriberIp, uint16_t& requestIpId)
+-{
+-    return parseMotorolaArsRefresh(data, length, sourceRid, subscriberIp, requestIpId);
++    writeRF_PDU(data, bitLength, false, false, false, response);
+ }
+-#endif
+diff --git a/src/host/p25/packet/Data.h b/src/host/p25/packet/Data.h
+index c44e8910..6cb3362e 100644
+--- a/src/host/p25/packet/Data.h
++++ b/src/host/p25/packet/Data.h
+@@ -30,6 +30,8 @@
+ #include <string>
+ #include <unordered_map>
+ #include <vector>
++#include <deque>
++#include <mutex>
+ 
+ namespace p25
+ {
+@@ -51,6 +53,7 @@ namespace p25
+          * @ingroup host_p25
+          */
+         class HOST_SW_API Data {
++            struct ImmediateRfResponse;
+         public:
+             /**
+              * @brief Resets the data states for the RF interface.
+@@ -93,7 +96,7 @@ namespace p25
+              * @param pduUserData Buffer containing user data to transmit.
+              * @param imm Flag indicating the PDU should be written to the immediate queue.
+              */
+-            void writeRF_PDU_User(data::DataHeader& dataHeader, bool extendedAddress, bool auxiliaryES, uint8_t* pduUserData, bool imm = false);
++            void writeRF_PDU_User(data::DataHeader& dataHeader, bool extendedAddress, bool auxiliaryES, uint8_t* pduUserData, bool imm = false, ImmediateRfResponse* response = nullptr);
+             /**
+              * @brief Helper to write user data as a P25 PDU packet.
+              * @param dataHeader Instance of a PDU data header.
+@@ -218,6 +221,44 @@ namespace p25
+             std::unordered_map<uint32_t, Timer> m_sndcpReadyTimers;
+             std::unordered_map<uint32_t, Timer> m_sndcpStandbyTimers;
+ 
++            // Narrow RF registration/ARS response ownership; normal PDU paths are unchanged.
++            struct ImmediateRfPdu {
++                std::vector<uint8_t> bytes;
++                uint32_t bitLength {0U};
++                bool inbound {false}, imm {false}, ackRetry {false}, trackRetry {true};
++                unsigned leadingTdus {0U};
++            };
++            struct ImmediateRfResponse {
++                std::string key;
++                uint32_t ownerRid {0U};
++                int expectedAckNs {-1};
++                std::vector<ImmediateRfPdu> pdus;
++                bool preamble {false}, retryIncrement {false}, retryClear {false};
++                uint64_t retryGeneration {0U};
++                size_t accountedBytes {0U};
++            };
++            std::recursive_mutex m_immediateResponseMutex;
++            std::deque<ImmediateRfResponse> m_immediateResponses;
++            size_t m_immediateResponseBytes {0U};
++            bool m_immediateRetryOwned {false};
++            uint32_t m_immediateRetryRid {0U};
++            uint64_t m_immediateRetryGeneration {0U};
++            std::string m_immediateRetryOwner;
++            int m_immediateRetryNs {-1};
++            uint32_t m_immediateRetryAckMs {0U};
++            ImmediateRfResponse m_immediateRetryResponse;
++            bool beginImmediateResponse(const char* kind, const uint8_t* request, size_t length,
++                uint32_t source, uint32_t target, ImmediateRfResponse& out);
++            void commitImmediateResponse(ImmediateRfResponse&& response);
++            bool serviceImmediateResponses(uint32_t ms = 0U);
++            void requestImmediateRetry(uint32_t ownerRid, bool validateNs = true);
++            void requestImmediateReplay();
++            void queueImmediateTimeoutRetry();
++            bool immediateRetryAckMatches(uint32_t ownerRid, uint8_t ns) const;
++            bool hasPendingImmediateSession(uint32_t ownerRid) const;
++            void forgetImmediateRetry();
++
++            bool m_motorolaNetworkVoiceDrainPending;
+             uint32_t m_motorolaTmsOutboxPollMs;
+             uint32_t m_motorolaLocationInitialDelayMs;
+             uint32_t m_motorolaLocationIntervalMs;
+@@ -251,16 +292,11 @@ namespace p25
+              * @param updateIntervalSeconds Delay between successful location reports.
+              * @param noFixRetrySeconds Delay after a report without usable GPS coordinates.
+              */
++            void setMotorolaPacketDataAddresses(uint32_t arsServerIp, uint32_t arsPeerIp);
++
+             void setMotorolaLocationTiming(uint32_t initialDelaySeconds,
+                 uint32_t updateIntervalSeconds, uint32_t noFixRetrySeconds);
+ 
+-            /**
+-             * @brief Sets the Motorola packet-data service addresses.
+-             * @param arsServerIp ARS/TMS server IPv4 address in network byte order.
+-             * @param arsPeerIp Peer IPv4 address used by the compatibility path.
+-             */
+-            void setMotorolaPacketDataAddresses(uint32_t arsServerIp, uint32_t arsPeerIp);
+-
+             /**
+              * @brief Helper used to process conventional data registration from PDU data.
+              * @param pduUserData Buffer containing user data to transmit.
+@@ -302,7 +338,8 @@ namespace p25
+              * @param ackRetry Flag indicating the PDU is being sent as an acknowledged retry.
+              */
+             void writeRF_PDU(const uint8_t* pdu, uint32_t bitLength, bool imm = false,
+-                bool ackRetry = false, bool trackRetry = true);
++                bool ackRetry = false, bool trackRetry = true, ImmediateRfResponse* response = nullptr,
++                unsigned leadingTdus = 0U);
+             /**
+              * @brief Helper to write a network P25 PDU packet.
+              * This will take buffered network PDU data and repeat it over the air.
+@@ -320,7 +357,8 @@ namespace p25
+              * @param ipAddr 
+              * @param mfId 
+              */
+-            void writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipAddr);
++            void writeRF_PDU_Reg_Response(uint8_t regType, uint32_t llId, uint32_t ipAddr,
++                ImmediateRfResponse* response = nullptr);
+             /**
+              * @brief Helper to write a PDU acknowledge response.
+              * @param ackClass Acknowledgement Class.
+@@ -331,9 +369,11 @@ namespace p25
+              * @param srcLlId Source Logical Link ID.
+              */
+             void writeRF_PDU_Ack_Response(uint8_t ackClass, uint8_t ackType, uint8_t ackStatus, uint32_t llId, bool extendedAddress,
+-                uint32_t srcLlId = 0U);
++                uint32_t srcLlId = 0U, ImmediateRfResponse* response = nullptr);
+             void writeMotorolaTmsServiceAvailability(uint32_t sourceRid);
++            bool deferMotorolaDataForNetworkVoice();
+             bool writeMotorolaLocationRequest(uint32_t sourceRid);
++            void writeMotorolaTmsInboundProbe(uint32_t sourceRid);
+             bool writeMotorolaTmsInboundDelivery(uint32_t targetRid, uint32_t senderRid, const std::string& text);
+             bool writeNextMotorolaTmsInboundFragment(uint32_t targetRid);
+             void restartMotorolaTmsInboundDelivery(MotorolaSession& session, uint32_t delayMs);
+@@ -350,6 +390,7 @@ namespace p25
+             void writeSyntheticMotorolaFollowup(uint32_t sourceRid, uint32_t responderRid);
+             void writeSyntheticMotorolaPeerServiceStatus(uint32_t sourceRid, uint32_t responderRid, uint8_t ns = 0U, bool sync = true);
+             void writeSyntheticMotorolaServiceReady(uint32_t sourceRid, uint32_t responderRid);
++            void writeSyntheticMotorolaServicePhase2(uint32_t sourceRid, uint32_t responderRid, const data::DataHeader* templateHeader = nullptr, const uint8_t* templateData = nullptr, uint32_t templateLength = 0U, uint8_t ns = 0U);
+             void writeSyntheticMotorolaTmsDeliveryAck(uint32_t sourceRid, uint32_t responderRid, const uint8_t* pduUserData, uint32_t length, uint8_t ns);
+             void writeSyntheticSndcpCtxAccept(uint32_t sourceRid, uint32_t responderRid);
+         };

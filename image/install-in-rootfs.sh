@@ -64,10 +64,11 @@ chown -R "${SERVICE_USER}:${SERVICE_USER}" "${INSTALL_DIR}"
 
 runuser -u "${SERVICE_USER}" -- git clone https://github.com/DVMProject/dvmhost.git "${DVMHOST_DIR}"
 runuser -u "${SERVICE_USER}" -- git -C "${DVMHOST_DIR}" checkout --detach "${DVMHOST_COMMIT}"
-for patch in dvmhost.patch dvmhost-quantar-rssi.patch dvmhost-direct-audio.patch; do
+for patch in dvmhost.patch dvmhost-quantar-rssi.patch dvmhost-direct-audio.patch dvmhost-immediate-response.patch; do
   runuser -u "${SERVICE_USER}" -- git -C "${DVMHOST_DIR}" apply --check "${INSTALL_DIR}/patches/${patch}"
   runuser -u "${SERVICE_USER}" -- git -C "${DVMHOST_DIR}" apply "${INSTALL_DIR}/patches/${patch}"
 done
+python3 "${INSTALL_DIR}/scripts/verify_audio_source.py" "${DVMHOST_DIR}"
 
 runuser -u "${SERVICE_USER}" -- cmake \
   -S "${DVMHOST_DIR}" \
@@ -126,6 +127,8 @@ touch /boot/firmware/ssh
 
 file "${INSTALL_DIR}/build/quantarbridge" | grep -q 'ARM aarch64'
 file "${DVMHOST_DIR}/build/dvmhost" | grep -q 'ARM aarch64'
+file "${DVMHOST_DIR}/build/dvmfne" | grep -q 'ARM aarch64'
+file "${DVMHOST_DIR}/build/dvmbridge" | grep -q 'ARM aarch64'
 file "${TETRA_CODEC_DIR}/build/libtetra-codec.so" | grep -q 'ARM aarch64'
 id -nG "${DEFAULT_ADMIN_USER}" | tr ' ' '\n' | grep -qx sudo
 passwd -S "${DEFAULT_ADMIN_USER}" | grep -Eq "^${DEFAULT_ADMIN_USER} P "

@@ -38,6 +38,8 @@ a separate runtime directory outside Git.
   accepted audio tuning and automatic level adjustment for stations with
   different microphone levels. Noise gating and peak protection limit unwanted
   gain changes and clipping.
+- **P25 voice continuity:** registration and ARS responses wait for network
+  voice and its queued tail to finish before entering the RF transmit queues.
 - **Dashboard:** the direct BrandMeister profile monitors its five required
   services without requiring the unused DMR Gateway. On dashboard startup,
   BrandMeister status can recover the latest timestamped connection event
@@ -73,8 +75,9 @@ Motorola APX / P25 RF
 
 The DVMHost modifications are distributed as
 [`patches/dvmhost.patch`](patches/dvmhost.patch),
-[`patches/dvmhost-quantar-rssi.patch`](patches/dvmhost-quantar-rssi.patch) and
-[`patches/dvmhost-direct-audio.patch`](patches/dvmhost-direct-audio.patch)
+[`patches/dvmhost-quantar-rssi.patch`](patches/dvmhost-quantar-rssi.patch),
+[`patches/dvmhost-direct-audio.patch`](patches/dvmhost-direct-audio.patch) and
+[`patches/dvmhost-immediate-response.patch`](patches/dvmhost-immediate-response.patch)
 against commit
 `01979084df9fc6a5737fac9efb213430268377c9`. Subscriber radio IDs are learned
 from registrations; packet-data addresses are read from the private runtime
