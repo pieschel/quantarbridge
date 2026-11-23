@@ -113,6 +113,10 @@ if(BUILD_TESTING)
 
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
+    add_test(NAME direct_forward_cadence
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/direct-audio/forward_cadence_test.py"
+        --source "${DVMHOST_SOURCE_DIR}" --work-dir "${CMAKE_CURRENT_BINARY_DIR}/forward-cadence"
+        --compiler "${CMAKE_CXX_COMPILER}")
     add_test(NAME p25_immediate_response_guard
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/immediate-response/build_test.py"
         --dvmhost-source "${DVMHOST_SOURCE_DIR}" --compiler "${CMAKE_CXX_COMPILER}")

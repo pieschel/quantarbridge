@@ -9,7 +9,7 @@
     "dvmhost-quantar-rssi.patch"
   ],
   "patch": "dvmhost-direct-audio.patch",
-  "patch_sha256": "89dfe38b75c39d7954fb9d34d300809d9baa2a165bc6c46be263ce0f9704088a",
+  "patch_sha256": "56edb48a2b5f824ab47041ed17b15edf71f6f7a0cd71d1392da1e0f788709bfe",
   "scope": "Accepted bidirectional direct model conversion and automatic DMR-to-P25 leveler. Numerical source code is unchanged; no private recordings, firmware, runtime configuration or backup copies are included.",
   "files": {
     "src/bridge/HostBridge.cpp": {
@@ -140,9 +140,10 @@
     },
     "src/vocoder/P25ToAmbeFloat.h": {
       "accepted_source_sha256": "65f2b5ff57c6505fa958685113493d21265e36c5dbe6ae795d0a4130b957f5fe",
-      "public_source_sha256": "65f2b5ff57c6505fa958685113493d21265e36c5dbe6ae795d0a4130b957f5fe",
+      "public_source_sha256": "0ee21c24a9a5b9690bbe5d42c7c4affd9c6d2db68515d54139e2c83b6605a28d",
       "transformations": [
-        "CRLF to LF"
+        "CRLF to LF",
+        "Clarify stale header comments: canonical class-2 comfort noise holds both speech predictors; idle does not reset the source call or cached erasure state"
       ]
     },
     "src/vocoder/P25ToAmbeFloatQuantizer.inc": {

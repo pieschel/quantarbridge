@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-only
-#include "vocoder/P25ToAmbeFloat.h"
-#include "vocoder/MBEDecoder.h"
-#include "common/p25/P25Defines.h"
 #include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <vector>
+// Observe predictor ownership while exercising the actual public idle method.
+#define private public
+#include "vocoder/P25ToAmbeFloat.h"
+#undef private
+#include "vocoder/MBEDecoder.h"
+#include "common/p25/P25Defines.h"
 
 using Codec = vocoder::P25ToAmbeFloat;
 using Word = std::array<uint8_t, 11>;
@@ -102,6 +106,40 @@ int main()
     }
     assert(codec.silenceFrame(output) == Codec::Status::Silence);
     verifyAmbe(output.bytes);
+    codec.resetCall();
+    assert(codec.convert(word.data(), 11, false, output) == Codec::Status::Voice);
+    assert(codec.concealErasure(output) == Codec::Status::Concealed);
+    const auto source = codec.m_source, previous = codec.m_sourcePrevious;
+    const auto enhanced = codec.m_sourceEnhanced, target = codec.m_targetPrevious;
+    const auto last = codec.m_last;
+    const auto erasures = codec.m_erasureCount;
+    for (unsigned i = 0; i < 5; ++i) {
+        assert(codec.idleFrame(output) == Codec::Status::Silence);
+        verifyAmbe(output.bytes);
+        assert(std::memcmp(&source, &codec.m_source, sizeof(source)) == 0);
+        assert(std::memcmp(&previous, &codec.m_sourcePrevious, sizeof(previous)) == 0);
+        assert(std::memcmp(&enhanced, &codec.m_sourceEnhanced, sizeof(enhanced)) == 0);
+        assert(std::memcmp(&last, &codec.m_last, sizeof(last)) == 0);
+        assert(codec.m_haveLast && codec.m_erasureCount == erasures);
+    }
+    // The emitted class-2 comfort-noise word holds the speech coder's target
+    // history; it must not be fed through the ordinary speech predictor.
+    assert(std::memcmp(&target, &codec.m_targetPrevious, sizeof(target)) == 0);
+    assert(codec.concealErasure(output) == Codec::Status::Concealed);
+    assert(codec.concealErasure(output) == Codec::Status::Concealed);
+    assert(codec.concealErasure(output) == Codec::Status::Muted);
+    codec.resetCall();
+    reference.resetCall();
+    for (unsigned i = 0; i < 12; ++i) {
+        Codec::Frame a, b;
+        assert(codec.convert(input[i].data(), 11, false, a) == Codec::Status::Voice);
+        assert(reference.convert(input[i].data(), 11, false, b) == Codec::Status::Voice);
+        assert(a.bytes == b.bytes);
+        if (i % 3 == 0) for (unsigned n = 0; n < 5; ++n) {
+            assert(codec.idleFrame(output) == Codec::Status::Silence);
+            verifyAmbe(output.bytes);
+        }
+    }
     assert(codec.convert(word.data(), 11, true, output) == Codec::Status::RejectedEncrypted);
     assert(!output.hasFrame());
     assert(first == run(codec, input));

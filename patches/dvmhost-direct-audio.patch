@@ -2602,10 +2602,10 @@ index 00000000..ada7dab8
 +} // namespace vocoder
 diff --git a/src/vocoder/P25ToAmbeFloat.h b/src/vocoder/P25ToAmbeFloat.h
 new file mode 100644
-index 00000000..51453c15
+index 00000000..59bb200f
 --- /dev/null
 +++ b/src/vocoder/P25ToAmbeFloat.h
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,74 @@
 +#pragma once
 +#include <array>
 +#include <cstddef>
@@ -2650,10 +2650,11 @@ index 00000000..51453c15
 +    // Caller chooses this explicitly for a lost/rejected expected voice frame.
 +    // Repeat at most three models (60 ms), then emit canonical silence.
 +    Status concealErasure(Frame& out);
-+    // Canonical silence also advances the target predictor; used for final slot padding.
++    // Emit canonical class-2 comfort noise for final padding. The speech coder
++    // retains its target spectral predictor across these non-speech words.
 +    Status silenceFrame(Frame& out);
-+    // Transport idle: advance only the emitted AMBE predictor. Preserve the
-+    // continuing source call and cached speech/erasure state for the next LDU.
++    // Transport idle emits the same class-2 word without resetting either speech
++    // predictor, the continuing source call, or cached speech/erasure state.
 +    Status idleFrame(Frame& out);
 +
 +private:
